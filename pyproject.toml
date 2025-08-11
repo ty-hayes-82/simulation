@@ -1,0 +1,80 @@
+[project]
+name = "golf-delivery-sim"
+version = "0.1.0"
+description = "Golf course delivery simulation from OSM data (golfers follow 1..18; runners take shortest cart-path routes)."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "osmnx>=1.7.0",
+    "geopandas>=0.14",
+    "networkx>=3.2",
+    "shapely>=2.0",
+    "simpy>=4.0.1",
+    "pandas>=2.0",
+    "numpy>=1.25",
+    "folium>=0.15",
+    "rtree>=1.2.0"
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["golfsim*"]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.5.0",
+  "black>=24.3.0",
+  "mypy>=1.8.0",
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+]
+
+# --- Tooling configuration ---
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+skip-string-normalization = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = [
+    "E501", # handled by black
+]
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+    "tests",
+    "scripts",
+]
+
+[tool.ruff.format]
+quote-style = "preserve"
+docstring-code-format = true
+
+[tool.ruff.lint.isort]
+known-first-party = ["golfsim"]
+combine-as-imports = true
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
+disallow_untyped_defs = false
+warn_unused_ignores = false
+warn_redundant_casts = false
+warn_no_return = false
+no_site_packages = false
+exclude = [
+    "tests/",
+    "examples/",
+    "scripts/",
+]

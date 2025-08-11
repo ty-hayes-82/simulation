@@ -1,0 +1,86 @@
+---
+alwaysApply: true
+
+# Golf Delivery Simulation - Project Rules
+
+## Code Cleanliness and Organization Standards
+
+### 1. File Organization
+- Keep all scripts organized in their designated directories:
+  - `scripts/sim/` - Simulation entrypoints
+  - `scripts/routing/` - Routing and network utilities  
+  - `scripts/viz/` - Visualization tools
+  - `scripts/analysis/` - Analysis and reporting
+- Use descriptive, consistent naming conventions for files and functions
+- Group related functionality into appropriate modules within `golfsim/`
+
+### 2. Temporary File Management
+- Do not keep temporary files in the project directories
+- Remove any files with these patterns:
+  - `*_backup*`, `*_temp*`, `*_tmp*`, `*.tmp`
+  - `*copy*`, `*Copy*` (unless it's intentional versioning)
+  - Debug output files, test artifacts, or scratch files
+- Use appropriate ignore files to prevent accidental inclusion of temporary files
+- Clean up any intermediate files created during development sessions
+
+### 3. Code Quality Standards
+- Remove all debug print statements, commented-out code blocks, and TODO comments before finalizing code
+- Avoid hardcoded paths, magic numbers, and temporary workarounds
+- Use proper logging instead of print statements for debugging
+- Follow the established logging standards (no emojis, clean professional output)
+- Ensure all functions and classes have proper docstrings
+
+### 4. Archive and Deprecation Policy
+- Move outdated or superseded scripts to `scripts/_archive/` with proper documentation
+- Never modify files in the archive directory
+- When creating new functionality that replaces existing code, properly deprecate the old code
+- Update README files when script organization changes
+
+### 5. Configuration Management
+- Keep only one active version of configuration files
+- Remove duplicate config files (like `simulation_config copy.json`)
+- Use a version-controlled approach for configuration changes, not file copies
+- Document any configuration changes
+
+### 6. Output and Cache Management
+- Regularly clean old output files from `outputs/` directory (keep only recent/relevant runs)
+- Do not keep large binary files or visualization outputs unless they're reference examples
+- Use the `cache/` directory appropriately and clean it periodically
+- Document what outputs are meant to be permanent vs. temporary
+
+### 7. Import and Dependency Hygiene
+- Remove unused imports from all Python files
+- Keep dependencies in `pyproject.toml` up to date and minimal
+- Do not leave experimental package installations untracked
+- Use virtual environments consistently (`my_gemini_env` conda environment)
+
+### 8. Testing and Development Standards
+- Clean up any test files marked with `pytest.skip` or disabled tests
+- Remove development-only scripts and debugging utilities before finalizing code
+- Keep test data minimal and organized
+- Do not keep personal debugging scripts or one-off analysis files
+
+### 9. Documentation Standards
+- Keep documentation files current and remove outdated planning documents
+- Update README files when project structure changes
+- Remove or archive development planning documents that are no longer relevant
+- Use clear, professional language without emojis in all documentation
+
+### 10. Pre-Release Checklist
+Before considering code ready for release, ensure:
+- [ ] No temporary or copy files are included
+- [ ] All debug prints and TODO comments are removed or addressed
+- [ ] Imports are clean and necessary
+- [ ] Configuration files are the correct versions
+- [ ] Large output files are excluded
+- [ ] Code follows the established project structure
+- [ ] Documentation is updated if structure changed
+
+### 11. Regular Maintenance
+- Monthly review of `outputs/` directory for cleanup
+- Quarterly review of `scripts/_archive/` for permanent removal of very old files
+- Regular dependency updates and security reviews
+- Periodic review of project structure for organization improvements
+
+## Enforcement
+These rules should be followed by all contributors. Code reviews should verify compliance with these standards before accepting any changes.

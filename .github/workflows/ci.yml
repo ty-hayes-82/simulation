@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libspatialindex-dev libgeos-dev
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+
+      - name: Lint (ruff)
+        run: |
+          ruff check .
+
+      - name: Format check (black)
+        run: |
+          black --check .
+
+      - name: Type check (mypy)
+        run: |
+          mypy golfsim
+
+      - name: Run tests (unit)
+        run: |
+          pytest -q tests -m "not slow" -k "not test_run_demo" --maxfail=1 --disable-warnings
+
+      - name: Routing integration script
+        run: |
+          python scripts/test_routing_integration.py | cat
+

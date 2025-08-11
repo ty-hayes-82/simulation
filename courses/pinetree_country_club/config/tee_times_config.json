@@ -1,0 +1,111 @@
+{
+  "scenarios": {
+    "typical_weekday": {
+      "name": "Typical Weekday",
+      "description": "Regular Wednesday with moderate morning play and afternoon activity",
+      "total_daily_golfers": 132,
+      "duration": 39600,
+      "start_hour": 7,
+      "hourly_golfers": {
+        "07:00": 12,
+        "08:00": 16,
+        "09:00": 12,
+        "10:00": 12,
+        "11:00": 8,
+        "12:00": 4,
+        "13:00": 4,
+        "14:00": 8,
+        "15:00": 12,
+        "16:00": 16,
+        "17:00": 16,
+        "18:00": 12
+      }
+    },
+    "busy_weekend": {
+      "name": "Busy Weekend",
+      "description": "Peak Saturday with heavy morning traffic and steady afternoon play",
+      "total_daily_golfers": 180,
+      "duration": 32400,
+      "start_hour": 7,
+      "hourly_golfers": {
+        "07:00": 24,
+        "08:00": 24,
+        "09:00": 24,
+        "10:00": 24,
+        "11:00": 20,
+        "12:00": 16,
+        "13:00": 16,
+        "14:00": 12,
+        "15:00": 12,
+        "16:00": 8
+      }
+    },
+    "quiet_day": {
+      "name": "Quiet Day",
+      "description": "Light play day with scattered tee times throughout",
+      "total_daily_golfers": 68,
+      "duration": 32400,
+      "start_hour": 7,
+      "hourly_golfers": {
+        "07:00": 8,
+        "08:00": 8,
+        "09:00": 8,
+        "10:00": 4,
+        "11:00": 4,
+        "12:00": 4,
+        "13:00": 4,
+        "14:00": 8,
+        "15:00": 12,
+        "16:00": 8
+      }
+    },
+    "busy_weekday": {
+      "name": "Busy Weekday",
+      "description": "High-volume Wednesday with heavy morning and afternoon traffic",
+      "total_daily_golfers": 144,
+      "duration": 32400,
+      "start_hour": 7,
+      "hourly_golfers": {
+        "07:00": 20,
+        "08:00": 20,
+        "09:00": 16,
+        "10:00": 16,
+        "11:00": 12,
+        "12:00": 8,
+        "13:00": 8,
+        "14:00": 12,
+        "15:00": 16,
+        "16:00": 16
+      }
+    },
+    "mens_league": {
+      "name": "Men's League Night",
+      "description": "Thursday evening league with concentrated late afternoon play",
+      "total_daily_golfers": 96,
+      "duration": 32400,
+      "start_hour": 7,
+      "hourly_golfers": {
+        "07:00": 8,
+        "08:00": 8,
+        "09:00": 4,
+        "10:00": 4,
+        "11:00": 4,
+        "12:00": 8,
+        "13:00": 12,
+        "14:00": 16,
+        "15:00": 16,
+        "16:00": 16
+      }
+    },
+    "testing_rainy_day": {
+      "name": "Testing Rainy Day",
+      "description": "Scenario with only 1 group of golfers due to rain",
+      "total_daily_golfers": 4,
+      "duration": 32400,
+      "start_hour": 7,
+      "hourly_golfers": {
+        "09:00": 4
+      }
+    }
+  }
+}

@@ -1,0 +1,262 @@
+# Golf Delivery Simulation System
+
+A comprehensive golf course delivery simulation system that models food and beverage delivery to golfers during their rounds, with GPS tracking and route optimization.
+
+## Overview
+
+This system simulates delivery operations on golf courses, tracking golfers' movements and optimizing delivery routes using both cart paths and street networks. It supports various tee time scenarios and provides detailed analytics and visualizations.
+
+## Quick Start
+
+### Prerequisites
+
+1. **Python Environment**: Ensure you have conda installed
+2. **Environment Setup**: Activate the `my_gemini_env` conda environment:
+   ```bash
+   conda activate my_gemini_env
+   ```
+
+## Script Organization
+
+The scripts are organized by function:
+
+- **`scripts/sim/`** - Simulation entrypoints
+  - `run_single_golfer.py` - Single golfer delivery simulation
+  - `run_scenarios_batch.py` - Batch simulation runner
+  - `run_single_golfer_simulation.py` - Thin CLI for single simulations
+
+- **`scripts/routing/`** - Routing and network utilities
+  - `compute_travel_times.py` - Calculate travel times between holes
+  - `connect_clubhouse_endpoints.py` - Connect cart path endpoints to clubhouse
+  - `enhance_cart_network.py` - Enhance cart path connectivity
+  - `debug_route_to_node.py` - Interactive route debugging tool
+  - `predict_delivery_route.py` - Delivery path prediction
+  - `test_routing_integration.py` - Comprehensive routing tests
+
+- **`scripts/viz/`** - Visualization tools  
+  - `render_single_delivery_png.py` - Create delivery route visualizations
+  - `view_cart_network.py` - View cart path networks
+
+- **`scripts/analysis/`** - Analysis and reporting
+  - `analyze_simulation_results.py` - Simulation result analysis
+
+### Configuration
+
+The system uses configuration files located in `courses/pinetree_country_club/config/`:
+
+- **`simulation_config.json`**: Core simulation parameters including runner speed, prep times, and course details
+- **`tee_times_config.json`**: Different tee time scenarios (weekday, weekend, rainy day, etc.)
+
+## Running Simulations
+
+### 1. Single Golfer Simulation
+
+Run a single delivery simulation for a specific hole:
+
+```bash
+python scripts/sim/run_single_golfer.py --course-dir courses/pinetree_country_club --hole 9 --prep-time 10 --runner-speed 6.0 --save-coordinates --output-dir outputs/single_sim
+```
+
+**Parameters:**
+- `--hole`: Hole number where the order is placed (1-18)
+- `--prep-time`: Food preparation time in minutes (default: 10)
+- `--runner-speed`: Runner speed in m/s (default: 6.0)
+- `--save-coordinates`: Enable GPS tracking for golfer and runner
+- `--output-dir`: Directory to save results
+
+### 2. Scenario Batch Simulations
+
+Run multiple simulations for the "testing_rainy_day" scenario (recommended for testing):
+
+```bash
+python scripts/sim/run_scenarios_batch.py --course-dir courses/pinetree_country_club --scenario testing_rainy_day --runs-per-scenario 5 --prep-time 10 --runner-speed 6.0 --log-level INFO
+```
+
+**Parameters:**
+- `--num-sims`: Number of simulations to run (default: 5)
+- `--prep-time`: Food preparation time in minutes (default: 10)
+- `--runner-speed`: Runner speed in m/s (default: 6.0)
+- `--output-dir`: Custom output directory (optional)
+
+**Enhanced Folder Naming:**
+When `--output-dir` is not specified, the system automatically creates descriptive folder names:
+```
+outputs/testing_rainy_day_{NUM_SIMS}sims_1runner_{SPEED}mps_{TIMESTAMP}/
+```
+
+**Examples:**
+- `testing_rainy_day_5sims_1runner_6_0mps_20250809_123456/` (5 sims, 6.0 m/s)
+- `testing_rainy_day_3sims_1runner_4_5mps_20250809_123456/` (3 sims, 4.5 m/s)
+- `testing_rainy_day_10sims_1runner_8_0mps_20250809_123456/` (10 sims, 8.0 m/s)
+
+**Speed Comparison Mode:**
+Add `--speed-comparison` to run the same simulations with three different speeds:
+
+```bash
+python scripts/sim/run_scenarios_batch.py --course-dir courses/pinetree_country_club --scenario testing_rainy_day --runs-per-scenario 5 --prep-time 10 --runner-speed 2.0 --log-level INFO
+python scripts/sim/run_scenarios_batch.py --course-dir courses/pinetree_country_club --scenario testing_rainy_day --runs-per-scenario 5 --prep-time 10 --runner-speed 6.0 --log-level INFO
+python scripts/sim/run_scenarios_batch.py --course-dir courses/pinetree_country_club --scenario testing_rainy_day --runs-per-scenario 5 --prep-time 10 --runner-speed 10.0 --log-level INFO
+```
+
+This runs identical scenarios (same hole placements) with:
+- **Slow speed**: 2.0 m/s
+- **Medium speed**: 6.0 m/s  
+- **Fast speed**: 10.0 m/s
+
+**Output Structure for Speed Comparison:**
+```
+outputs/speed_comparison_{NUM_SIMS}sims_{TIMESTAMP}/
+├── slow_speed_2.0mps/          # Slow runner results
+├── medium_speed_6.0mps/        # Medium runner results  
+├── fast_speed_10.0mps/         # Fast runner results
+└── SPEED_COMPARISON_SUMMARY.md # Cross-speed analysis
+```
+
+**Why Rainy Day Scenario?**
+- Only 4 golfers (1 group) on the course due to weather
+- Simplified scenario ideal for testing and validation
+- Clear delivery routes with minimal course traffic
+- Faster simulation execution
+
+### 3. Multi-Group Simulations
+
+Run simulations with multiple golfer groups:
+
+```bash
+python scripts/sim/run_scenarios_batch.py --course-dir courses/pinetree_country_club --scenario busy_weekend --runs-per-scenario 3 --prep-time 10 --runner-speed 6.0 --log-level INFO
+```
+
+**Parameters:**
+- `--groups`: Number of golfer groups (default: 5)
+- `--holes`: Specific holes for orders (optional)
+- `--random-holes`: Use random hole selection
+
+## Configuration Management
+
+### Runner Speed Settings
+
+The runner speed is configured in `courses/pinetree_country_club/config/simulation_config.json`:
+
+```json
+{
+  "delivery_runner_speed_mph": 6.0,
+  ...
+}
+```
+
+**Recent Update:** Runner speed was updated from 10 m/s to 6.0 m/s for more realistic delivery scenarios.
+
+### Tee Time Scenarios
+
+Available scenarios in `tee_times_config.json`:
+
+- **`typical_weekday`**: Regular Wednesday (104 golfers)
+- **`busy_weekend`**: Peak Saturday (180 golfers)
+- **`quiet_day`**: Light play (68 golfers)
+- **`busy_weekday`**: High-volume Wednesday (144 golfers)
+- **`mens_league`**: Thursday evening league (96 golfers)
+- **`testing_rainy_day`**: Rain scenario (4 golfers) (Recommended for testing)
+
+## Output Files
+
+Each simulation generates several output files:
+
+### Individual Simulation Files
+- **`delivery_simulation.png`**: Visual map showing delivery routes
+- **`golfer_coordinates.csv`**: GPS tracking data for golfers
+- **`runner_coordinates.csv`**: GPS tracking data for delivery runner
+- **`simulation_results.json`**: Raw simulation data and metrics
+- **`simulation_X_stats.md`**: Detailed analysis and statistics
+
+### Batch Simulation Files
+- **`BATCH_SUMMARY.md`**: Aggregate analysis across all simulations
+- **Individual folders**: `simulation_01/`, `simulation_02/`, etc.
+
+## Understanding Results
+
+### Key Metrics
+
+- **Service Time**: Total time from order to delivery
+- **Travel Time**: Time spent by runner traveling to golfer
+- **Route Efficiency**: Percentage of optimal route efficiency
+- **Delivery Distance**: Total distance traveled by runner
+- **Runner Utilization**: Percentage of time runner is active
+
+### Performance Benchmarks
+
+- Fast Service: < 15 minutes
+- Good Service: 15-25 minutes
+- Slow Service: > 25 minutes
+
+- Excellent Routing: > 80% efficiency
+- Good Routing: 60-80% efficiency
+- Needs Improvement: < 60% efficiency
+
+## Common Use Cases
+
+### Testing Configuration Changes
+
+1. **Update runner speed** in `simulation_config.json`
+2. **Run rainy day batch** to test new settings:
+   ```bash
+   python scripts/run_multiple_rainy_day_sims.py --runner-speed 6.0
+   ```
+3. **Review results** in the generated `BATCH_SUMMARY.md`
+
+### Validating System Performance
+
+1. **Run multiple scenarios** with different tee times
+2. **Compare efficiency metrics** across scenarios
+3. **Analyze service time distributions**
+
+### Course Analysis
+
+1. **Test different hole locations** for order placement
+2. **Evaluate route optimization** on various course areas
+3. **Assess delivery feasibility** for different course layouts
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Unicode Warnings**: These are harmless display warnings on Windows and don't affect simulation results
+2. **Missing Dependencies**: Ensure all packages are installed in your conda environment
+3. **Path Issues**: Make sure you're in the project root directory when running scripts
+
+### Environment Issues
+
+If you encounter Python environment issues:
+
+```bash
+# Verify environment
+conda activate my_gemini_env
+python --version
+
+# Check if packages are available
+python -c "import golfsim; print('Golf simulation package loaded successfully')"
+```
+
+## Recent Updates
+
+- **Runner Speed**: Updated from 10 m/s to 6.0 m/s for more realistic delivery scenarios
+- **Batch Processing**: Enhanced rainy day simulation script with comprehensive reporting
+- **GPS Tracking**: Improved coordinate tracking for detailed route analysis
+
+---
+
+## Example Session
+
+Here's a complete example of running simulations:
+
+```bash
+# 1. Activate environment
+conda activate my_gemini_env
+
+# 2. Run 5 rainy day simulations
+python scripts/sim/run_scenarios_batch.py --course-dir courses/pinetree_country_club --scenario testing_rainy_day --runs-per-scenario 5 --runner-speed 6.0 --log-level INFO
+
+# 3. Results will be saved to outputs/rainy_day_batch_YYYYMMDD_HHMMSS/
+# 4. Check BATCH_SUMMARY.md for aggregate analysis
+```
+
+The system will generate comprehensive reports and visualizations for analysis and decision-making.
