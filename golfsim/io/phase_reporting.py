@@ -713,8 +713,14 @@ def save_phase5_output_files(result: Dict, run_dir: Path) -> None:
         coord["entity_id"] = "bev_cart_1"
         all_coordinates.append(coord)
     
-    # Sort by timestamp for logical ordering
-    all_coordinates.sort(key=lambda x: x.get("timestamp_s", 0))
+    # Sort by timestamp for logical ordering (prefer 'timestamp', fallback to 'timestamp_s')
+    def _ts(entry: Dict) -> int:
+        ts = entry.get("timestamp")
+        if ts is None:
+            ts = entry.get("timestamp_s", 0)
+        return int(ts)
+
+    all_coordinates.sort(key=_ts)
     
     # Write coordinates CSV
     if all_coordinates:
