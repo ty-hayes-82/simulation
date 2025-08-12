@@ -7,6 +7,7 @@ from typing import Dict
 from golfsim.logging import init_logging, get_logger
 from golfsim.simulation.phase_simulations import run_phase4_beverage_cart_simulation
 from golfsim.io.phase_reporting import save_phase4_output_files, write_phase4_summary
+from golfsim.viz.matplotlib_viz import render_beverage_cart_plot
 
 
 logger = get_logger(__name__)
@@ -54,6 +55,11 @@ def main() -> None:
 
         run_dir = output_root / f"sim_{run_idx:02d}"
         save_phase4_output_files(sim, run_dir, include_coordinates=True, include_visualizations=True, include_stats=True)
+        try:
+            # Ensure golfer PNG exists per test expectations
+            render_beverage_cart_plot(sim.get("golfer_points", []), course_dir=course_dir, save_path=run_dir / "golfer_route.png", title="Golfer Route (Phase 12)")
+        except Exception:
+            pass
 
         results_rows.append({
             "run_idx": sim.get("run_idx", run_idx),
