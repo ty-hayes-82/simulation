@@ -19,20 +19,38 @@ This document outlines targeted refactors to improve clarity, consistency, and m
 
 ### Priority P0: Safety and duplication cleanup (small, high-impact)
 
+Progress (branches):
+- feature/p0-phase-reporting-cleanup — completed edits and tests green aside from legacy script gaps
+- feature/p0-timestamp-normalization — partial normalization in reporting, committed
+- feature/p0-phase-script-shims — added missing phase wrapper scripts used by tests
+
 - **Deduplicate functions in `golfsim/io/phase_reporting.py`**
-  - Remove repeated definitions of `save_phase5_output_files` and `write_phase5_stats_file` (duplicated blocks near the end of file).
-  - Ensure all imports reference existing modules (e.g., use `golfsim.viz.matplotlib_viz.render_beverage_cart_plot` instead of non-existent `visualization.plotting`).
+  - Status: DONE (feature/p0-phase-reporting-cleanup)
+  - Removed duplicated `save_phase5_output_files` and `write_phase5_stats_file` blocks; kept a single authoritative implementation.
+  - Replaced legacy `..visualization.plotting` with `golfsim.viz.matplotlib_viz.render_beverage_cart_plot`.
 
 - **Normalize timestamp field names**
-  - Use `timestamp` for seconds since 7AM consistently across coordinate records. Avoid mixing `timestamp` and `timestamp_s`.
-  - Provide adapter utilities to convert legacy data to the normalized schema.
+  - Status: PARTIAL (feature/p0-timestamp-normalization)
+  - `golfsim/io/phase_reporting.py` now prefers `timestamp` with fallback to `timestamp_s` when sorting/serializing intermediate data; writers in `golfsim/io/results.py` already normalize to `timestamp`.
+  - TODO: Provide small adapter utilities and migrate remaining modules still emitting `timestamp_s` in transient structures.
 
 - **Remove hardcoded course path in reporting**
-  - In `golfsim/io/phase_reporting.py`, avoid hardcoding `courses/pinetree_country_club` when rendering plots. Accept `course_dir` or infer from simulation results.
+  - Status: DONE (feature/p0-phase-reporting-cleanup)
+  - Phase 3/4 visualization helpers now read `course_dir` from the simulation result (or metadata) with a sensible default.
 
 - **Stabilize imports and module boundaries**
-  - Confirm `golfsim.analysis.metrics_integration` is committed and used as the single integration entrypoint.
-  - In scripts, avoid importing demo/experimental code from `golfsim/simulation.engine` unless necessary.
+  - Status: PARTIAL
+  - Replaced legacy viz imports in reporting; `golfsim.analysis.metrics_integration` is present and used by unified runner paths.
+  - TODO: Audit remaining scripts for deep/experimental imports; prefer library entrypoints.
+
+Support scripts for CI/tests:
+- Status: DONE (feature/p0-phase-script-shims)
+- Added wrapper entrypoints used by tests, delegating to library flows and keeping PowerShell-friendly behavior:
+  - `scripts/sim/phase_01_beverage_cart_only/run_bev_cart_phase1.py`
+  - `scripts/sim/phase_02_golfer_only/run_golfer_only_phase2.py`
+  - `scripts/sim/phase_03_bev_cart_plus_one_group/run_bev_cart_phase3.py`
+  - `scripts/sim/phase_11_two_beverage_carts/run_bev_cart_phase11.py`
+  - `scripts/sim/phase_12_golfer_and_bev_cart/run_phase12_golfer_and_bev.py`
 
 ### Priority P1: Structure, naming, and shared utilities
 
