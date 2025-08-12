@@ -12,39 +12,160 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
+
 from golfsim.simulation.engine import run_golf_delivery_simulation
-from golfsim.io.results import save_results_bundle, find_actual_delivery_location
+from golfsim.io.results import save_results_bundle
 from golfsim.viz.matplotlib_viz import render_delivery_plot, load_course_geospatial_data
 from golfsim.logging import init_logging, get_logger
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from utils import setup_encoding, add_log_level_argument, add_course_dir_argument
+from utils.simulation_reporting import (
+    log_simulation_results,
+    handle_simulation_error,
+    create_argparse_epilog,
+)
 
 logger = get_logger(__name__)
+
+
+def format_time_from_seconds(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS format."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def format_time_from_round_start(seconds: float) -> str:
+    """Format time as minutes into the round."""
+    minutes = seconds / 60.0
+    return f"{minutes:.1f} min into round"
+
+
+def create_delivery_log(results: Dict, save_path: Path) -> None:
+    """
+    Create a detailed delivery person log with timestamps for all key events.
+    
+    Args:
+        results: Simulation results dictionary
+        save_path: Path where to save the delivery log
+    """
+    # Extract key timestamps
+    order_time_s = results.get('order_time_s', 0)
+    order_created_s = results.get('order_created_s', order_time_s)
+    prep_completed_s = results.get('prep_completed_s', 0)
+    delivered_s = results.get('delivered_s', 0)
+    runner_returned_s = results.get('runner_returned_s', 0)
+    
+    # Calculate derived times
+    prep_duration = prep_completed_s - order_created_s
+    delivery_duration = delivered_s - prep_completed_s
+    return_duration = runner_returned_s - delivered_s
+    total_service_time = results.get('total_service_time_s', 0)
+    
+    # Get delivery details
+    order_hole = results.get('order_hole', 'Unknown')
+    delivery_distance = results.get('delivery_distance_m', 0)
+    prediction_method = results.get('prediction_method', 'Unknown')
+    
+    # Create the log content
+    lines = [
+        "# Delivery Log",
+        "",
+        f"**Order Details:**",
+        f"- Hole: {order_hole}",
+        f"- Prediction Method: {prediction_method}",
+        f"- Total Service Time: {format_time_from_seconds(total_service_time)}",
+        f"- Delivery Distance: {delivery_distance:.0f} meters",
+        "",
+        "## Timeline",
+        "",
+    ]
+    
+    # Add timeline events
+    events = [
+        ("Order Placed", order_created_s, "Customer places order"),
+        ("Food Preparation Started", order_created_s, "Kitchen begins preparing order"),
+        ("Food Ready", prep_completed_s, "Order prepared and ready for pickup"),
+        ("Delivery Started", prep_completed_s, "Runner departs from clubhouse"),
+        ("Order Delivered", delivered_s, "Customer receives their order"),
+        ("Runner Returned", runner_returned_s, "Runner arrives back at clubhouse"),
+    ]
+    
+    for event_name, timestamp, description in events:
+        if timestamp > 0:
+            time_str = format_time_from_seconds(timestamp)
+            round_time = format_time_from_round_start(timestamp)
+            lines.append(f"**{time_str}** ({round_time}) - {event_name}")
+            lines.append(f"  {description}")
+            lines.append("")
+    
+    # Add duration breakdown
+    lines.extend([
+        "## Duration Breakdown",
+        "",
+        f"- **Food Preparation**: {format_time_from_seconds(prep_duration)}",
+        f"- **Delivery Time**: {format_time_from_seconds(delivery_duration)}",
+        f"- **Return Time**: {format_time_from_seconds(return_duration)}",
+        f"- **Total Service**: {format_time_from_seconds(total_service_time)}",
+        "",
+    ])
+    
+    # Add delivery location details if available
+    predicted_location = results.get('predicted_delivery_location')
+    if predicted_location:
+        lines.extend([
+            "## Delivery Location",
+            "",
+            f"- **Predicted**: {predicted_location[1]:.6f}, {predicted_location[0]:.6f}",
+            "",
+        ])
+    
+    # Add efficiency metrics if available
+    trip_to_golfer = results.get('trip_to_golfer', {})
+    if 'efficiency' in trip_to_golfer and trip_to_golfer['efficiency'] is not None:
+        lines.extend([
+            "## Route Efficiency",
+            "",
+            f"- **Efficiency**: {trip_to_golfer['efficiency']:.1f}% vs straight line",
+            "",
+        ])
+    
+    # Add prediction debug info if available
+    prediction_debug = results.get('prediction_debug', {})
+    if prediction_debug:
+        lines.extend([
+            "## Prediction Details",
+            "",
+        ])
+        for key, value in prediction_debug.items():
+            if key != 'prediction_coordinates':  # Skip coordinates to keep it readable
+                lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
+        lines.append("")
+    
+    # Write the log file
+    save_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info("Created delivery log: %s", save_path)
 
 
 def main() -> int:
     """Main function with CLI interface."""
     setup_encoding()
     
+    examples = [
+        "python run_single_golfer_simulation.py --hole 14",
+        "python run_single_golfer_simulation.py --hole 16",
+        "python run_single_golfer_simulation.py",
+        "python run_single_golfer_simulation.py --hole 8 --prep-time 15",
+    ]
+    
     parser = argparse.ArgumentParser(
         description="Golf course delivery simulation with enhanced cart path routing",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Order placed on hole 14 (late in round - shows smart prediction)
-  python run_single_golfer_simulation.py --hole 14
-
-  # Order placed on hole 16 (where we found the shortcut!)
-  python run_single_golfer_simulation.py --hole 16
-
-  # Random order placement during round
-  python run_single_golfer_simulation.py
-  
-  # Order on hole 8 with 15-minute prep time
-  python run_single_golfer_simulation.py --hole 8 --prep-time 15
-        """
+        epilog=create_argparse_epilog(examples)
     )
     add_log_level_argument(parser)
     add_course_dir_argument(parser)
@@ -57,8 +178,8 @@ Examples:
                        help="Runner speed in m/s (default: 6.0)")
     parser.add_argument("--no-enhanced", action="store_true",
                        help="Don't use enhanced cart network (use original)")
-    parser.add_argument("--save-coordinates", action="store_true",
-                       help="Save detailed GPS coordinate tracking (disabled by default for performance)")
+    parser.add_argument("--no-coordinates", action="store_true",
+                       help="Disable detailed GPS coordinate tracking (enabled by default for better visualization)")
     parser.add_argument("--output-dir", default=None,
                        help="Output directory (default: outputs/simulation_TIMESTAMP)")
     parser.add_argument("--no-visualization", action="store_true",
@@ -92,33 +213,17 @@ Examples:
             prep_time_min=args.prep_time,
             runner_speed_mps=args.runner_speed,
             use_enhanced_network=not args.no_enhanced,
-            track_coordinates=args.save_coordinates
+            track_coordinates=not args.no_coordinates
         )
         
         # Save results using library function
         save_results_bundle(results, output_dir)
         
-        # Print comprehensive summary
-        logger.info("Simulation Results:")
-        logger.info(f"   Order time: {results['order_time_s']/60:.1f} minutes into round")
-        logger.info(f"   Service time: {results['total_service_time_s']/60:.1f} minutes")
-        logger.info(f"   Delivery distance: {results['delivery_distance_m']:.0f} meters")
-        logger.info(f"   Preparation time: {results['prep_time_s']/60:.1f} minutes")
-        logger.info(f"   Travel time: {results['delivery_travel_time_s']/60:.1f} minutes")
+        # Log results using shared utility
+        log_simulation_results(results, track_coords=not args.no_coordinates)
         
-        # Show route efficiency if available
-        trip_to_golfer = results.get('trip_to_golfer', {})
-        if 'efficiency' in trip_to_golfer:
-            logger.info(f"   Route efficiency: {trip_to_golfer['efficiency']:.1f}% vs straight line")
-        
-        # Show actual delivery location if coordinates were tracked
-        if args.save_coordinates:
-            delivery_location = find_actual_delivery_location(results)
-            if delivery_location:
-                logger.info(f"   Actual delivery location: Hole {delivery_location['hole']} at {delivery_location['latitude']:.6f}, {delivery_location['longitude']:.6f}")
-        
-        if results.get('prediction_method'):
-            logger.info(f"   Prediction method: {results['prediction_method']}")
+        # Create detailed delivery log
+        create_delivery_log(results, output_dir / "delivery_log.md")
         
         logger.info(f"All results saved to: {output_dir.absolute()}")
         
@@ -132,8 +237,46 @@ Examples:
                     config = json.load(f)
                 clubhouse_coords = (config["clubhouse"]["longitude"], config["clubhouse"]["latitude"])
                 
+                # Load coordinate data if available
+                golfer_df = None
+                runner_df = None
+                if not args.no_coordinates:
+                    golfer_csv = output_dir / "golfer_coordinates.csv"
+                    runner_csv = output_dir / "runner_coordinates.csv"
+                    if golfer_csv.exists():
+                        try:
+                            golfer_df = pd.read_csv(golfer_csv)
+                        except Exception as e:
+                            logger.warning(f"Failed to read golfer coordinates: {e}")
+                    if runner_csv.exists():
+                        try:
+                            runner_df = pd.read_csv(runner_csv)
+                        except Exception as e:
+                            logger.warning(f"Failed to read runner coordinates: {e}")
+                
+                # Load cart graph if available
+                cart_graph = None
+                cart_graph_pkl = Path(args.course_dir) / "pkl" / "cart_graph.pkl"
+                if cart_graph_pkl.exists():
+                    try:
+                        import pickle
+                        with cart_graph_pkl.open("rb") as f:
+                            cart_graph = pickle.load(f)
+                    except Exception as e:
+                        logger.warning(f"Failed to load cart graph: {e}")
+                
                 output_file = output_dir / "delivery_route_visualization.png"
-                render_delivery_plot(results, course_data, clubhouse_coords, output_file)
+                render_delivery_plot(
+                    results=results,
+                    course_data=course_data,
+                    clubhouse_coords=clubhouse_coords,
+                    golfer_coords=golfer_df,
+                    runner_coords=runner_df,
+                    cart_graph=cart_graph,
+                    save_path=output_file,
+                    course_name=Path(args.course_dir).name.replace("_", " ").title(),
+                    style="simple"
+                )
                 logger.info("Delivery visualization created successfully.")
                     
             except Exception as e:
@@ -143,14 +286,9 @@ Examples:
         
         return 0
         
-    except FileNotFoundError as e:
-        logger.error(f"Data file not found: {e}")
-        logger.error(f"Make sure the course directory exists and contains required data files")
-        return 1
     except Exception as e:
-        logger.error(f"Simulation error: {e}")
-        import traceback
-        traceback.print_exc()
+        if not handle_simulation_error(e, exit_on_first=True):
+            return 1
         return 1
 
 

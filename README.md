@@ -10,15 +10,54 @@ This system simulates delivery operations on golf courses, tracking golfers' mov
 
 ### Prerequisites
 
+1. **Python Environment**: Python 3.9 or higher
+2. **Virtual Environment**: Use the provided virtual environment setup
+
+### Environment Setup
+
+#### Option 1: Using Virtual Environment (Recommended)
+
+The project includes a pre-configured virtual environment with all dependencies installed.
+
+**PowerShell:**
+```powershell
+# Activate the virtual environment
+.\.venv\Scripts\Activate.ps1
+
+# Or use the convenience script
+.\activate_env.ps1
+```
+
+**Command Prompt:**
+```cmd
+# Activate the virtual environment
+.venv\Scripts\activate.bat
+
+# Or use the convenience script
+activate_env.bat
+```
+
+**Linux/macOS:**
+```bash
+# Activate the virtual environment
+source .venv/bin/activate
+```
+
+**Verify Setup:**
+```bash
+# Run the verification script to check all dependencies
+python verify_setup.py
+```
+
+#### Option 2: Using Conda (Alternative)
+
 1. **Python Environment**: Ensure you have conda installed
 2. **Environment Setup**: Activate the `my_gemini_env` conda environment:
    ```bash
    conda activate my_gemini_env
    ```
 
-### Environment Setup
-
-#### Option 1: Using Conda (Recommended)
+### Manual Environment Setup (Alternative)
 
 ```bash
 # Create and activate the environment
@@ -32,7 +71,22 @@ pip install -e .
 pip install -e ".[dev]"
 ```
 
-#### Option 2: Using pip + pyproject.toml
+#### Option 3: Using Poetry (Alternative)
+
+The project includes a `pyproject.toml` file configured for Poetry:
+
+```bash
+# Install Poetry (if not already installed)
+pip install poetry
+
+# Install dependencies
+poetry install
+
+# Activate the Poetry shell
+poetry shell
+```
+
+#### Option 4: Using pip + pyproject.toml
 
 ```bash
 # Activate your Python environment of choice

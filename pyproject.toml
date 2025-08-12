@@ -1,36 +1,50 @@
-[project]
+[tool.poetry]
 name = "golf-delivery-sim"
 version = "0.1.0"
 description = "Golf course delivery simulation from OSM data (golfers follow 1..18; runners take shortest cart-path routes)."
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = [
-    "osmnx>=1.7.0",
-    "geopandas>=0.14",
-    "networkx>=3.2",
-    "shapely>=2.0",
-    "simpy>=4.0.1",
-    "pandas>=2.0",
-    "numpy>=1.25",
-    "folium>=0.15",
-    "rtree>=1.2.0"
-]
+packages = [{include = "golfsim"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+osmnx = "^1.7.0"
+geopandas = "^0.14"
+networkx = "^3.2"
+shapely = "^2.0"
+simpy = "^4.0.1"
+pandas = "^2.0"
+numpy = "^1.25"
+folium = "^0.15"
+rtree = "^1.2.0"
+matplotlib = "^3.10"
+pyogrio = "^0.11"
+pyproj = "^3.7"
+fiona = "^1.10"
+branca = "^0.8"
+jinja2 = "^3.1"
+xyzservices = "^2025.4"
+requests = "^2.32"
+certifi = "^2025.8"
+charset-normalizer = "^3.4"
+idna = "^3.10"
+urllib3 = "^2.5"
+python-dateutil = "^2.9"
+pytz = "^2025.2"
+tzdata = "^2025.2"
+packaging = "^25.0"
+six = "^1.17"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.12.8"
+black = "^25.1.0"
+mypy = "^1.17.1"
+pytest = "^8.4.1"
+pytest-cov = "^6.2.1"
+coverage = "^7.10.3"
 
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-include = ["golfsim*"]
-
-[project.optional-dependencies]
-dev = [
-  "ruff>=0.5.0",
-  "black>=24.3.0",
-  "mypy>=1.8.0",
-  "pytest>=7.4",
-  "pytest-cov>=4.1",
-]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
 
 # --- Tooling configuration ---
 [tool.black]
