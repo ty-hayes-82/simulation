@@ -60,12 +60,14 @@ Support scripts for CI/tests:
     - `format_time_from_baseline(seconds: int) -> str` (centralize existing implementations)
     - `parse_hhmm(hhmm: str) -> tuple[int, int]`
   - Replace ad-hoc helpers in `scripts/sim/run_unified_simulation.py` and services with these utilities.
+  - Status: ADDED (feature/p1-utils); migration pending
 
 - **Define typed schemas for coordinates and sales**
   - Add `golfsim/types.py` or `golfsim/io/schemas.py` with `TypedDict`/dataclasses:
     - `Coordinate`: `entity_id`, `latitude`, `longitude`, `timestamp`, `type`, `current_hole?`
     - `SaleRecord`: `timestamp`, `price`, `group_id`, `hole_num`
   - Update `golfsim/io/results.py` writers to validate/normalize input via these types.
+  - Status: PARTIAL — lightweight adapters added in `golfsim/io/adapters.py` to normalize `lat/lon` and `timestamp_s` → `timestamp`.
 
 - **Split large service module**
   - Move `BeverageCartService` to `golfsim/simulation/bev_cart_service.py` and `SingleRunnerDeliveryService` to `golfsim/simulation/delivery_service.py`.

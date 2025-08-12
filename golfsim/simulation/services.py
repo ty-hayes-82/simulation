@@ -8,6 +8,7 @@ import simpy
 
 from ..config.loaders import load_simulation_config
 from ..logging import get_logger
+from ..utils.time import seconds_since_7am
 from ..io.results import SimulationResult
 
 
@@ -120,8 +121,7 @@ class SingleRunnerDeliveryService:
 
     @staticmethod
     def _time_str_to_seconds(time_str: str) -> int:
-        hour, minute = map(int, time_str.split(":"))
-        return (hour - 7) * 3600 + minute * 60
+        return seconds_since_7am(time_str)
 
     def is_service_open(self) -> bool:
         return self.service_open_s <= self.env.now <= self.service_close_s
@@ -533,8 +533,7 @@ class BeverageCartService:
 
     @staticmethod
     def _time_str_to_seconds(time_str: str) -> int:
-        hour, minute = map(int, time_str.split(":"))
-        return (hour - 7) * 3600 + minute * 60
+        return seconds_since_7am(time_str)
 
     def log_activity(self, activity_type: str, description: str, location: Optional[str] = None) -> None:
         current_time_min = self.env.now / 60

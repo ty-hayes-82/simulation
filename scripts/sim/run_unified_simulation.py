@@ -40,6 +40,7 @@ from golfsim.simulation.crossings import (
 from golfsim.simulation.bev_cart_pass import simulate_beverage_cart_sales
 from golfsim.io.results import write_unified_coordinates_csv
 from golfsim.viz.matplotlib_viz import render_beverage_cart_plot
+from golfsim.utils.time import seconds_since_7am
 from golfsim.io.phase_reporting import save_phase3_output_files, write_phase3_summary
 from golfsim.analysis.metrics_integration import generate_and_save_metrics
 
@@ -57,8 +58,7 @@ def _seconds_to_clock_str(sec_since_7am: int) -> str:
 
 
 def _first_tee_to_seconds(hhmm: str) -> int:
-    hh, mm = hhmm.split(":")
-    return (int(hh) - 7) * 3600 + int(mm) * 60
+    return seconds_since_7am(hhmm)
 
 
 def _build_groups_interval(count: int, first_tee_s: int, interval_min: float) -> List[Dict]:
@@ -84,11 +84,7 @@ def _generate_golfer_points_for_groups(course_dir: str, groups: List[Dict]) -> L
 
 # -------------------- Tee-times scenarios --------------------
 def _parse_hhmm_to_seconds_since_7am(hhmm: str) -> int:
-    try:
-        hh, mm = hhmm.split(":")
-        return (int(hh) - 7) * 3600 + int(mm) * 60
-    except Exception:
-        return 0
+    return seconds_since_7am(hhmm)
 
 
 def _build_groups_from_scenario(course_dir: str, scenario_key: str, default_group_size: int = 4) -> List[Dict]:
