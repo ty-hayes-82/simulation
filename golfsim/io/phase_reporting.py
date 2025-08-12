@@ -220,12 +220,17 @@ def save_phase3_output_files(
 
 
 def _generate_phase3_visualizations(simulation_result: Dict, output_dir: Path) -> None:
-    """Generate visualization files for Phase 3 simulation."""
+    """Generate visualization files for Phase 3 simulation.
+
+    Avoid hardcoded course path by accepting `course_dir` on simulation_result
+    or falling back to a sensible default.
+    """
     # Import here to avoid circular dependencies
     from ..viz.matplotlib_viz import render_beverage_cart_plot
     
     bev_points = simulation_result["bev_points"] 
-    run_idx = simulation_result["run_idx"]
+    # Prefer explicit course_dir on simulation result; fall back to common default
+    course_dir = simulation_result.get("course_dir", simulation_result.get("metadata", {}).get("course_dir", "courses/pinetree_country_club"))
     
     # Determine title based on simulation type
     if simulation_result["type"] == "synchronized":
@@ -238,9 +243,9 @@ def _generate_phase3_visualizations(simulation_result: Dict, output_dir: Path) -
     # Render beverage cart route
     render_beverage_cart_plot(
         bev_points,
-        course_dir="courses/pinetree_country_club",  # TODO: Make this configurable
+        course_dir=course_dir,
         save_path=output_dir / "bev_cart_route.png",
-        title=title
+        title=title,
     )
 
 
@@ -331,307 +336,7 @@ def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
     (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def save_phase5_output_files(result: Dict, run_dir: Path) -> None:
-    """
-    Save all output files for a Phase 5 simulation run.
-    
-    Args:
-        result: Simulation result dictionary
-        run_dir: Directory to save outputs to
-    """
-    run_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save coordinates CSV (combined golfer and beverage cart)
-    golfer_points = result.get("golfer_points", [])
-    bev_points = result.get("bev_points", [])
-    
-    all_coordinates = []
-    
-    # Add golfer coordinates with entity_id
-    for point in golfer_points:
-        coord = point.copy()
-        group_id = coord.get("group_id", 1)
-        coord["entity_id"] = f"golfer_{group_id}"
-        all_coordinates.append(coord)
-    
-    # Add beverage cart coordinates with entity_id
-    for point in bev_points:
-        coord = point.copy()
-        coord["entity_id"] = "bev_cart_1"
-        all_coordinates.append(coord)
-    
-    # Sort by timestamp for logical ordering
-    all_coordinates.sort(key=lambda x: x.get("timestamp_s", 0))
-    
-    # Write coordinates CSV
-    if all_coordinates:
-        # Group coordinates by entity_id for the unified CSV writer
-        points_by_id = {}
-        for coord in all_coordinates:
-            entity_id = coord.get("entity_id", "unknown")
-            if entity_id not in points_by_id:
-                points_by_id[entity_id] = []
-            points_by_id[entity_id].append(coord)
-        
-        write_unified_coordinates_csv(points_by_id, run_dir / "coordinates.csv")
-    
-    # Save beverage cart route visualization (if bev_points exist)
-    if bev_points:
-        try:
-            from ..visualization.plotting import plot_beverage_cart_route
-            plot_beverage_cart_route(bev_points, run_dir / "bev_cart_route.png")
-        except ImportError:
-            pass  # Visualization optional
-    
-    # Save sales results
-    sales_result = result.get("sales_result", {})
-    with open(run_dir / "sales.json", "w", encoding="utf-8") as f:
-        json.dump(sales_result, f, indent=2, default=str)
-    
-    # Save complete result
-    result_copy = result.copy()
-    # Remove large arrays to keep file manageable, keep only metadata
-    result_copy.pop("golfer_points", None)
-    result_copy.pop("bev_points", None)
-    
-    with open(run_dir / "result.json", "w", encoding="utf-8") as f:
-        json.dump(result_copy, f, indent=2, default=str)
-    
-    # Generate stats markdown
-    write_phase5_stats_file(
-        result=result,
-        save_path=run_dir / "stats.md",
-        scenario_name=result.get("scenario_name", "unknown"),
-        groups=result.get("groups", []),
-        sales_result=sales_result,
-        pass_events=result.get("pass_events", []),
-        sim_runtime_s=result.get("simulation_runtime_s", 0.0),
-    )
-
-
-def write_phase5_stats_file(
-    result: Dict,
-    save_path: Path,
-    scenario_name: str,
-    groups: List[Dict],
-    sales_result: Dict,
-    pass_events: List[Dict],
-    sim_runtime_s: float,
-) -> None:
-    """
-    Write a Phase 5 stats.md file with simulation results.
-    
-    Args:
-        result: Full simulation result dictionary
-        save_path: Path where to save the stats file
-        scenario_name: Name of the tee times scenario used
-        groups: List of golfer groups
-        sales_result: Sales simulation results
-        pass_events: List of pass event dictionaries
-        sim_runtime_s: How long the simulation took to run
-    """
-    # Basic metrics
-    revenue = float(sales_result.get("revenue", 0.0))
-    sales = sales_result.get("sales", []) or []
-    num_sales = len(sales)
-    total_groups = len(groups)
-    
-    # Group distribution
-    group_by_hour = {}
-    for group in groups:
-        hour = group.get("hour", "unknown")
-        if hour not in group_by_hour:
-            group_by_hour[hour] = {"groups": 0, "golfers": 0}
-        group_by_hour[hour]["groups"] += 1
-        group_by_hour[hour]["golfers"] += group.get("num_golfers", 4)
-    
-    # Timing information
-    if groups:
-        first_tee_time_s = min(g.get("tee_time_s", 0) for g in groups)
-        last_tee_time_s = max(g.get("tee_time_s", 0) for g in groups)
-        total_span_hours = (last_tee_time_s - first_tee_time_s) / 3600.0
-    else:
-        first_tee_time_s = last_tee_time_s = 0
-        total_span_hours = 0
-    
-    # Pass statistics
-    total_passes = len(pass_events)
-    pass_by_group = {}
-    for event in pass_events:
-        group_id = event.get("group_id", 0)
-        if group_id not in pass_by_group:
-            pass_by_group[group_id] = 0
-        pass_by_group[group_id] += 1
-    
-    lines = [
-        f"# Phase 5 — Beverage cart + many groups ({scenario_name})",
-        "",
-        f"**Simulation runtime**: {sim_runtime_s:.2f} seconds",
-        f"**Scenario**: {scenario_name}",
-        f"**Total groups**: {total_groups}",
-        f"**Total golfers**: {sum(g.get('num_golfers', 4) for g in groups)}",
-        f"**Tee time span**: {format_time_from_baseline(int(first_tee_time_s))} to {format_time_from_baseline(int(last_tee_time_s))} ({total_span_hours:.1f}h)",
-        "",
-        "## Group Distribution by Hour",
-        "",
-    ]
-    
-    for hour in sorted(group_by_hour.keys()):
-        data = group_by_hour[hour]
-        lines.append(f"- **{hour}**: {data['groups']} groups, {data['golfers']} golfers")
-    
-    lines.extend([
-        "",
-        "## Sales Performance",
-        "",
-        f"- **Revenue**: ${revenue:.2f}",
-        f"- **Sales count**: {num_sales}",
-        f"- **Average per sale**: ${revenue / num_sales:.2f}" if num_sales > 0 else "- **Average per sale**: $0.00",
-        "",
-        "## Pass Events",
-        "",
-        f"- **Total passes**: {total_passes}",
-        f"- **Groups with passes**: {len(pass_by_group)} of {total_groups}",
-    ])
-    
-    if pass_by_group:
-        lines.append("- **Passes per group**:")
-        for group_id in sorted(pass_by_group.keys()):
-            count = pass_by_group[group_id]
-            lines.append(f"  - Group {group_id}: {count} passes")
-    
-    # Add crossings information if available
-    crossings_data = result.get("crossings", {})
-    if crossings_data and crossings_data.get("groups"):
-        lines.extend([
-            "",
-            "## Crossings Analysis",
-            "",
-        ])
-        
-        total_crossings = sum(len(g.get("crossings", [])) for g in crossings_data["groups"])
-        lines.append(f"- **Total crossings**: {total_crossings}")
-        
-        for i, group_data in enumerate(crossings_data["groups"], 1):
-            crossings = group_data.get("crossings", [])
-            if crossings:
-                lines.append(f"- **Group {i}**: {len(crossings)} crossings")
-    
-    lines.extend([
-        "",
-        "## Configuration",
-        "",
-        f"- **Beverage cart service**: 09:00–17:00",
-        f"- **Order probability**: {sales_result.get('pass_order_probability', 'unknown')}",
-        f"- **Average order value**: ${sales_result.get('price_per_order', 'unknown')}",
-        "",
-        "## Artifacts",
-        "",
-        "- `coordinates.csv` — Combined GPS tracks (golfers + beverage cart)",
-        "- `bev_cart_route.png` — Beverage cart route visualization",
-        "- `sales.json` — Detailed sales and pass data",
-        "- `result.json` — Complete simulation metadata",
-        "",
-    ])
-    
-    save_path.write_text("\n".join(lines), encoding="utf-8")
-
-
-def write_phase5_summary(results: List[Dict], output_root: Path, scenario_name: str) -> None:
-    """
-    Write a Phase 5 summary.md file across multiple simulation runs.
-    
-    Args:
-        results: List of simulation result summaries
-        output_root: Root output directory
-        scenario_name: Name of the scenario used
-    """
-    num_runs = len(results)
-    
-    if not results:
-        lines = [
-            f"# Phase 5 Summary — {scenario_name}",
-            "",
-            "No simulation results to summarize.",
-            "",
-        ]
-        (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
-        return
-    
-    # Aggregate statistics
-    revenues = [r.get("revenue", 0.0) for r in results]
-    sales_counts = [r.get("num_sales", 0) for r in results]
-    pass_counts = [r.get("num_pass_intervals", 0) for r in results]
-    group_counts = [r.get("groups", 0) for r in results]
-    
-    mean_revenue = sum(revenues) / len(revenues) if revenues else 0
-    mean_sales = sum(sales_counts) / len(sales_counts) if sales_counts else 0
-    mean_passes = sum(pass_counts) / len(pass_counts) if pass_counts else 0
-    mean_groups = sum(group_counts) / len(group_counts) if group_counts else 0
-    
-    lines = [
-        f"# Phase 5 Summary — {scenario_name}",
-        "",
-        f"**Simulation runs**: {num_runs}",
-        f"**Scenario**: {scenario_name}",
-        f"**Generated at**: {format_time_from_baseline(0)}",  # Will show current time
-        "",
-        "## Aggregate Performance",
-        "",
-        f"- **Mean revenue**: ${mean_revenue:.2f} (range: ${min(revenues):.2f}–${max(revenues):.2f})",
-        f"- **Mean sales**: {mean_sales:.1f} (range: {min(sales_counts)}–{max(sales_counts)})",
-        f"- **Mean groups**: {mean_groups:.1f}",
-        f"- **Mean passes**: {mean_passes:.1f} (range: {min(pass_counts)}–{max(pass_counts)})",
-        "",
-        "## Per-Run Results",
-        "",
-    ]
-    
-    for r in results:
-        run_idx = r.get("run_idx", 0)
-        revenue = r.get("revenue", 0.0)
-        sales = r.get("num_sales", 0)
-        groups = r.get("groups", 0)
-        passes = r.get("num_pass_intervals", 0)
-        first_tee = r.get("first_tee_time_s", 0)
-        last_tee = r.get("last_tee_time_s", 0)
-        
-        lines.append(f"### Run {run_idx:02d}")
-        lines.append(f"- **Revenue**: ${revenue:.2f}")
-        lines.append(f"- **Sales**: {sales}")
-        lines.append(f"- **Groups**: {groups}")
-        lines.append(f"- **Passes**: {passes}")
-        lines.append(f"- **Tee times**: {format_time_from_baseline(int(first_tee))} to {format_time_from_baseline(int(last_tee))}")
-        
-        # Show first crossing if available
-        first_crossing = r.get("first_crossing")
-        if first_crossing:
-            crossing_time = first_crossing.get("timestamp", "")
-            if isinstance(crossing_time, str) and "T" in crossing_time:
-                crossing_time = crossing_time.split("T")[1][:8]
-            node = first_crossing.get("node_index", "unknown")
-            hole = first_crossing.get("hole", "unknown")
-            lines.append(f"- **First crossing**: {crossing_time} at node {node} (hole {hole})")
-        
-        lines.append("")
-    
-    lines.extend([
-        "## Scenario Details",
-        "",
-        f"This Phase 5 simulation used the '{scenario_name}' scenario from tee_times_config.json.",
-        "Each run generated golfer groups based on the hourly_golfers distribution,",
-        "with random tee times within each specified hour.",
-        "",
-        "## Files Generated",
-        "",
-    ])
-    
-    for r in results:
-        run_idx = r.get("run_idx", 0)
-        lines.append(f"- **sim_{run_idx:02d}/**: coordinates.csv, bev_cart_route.png, sales.json, result.json, stats.md")
-    
-    lines.append("")
-    (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
+# Duplicate Phase 5 functions removed. Single authoritative implementations exist above.
 
 
 def write_phase4_stats_file(
@@ -860,12 +565,17 @@ def save_phase4_output_files(
 
 
 def _generate_phase4_visualizations(simulation_result: Dict, output_dir: Path) -> None:
-    """Generate visualization files for Phase 4 simulation."""
+    """Generate visualization files for Phase 4 simulation.
+
+    Avoid hardcoded course path by accepting `course_dir` on simulation_result
+    or falling back to a sensible default.
+    """
     # Import here to avoid circular dependencies
     from ..viz.matplotlib_viz import render_beverage_cart_plot
     
     bev_points = simulation_result["bev_points"] 
-    run_idx = simulation_result["run_idx"]
+    # Prefer explicit course_dir on simulation result; fall back to common default
+    course_dir = simulation_result.get("course_dir", simulation_result.get("metadata", {}).get("course_dir", "courses/pinetree_country_club"))
     
     # Determine title based on simulation type
     if simulation_result["type"] == "synchronized":
@@ -878,9 +588,9 @@ def _generate_phase4_visualizations(simulation_result: Dict, output_dir: Path) -
     # Render beverage cart route
     render_beverage_cart_plot(
         bev_points,
-        course_dir="courses/pinetree_country_club",  # TODO: Make this configurable
+        course_dir=course_dir,
         save_path=output_dir / "bev_cart_route.png",
-        title=title
+        title=title,
     )
 
 
@@ -1021,9 +731,10 @@ def save_phase5_output_files(result: Dict, run_dir: Path) -> None:
     # Save beverage cart route visualization (if bev_points exist)
     if bev_points:
         try:
-            from ..visualization.plotting import plot_beverage_cart_route
-            plot_beverage_cart_route(bev_points, run_dir / "bev_cart_route.png")
-        except ImportError:
+            from ..viz.matplotlib_viz import render_beverage_cart_plot
+            course_dir = result.get("course_dir", result.get("metadata", {}).get("course_dir", "courses/pinetree_country_club"))
+            render_beverage_cart_plot(bev_points, course_dir=course_dir, save_path=run_dir / "bev_cart_route.png")
+        except Exception:
             pass  # Visualization optional
     
     # Save sales results
