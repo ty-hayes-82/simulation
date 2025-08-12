@@ -13,6 +13,10 @@ from typing import Dict, List
 
 from ..simulation.pass_detection import format_time_from_baseline
 from ..io.results import write_unified_coordinates_csv
+from ..analysis.bev_cart_metrics import (
+    calculate_bev_cart_metrics,
+    format_metrics_report as format_bev_metrics_report,
+)
 
 
 def write_phase3_stats_file(
@@ -103,6 +107,7 @@ def save_phase3_output_files(
     output_dir: Path,
     include_coordinates: bool = True,
     include_visualizations: bool = True,
+    include_stats: bool = True,
 ) -> None:
     """
     Save all output files for a Phase 3 simulation.
@@ -138,35 +143,80 @@ def save_phase3_output_files(
     if include_coordinates:
         from ..io.results import write_coordinates_csv_with_visibility_and_totals
         cart_id = f"bev_cart_{run_idx}" if "sync" not in str(run_idx) else f"bev_cart_sync_{run_idx}"
+
+        # Build tracks mapping; split golfers per group if group_id present
+        tracks: Dict[str, List[Dict]] = {}
+        if golfer_points:
+            if any("group_id" in p for p in golfer_points):
+                grouped: Dict[int, List[Dict]] = {}
+                for p in golfer_points:
+                    gid = int(p.get("group_id", 1))
+                    grouped.setdefault(gid, []).append(p)
+                for gid, pts in grouped.items():
+                    tracks[f"golfer_group_{gid}"] = pts
+            else:
+                tracks["golfer_1"] = golfer_points
+        if bev_points:
+            tracks[cart_id] = bev_points
+
         write_coordinates_csv_with_visibility_and_totals(
-            {"golfer_1": golfer_points, cart_id: bev_points}, 
+            tracks,
             output_dir / "coordinates.csv",
             sales_data=sales_result.get("sales", []),
             enable_visibility_tracking=True,
-            enable_running_totals=True
+            enable_running_totals=True,
         )
     
     # Generate visualizations if requested
     if include_visualizations:
         _generate_phase3_visualizations(simulation_result, output_dir)
     
-    # Generate stats file
-    bev_cart_loop_min = 180  # Default
-    if simulation_result["type"] == "standard" and "beverage_cart_service" in simulation_result:
-        svc = simulation_result["beverage_cart_service"]
-        bev_cart_loop_min = getattr(svc, "bev_cart_18_holes_minutes", 180)
-    elif simulation_result["type"] == "synchronized":
-        sync_timing = simulation_result.get("sync_timing", {})
-        bev_cart_loop_min = sync_timing.get("bev_cart_hole_total_s", 600) // 60
-    
-    write_phase3_stats_file(
-        sales_result,
-        output_dir / "stats.md",
-        tee_time_s,
-        bev_cart_loop_min,
-        pass_events,
-        simulation_result.get("simulation_runtime_s", 0.0),
-    )
+    # Generate stats file (optional)
+    if include_stats:
+        bev_cart_loop_min = 180  # Default
+        if simulation_result["type"] == "standard" and "beverage_cart_service" in simulation_result:
+            svc = simulation_result["beverage_cart_service"]
+            bev_cart_loop_min = getattr(svc, "bev_cart_18_holes_minutes", 180)
+        elif simulation_result["type"] == "synchronized":
+            sync_timing = simulation_result.get("sync_timing", {})
+            bev_cart_loop_min = sync_timing.get("bev_cart_hole_total_s", 600) // 60
+        
+        write_phase3_stats_file(
+            sales_result,
+            output_dir / "stats.md",
+            tee_time_s,
+            bev_cart_loop_min,
+            pass_events,
+            simulation_result.get("simulation_runtime_s", 0.0),
+        )
+
+    # Always generate beverage cart metrics report if bev cart coordinates are present
+    try:
+        bev_points = simulation_result.get("bev_points", []) or []
+        if bev_points:
+            sales = sales_result.get("sales", []) or []
+            golfer_points = simulation_result.get("golfer_points", []) or []
+            svc = simulation_result.get("beverage_cart_service")
+            service_start_s = int(getattr(svc, "service_start_s", (9 - 7) * 3600) if svc else (9 - 7) * 3600)
+            service_end_s = int(getattr(svc, "service_end_s", (17 - 7) * 3600) if svc else (17 - 7) * 3600)
+            run_idx = int(simulation_result.get("run_idx", 1))
+            cart_id = getattr(svc, "cart_id", "bev_cart_1") if svc else "bev_cart_1"
+
+            metrics = calculate_bev_cart_metrics(
+                sales_data=sales,
+                coordinates=bev_points,
+                golfer_data=golfer_points,
+                service_start_s=service_start_s,
+                service_end_s=service_end_s,
+                simulation_id=f"phase3_run_{run_idx:02d}",
+                cart_id=cart_id,
+            )
+            (output_dir / "metrics_report.md").write_text(
+                format_bev_metrics_report(metrics), encoding="utf-8"
+            )
+    except Exception:
+        # Non-fatal; proceed without metrics if any input is missing
+        pass
 
 
 def _generate_phase3_visualizations(simulation_result: Dict, output_dir: Path) -> None:
@@ -207,6 +257,8 @@ def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
         
     revenues = [float(r.get("revenue", 0.0)) for r in results]
     sales_counts = [int(r.get("num_sales", 0)) for r in results]
+    total_revenue = sum(revenues)
+    total_sales = sum(sales_counts)
     
     lines: List[str] = [
         "# Phase 3 — Bev cart + 1 group (5-run summary)",
@@ -214,6 +266,8 @@ def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
         f"Runs: {len(results)}",
         f"Revenue per run: min={min(revenues):.2f}, max={max(revenues):.2f}, mean={(sum(revenues)/len(revenues)):.2f}",
         f"Sales per run: min={min(sales_counts)}, max={max(sales_counts)}, mean={(sum(sales_counts)/len(sales_counts)):.1f}",
+        f"Total revenue (all runs): ${total_revenue:.2f}",
+        f"Total sales (all runs): {total_sales}",
         "",
         "## Run Details",
     ]
@@ -271,7 +325,7 @@ def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
     lines.append("## Artifacts")
     for r in results:
         ridx = r.get("run_idx", 0)
-        lines.append(f"- Run {ridx:02d}: bev_cart_route.png + sales.json + result.json + stats.md")
+        lines.append(f"- Run {ridx:02d}: bev_cart_route.png + sales.json + result.json + coordinates.csv")
         
     lines.append("")
     (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
@@ -695,6 +749,7 @@ def save_phase4_output_files(
     output_dir: Path,
     include_coordinates: bool = True,
     include_visualizations: bool = True,
+    include_stats: bool = True,
 ) -> None:
     """
     Save all output files for a Phase 4 simulation.
@@ -756,23 +811,52 @@ def save_phase4_output_files(
     if include_visualizations:
         _generate_phase4_visualizations(simulation_result, output_dir)
     
-    # Generate stats file
-    bev_cart_loop_min = 180  # Default
-    if simulation_result["type"] == "standard" and "beverage_cart_service" in simulation_result:
-        svc = simulation_result["beverage_cart_service"]
-        bev_cart_loop_min = getattr(svc, "bev_cart_18_holes_minutes", 180)
-    elif simulation_result["type"] == "synchronized":
-        sync_timing = simulation_result.get("sync_timing", {})
-        bev_cart_loop_min = sync_timing.get("bev_cart_hole_total_s", 600) // 60
-    
-    write_phase4_stats_file(
-        sales_result,
-        output_dir / "stats.md",
-        groups,
-        bev_cart_loop_min,
-        pass_events,
-        simulation_result.get("simulation_runtime_s", 0.0),
-    )
+    # Generate stats file (optional)
+    if include_stats:
+        bev_cart_loop_min = 180  # Default
+        if simulation_result["type"] == "standard" and "beverage_cart_service" in simulation_result:
+            svc = simulation_result["beverage_cart_service"]
+            bev_cart_loop_min = getattr(svc, "bev_cart_18_holes_minutes", 180)
+        elif simulation_result["type"] == "synchronized":
+            sync_timing = simulation_result.get("sync_timing", {})
+            bev_cart_loop_min = sync_timing.get("bev_cart_hole_total_s", 600) // 60
+        
+        write_phase4_stats_file(
+            sales_result,
+            output_dir / "stats.md",
+            groups,
+            bev_cart_loop_min,
+            pass_events,
+            simulation_result.get("simulation_runtime_s", 0.0),
+        )
+
+    # Always generate beverage cart metrics report if bev cart coordinates are present
+    try:
+        bev_points = simulation_result.get("bev_points", []) or []
+        if bev_points:
+            sales = sales_result.get("sales", []) or []
+            golfer_points = simulation_result.get("golfer_points", []) or []
+            svc = simulation_result.get("beverage_cart_service")
+            service_start_s = int(getattr(svc, "service_start_s", (9 - 7) * 3600) if svc else (9 - 7) * 3600)
+            service_end_s = int(getattr(svc, "service_end_s", (17 - 7) * 3600) if svc else (17 - 7) * 3600)
+            run_idx = int(simulation_result.get("run_idx", 1))
+            cart_id = getattr(svc, "cart_id", "bev_cart_1") if svc else "bev_cart_1"
+
+            metrics = calculate_bev_cart_metrics(
+                sales_data=sales,
+                coordinates=bev_points,
+                golfer_data=golfer_points,
+                service_start_s=service_start_s,
+                service_end_s=service_end_s,
+                simulation_id=f"phase4_run_{run_idx:02d}",
+                cart_id=cart_id,
+            )
+            (output_dir / "metrics_report.md").write_text(
+                format_bev_metrics_report(metrics), encoding="utf-8"
+            )
+    except Exception:
+        # Non-fatal; proceed without metrics if any input is missing
+        pass
 
 
 def _generate_phase4_visualizations(simulation_result: Dict, output_dir: Path) -> None:
@@ -813,6 +897,8 @@ def write_phase4_summary(results: List[Dict], output_root: Path) -> None:
         
     revenues = [float(r.get("revenue", 0.0)) for r in results]
     sales_counts = [int(r.get("num_sales", 0)) for r in results]
+    total_revenue = sum(revenues)
+    total_sales = sum(sales_counts)
     
     lines: List[str] = [
         "# Phase 4 — Bev cart + 4 groups (15-min intervals, 5-run summary)",
@@ -820,6 +906,8 @@ def write_phase4_summary(results: List[Dict], output_root: Path) -> None:
         f"Runs: {len(results)}",
         f"Revenue per run: min={min(revenues):.2f}, max={max(revenues):.2f}, mean={(sum(revenues)/len(revenues)):.2f}",
         f"Sales per run: min={min(sales_counts)}, max={max(sales_counts)}, mean={(sum(sales_counts)/len(sales_counts)):.1f}",
+        f"Total revenue (all runs): ${total_revenue:.2f}",
+        f"Total sales (all runs): {total_sales}",
         "",
         "## Run Details",
     ]
@@ -880,7 +968,7 @@ def write_phase4_summary(results: List[Dict], output_root: Path) -> None:
     lines.append("## Artifacts")
     for r in results:
         ridx = r.get("run_idx", 0)
-        lines.append(f"- Run {ridx:02d}: bev_cart_route.png + sales.json + result.json + stats.md")
+        lines.append(f"- Run {ridx:02d}: bev_cart_route.png + sales.json + result.json + coordinates.csv")
         
     lines.append("")
     (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")

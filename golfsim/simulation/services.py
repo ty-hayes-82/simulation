@@ -347,6 +347,7 @@ class BeverageCartService:
     course_dir: str
     cart_id: str = "bev_cart_1"
     track_coordinates: bool = True
+    starting_hole: int = 18  # New parameter for custom starting hole
 
     coordinates: List[Dict] = field(default_factory=list)
     activity_log: List[Dict] = field(default_factory=list)
@@ -389,6 +390,40 @@ class BeverageCartService:
         logger.info("Beverage cart 18-hole circuit time: %d minutes", self.bev_cart_18_holes_minutes)
 
     # -------------------- Loop points utilities --------------------
+    def _build_hole_sequence(self, minutes_per_loop: int) -> List[int]:
+        """Build hole sequence based on starting hole.
+        
+        Cart 1 (starting_hole=18): 18→17→16→...→1 (standard reverse)
+        Cart 2 (starting_hole=9): 9→8→7→...→1→18→17→...→10→9 (start at 9, complete full circuit)
+        """
+        minutes_per_hole_in_loop = minutes_per_loop / 18.0
+        hole_sequence: List[int] = []
+        
+        if self.starting_hole == 18:
+            # Standard reverse route: 18→1
+            for hole_num in range(18, 0, -1):  # 18..1
+                hole_minutes = int(minutes_per_hole_in_loop)
+                hole_sequence.extend([hole_num] * hole_minutes)
+        elif self.starting_hole == 9:
+            # Cart 2 route: 9→8→7→6→5→4→3→2→1→18→17→16→15→14→13→12→11→10→9
+            # Start at 9, go down to 1, then 18 down to 10, then back to 9
+            sequence = list(range(9, 0, -1)) + list(range(18, 9, -1))  # [9,8,7,6,5,4,3,2,1,18,17,16,15,14,13,12,11,10]
+            for hole_num in sequence:
+                hole_minutes = int(minutes_per_hole_in_loop)
+                hole_sequence.extend([hole_num] * hole_minutes)
+        else:
+            # Default to standard reverse for other starting holes
+            for hole_num in range(18, 0, -1):
+                hole_minutes = int(minutes_per_hole_in_loop)
+                hole_sequence.extend([hole_num] * hole_minutes)
+        
+        # Ensure we have exactly minutes_per_loop minutes
+        while len(hole_sequence) < minutes_per_loop:
+            hole_sequence.append(hole_sequence[-1] if hole_sequence else 1)
+        hole_sequence = hole_sequence[:minutes_per_loop]
+        
+        return hole_sequence
+    
     @staticmethod
     def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
         import math
@@ -529,7 +564,7 @@ class BeverageCartService:
         try:
             loop_points = self._load_or_build_loop_points()
 
-            # Load hole lines to annotate current_hole by nearest segment
+            # Load hole lines (optional; current_hole will be time-based for 18→1 traversal)
             import json
             from shapely.geometry import LineString, Point
 
@@ -549,6 +584,7 @@ class BeverageCartService:
                         hole_lines[hole_num] = LineString(coords)
 
             def nearest_hole(lon: float, lat: float) -> int | None:
+                # Retained for potential diagnostics; not used for assignment
                 if not hole_lines:
                     return None
                 pt = Point(lon, lat)
@@ -564,7 +600,7 @@ class BeverageCartService:
             # Build timestamps at 60s from start to end (inclusive)
             timestamps = list(range(int(self.service_start_s), int(self.service_end_s) + 1, 60))
 
-            # Start at clubhouse at opening, but indicate starting hole 18 for route
+            # Start at clubhouse at opening and label as starting on the configured hole
             club_lon, club_lat = self.clubhouse_coords or (0.0, 0.0)
             if timestamps:
                 self.coordinates.append(
@@ -573,7 +609,7 @@ class BeverageCartService:
                         "longitude": float(club_lon),
                         "timestamp": int(timestamps[0]),
                         "type": "bev_cart",
-                        "current_hole": 18,  # Start at hole 18 for reverse route
+                        "current_hole": self.starting_hole,
                     }
                 )
 
@@ -582,35 +618,31 @@ class BeverageCartService:
                 points = loop_points
                 num_points = len(points)
                 minutes_per_loop = max(1, int(self.bev_cart_18_holes_minutes))
-                # Start at the beginning of the route (hole 18) - no rotation needed
-                # since _build_bev_cart_segments already builds the route in reverse order (18→1)
-                rotated = points
+                # Traverse the loop in reverse so the cart goes 18→1
+                rotated = list(reversed(points))
 
-                # Build hole sequence for the route (18→1 repeating)
-                # Assuming 10 minutes per hole in the 180-minute loop
-                minutes_per_hole_in_loop = minutes_per_loop / 18.0
-                hole_sequence = []
-                for hole_num in range(18, 0, -1):  # 18, 17, 16, ..., 1
-                    hole_minutes = int(minutes_per_hole_in_loop)
-                    hole_sequence.extend([hole_num] * hole_minutes)
-                
-                # Pad to exactly the loop duration
-                while len(hole_sequence) < minutes_per_loop:
-                    hole_sequence.append(1)  # Fill remainder with hole 1
-                hole_sequence = hole_sequence[:minutes_per_loop]  # Trim if over
+                # Build hole sequence based on starting hole
+                hole_sequence = self._build_hole_sequence(minutes_per_loop)
 
                 # Advance through the loop so one full loop takes minutes_per_loop minutes,
                 # even if we have a different number of prebuilt points
                 step_per_minute = num_points / float(minutes_per_loop)
-                pos = 0.0
+                
+                # Adjust starting position based on starting hole
+                if self.starting_hole == 9:
+                    # Cart 2 starts at hole 9, which is roughly halfway through the course
+                    # Start at roughly the middle of the loop
+                    pos = num_points * 0.5
+                else:
+                    # Cart 1 starts at the beginning (hole 18)
+                    pos = 0.0
                 for i, t in enumerate(timestamps[1:]):
                     idx0 = int(math.floor(pos)) % num_points
                     idx1 = (idx0 + 1) % num_points
                     frac = pos - math.floor(pos)
                     lon = rotated[idx0][0] + frac * (rotated[idx1][0] - rotated[idx0][0])
                     lat = rotated[idx0][1] + frac * (rotated[idx1][1] - rotated[idx0][1])
-                    
-                    # Determine current hole based on time position in loop
+
                     minutes_into_loop = i % minutes_per_loop
                     current_hole = hole_sequence[minutes_into_loop]
                     

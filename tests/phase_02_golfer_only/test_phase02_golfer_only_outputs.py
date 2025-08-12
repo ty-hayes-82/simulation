@@ -60,6 +60,33 @@ def test_phase02_generates_5_runs_with_artifacts() -> None:
         first_ts = times[0]
         assert any(abs(first_ts - s) < 1e-6 for s in valid_starts), f"first timestamp {first_ts} not aligned to any tee-time hour"
 
+        # Directional correctness: golfer holes must proceed 1→18
+        with (sim_dir / "coordinates.csv").open("r", encoding="utf-8") as f:
+            reader = _csv.DictReader(f)
+            # Only consider rows for golfer_1
+            hole_rows = [r for r in reader if r.get("id") == "golfer_1"]
+        assert hole_rows, "no golfer_1 rows"
+        holes = []
+        for r in hole_rows:
+            try:
+                holes.append(int(r.get("hole", 0)))
+            except Exception:
+                pass
+        assert holes, "no hole annotations for golfer_1"
+        assert 1 in holes and 18 in holes
+        # Start on hole 1
+        assert holes[0] == 1
+        # Allow repeats within a hole and upward transitions by +1, plus wrap 18→1 only if track loops
+        for prev, nxt in zip(holes, holes[1:]):
+            if nxt == prev:
+                continue
+            if prev == 18:
+                # Some runs may finish before wrapping; tolerate either staying at 18 near end
+                # but if it changes from 18, it must wrap to 1
+                assert nxt in (18, 1), f"Expected possibly wrap 18→1, got 18→{nxt}"
+            else:
+                assert nxt == prev + 1, f"Expected increment by 1 from {prev}, got {nxt}"
+
     assert (phase_dir / "summary.md").is_file(), "Missing summary.md at root"
 
 

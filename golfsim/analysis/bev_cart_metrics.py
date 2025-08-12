@@ -306,14 +306,16 @@ def summarize_bev_cart_metrics(metrics_list: List[BevCartMetrics]) -> Dict[str, 
                 "mean": sum(numeric_values) / len(numeric_values),
                 "min": min(numeric_values),
                 "max": max(numeric_values),
+                "sum": sum(numeric_values),
                 "count": len(numeric_values),
-                "total_simulations": len(metrics_list)
+                "total_simulations": len(metrics_list),
             }
         else:
             summary["metrics"][metric_name] = {
                 "mean": 0.0,
                 "min": 0.0,
                 "max": 0.0,
+                "sum": 0.0,
                 "count": 0,
                 "total_simulations": len(metrics_list)
             }
@@ -393,10 +395,14 @@ def format_summary_report(summary: Dict[str, Any]) -> str:
                     lines.append(f"- {metric_name.replace('_', ' ').title()}: {metric_data['mean']:.1%} (min: {metric_data['min']:.1%}, max: {metric_data['max']:.1%})")
                 elif metric_name in ["total_orders", "unique_customers", "total_holes_covered", "customers_with_multiple_orders", "total_visibility_events", "rounds_in_service_window"]:
                     # Format as integers
-                    lines.append(f"- {metric_name.replace('_', ' ').title()}: {metric_data['mean']:.0f} (min: {metric_data['min']:.0f}, max: {metric_data['max']:.0f})")
+                    lines.append(f"- {metric_name.replace('_', ' ').title()}: mean={metric_data['mean']:.0f}, sum={metric_data['sum']:.0f} (min: {metric_data['min']:.0f}, max: {metric_data['max']:.0f})")
                 else:
                     # Format as decimals
-                    lines.append(f"- {metric_name.replace('_', ' ').title()}: {metric_data['mean']:.2f} (min: {metric_data['min']:.2f}, max: {metric_data['max']:.2f})")
+                    # For monetary or rate per hour metrics, include sum as well
+                    if metric_name in ["total_revenue", "total_tips"]:
+                        lines.append(f"- {metric_name.replace('_', ' ').title()}: mean=${metric_data['mean']:.2f}, sum=${metric_data['sum']:.2f} (min: ${metric_data['min']:.2f}, max: ${metric_data['max']:.2f})")
+                    else:
+                        lines.append(f"- {metric_name.replace('_', ' ').title()}: mean={metric_data['mean']:.2f}, sum={metric_data['sum']:.2f} (min: {metric_data['min']:.2f}, max: {metric_data['max']:.2f})")
         lines.append("")
     
     return "\n".join(lines)
