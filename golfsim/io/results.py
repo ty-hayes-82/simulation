@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from golfsim.logging import get_logger
+from golfsim.io.adapters import normalize_coordinate_entry_inplace
 
 
 logger = get_logger(__name__)
@@ -253,6 +254,8 @@ def write_unified_coordinates_csv(points_by_id: Dict[str, List[Dict[str, Any]]],
         for stream_id, points in points_by_id.items():
             for p in points or []:
                 entry = dict(p)
+                # Normalize legacy keys in-place before conversion
+                entry = normalize_coordinate_entry_inplace(entry)
                 if "id" not in entry or not entry.get("id"):
                     entry["id"] = stream_id
                 row = normalize_coordinate_entry(entry)
