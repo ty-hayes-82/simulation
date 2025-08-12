@@ -10,6 +10,15 @@ from ..config.loaders import load_simulation_config
 from ..logging import get_logger
 from ..utils.time import seconds_since_7am
 from ..io.results import SimulationResult
+# Re-exports for split services (backward compatibility)
+try:
+    from .bev_cart_service import BeverageCartService  # type: ignore  # noqa: F401
+    from .delivery_service import SingleRunnerDeliveryService as SplitSingleRunnerDeliveryService, DeliveryOrder as SplitDeliveryOrder  # type: ignore  # noqa: F401
+except Exception:
+    # During refactor or partial environments, allow fallback to inline definitions below
+    BeverageCartService = None  # type: ignore
+    SplitSingleRunnerDeliveryService = None  # type: ignore
+    SplitDeliveryOrder = None  # type: ignore
 
 
 logger = get_logger(__name__)
