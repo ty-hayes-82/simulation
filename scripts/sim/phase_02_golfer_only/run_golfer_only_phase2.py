@@ -7,6 +7,7 @@ from typing import Dict, List
 from golfsim.logging import init_logging, get_logger
 from golfsim.simulation.phase_simulations import generate_golfer_track
 from golfsim.io.phase_reporting import save_phase3_output_files, write_phase3_summary
+from golfsim.viz.matplotlib_viz import render_beverage_cart_plot
 
 
 logger = get_logger(__name__)
@@ -41,7 +42,13 @@ def main() -> None:
         }
 
         run_dir = output_root / f"sim_{run_idx:02d}"
+        # Save coordinates and also a golfer PNG (tests expect a PNG)
         save_phase3_output_files(sim_result, run_dir, include_coordinates=True, include_visualizations=False, include_stats=False)
+        try:
+            # Render golfer path using the same renderer; it will plot points even without cart
+            render_beverage_cart_plot(golfer_points, course_dir=course_dir, save_path=run_dir / "golfer_route.png", title="Golfer Route (Phase 2)")
+        except Exception:
+            pass
 
         summary_rows.append({
             "run_idx": run_idx,
