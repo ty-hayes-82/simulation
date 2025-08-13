@@ -21,6 +21,7 @@ import pandas as pd
 from shapely.geometry import LineString, Point
 
 from ..logging import get_logger
+from golfsim.utils.time import format_time_from_baseline
 
 logger = get_logger(__name__)
 
@@ -736,6 +737,321 @@ def setup_plot_styling(ax, results: Dict, course_name: str, clubhouse_coords: Tu
     # Position legend outside the plot area on the right
     ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), fontsize=10)
     ax.set_aspect('equal')
+
+
+def render_individual_order_maps(results: Dict, course_data: Dict, clubhouse_coords: Tuple[float, float],
+                               runner_coords: Optional[pd.DataFrame] = None,
+                               cart_graph: Optional[nx.Graph] = None,
+                               output_dir: str | Path = ".",
+                               course_name: str = "Golf Course",
+                               style: str = "simple") -> List[Path]:
+    """
+    Create individual delivery maps for each delivered order.
+    
+    Args:
+        results: Simulation results dictionary
+        course_data: Dictionary containing geospatial course data
+        clubhouse_coords: Tuple of (longitude, latitude) for clubhouse
+        runner_coords: DataFrame with runner position tracking (optional)
+        cart_graph: Cart path network graph (optional)
+        output_dir: Directory to save individual order maps
+        course_name: Name of the golf course
+        style: Visualization style ("simple" or "detailed")
+        
+    Returns:
+        List of paths to saved individual order visualization files
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    saved_paths = []
+    orders = results.get('orders', [])
+    
+    # Filter to only delivered orders (status == "processed")
+    delivered_orders = [order for order in orders if order.get('status') == 'processed']
+    
+    logger.info("Total orders: %d, Delivered orders: %d", len(orders), len(delivered_orders))
+    logger.info("Creating %d individual order maps in: %s", len(delivered_orders), output_dir)
+    
+    # Helpers to locate hole-related points from GeoDataFrames
+    def _get_green_centroid(hole_num_val: int) -> Optional[Tuple[float, float]]:
+        try:
+            greens_gdf = course_data.get('greens')
+            if greens_gdf is not None and len(greens_gdf) > 0 and 'ref' in greens_gdf.columns:
+                rows = greens_gdf[greens_gdf['ref'].astype(str) == str(hole_num_val)]
+                if len(rows) > 0:
+                    geom = rows.iloc[0].geometry
+                    centroid = geom.centroid
+                    return (float(centroid.x), float(centroid.y))
+        except Exception:
+            pass
+        return None
+
+    def _get_hole_start_end(hole_num_val: int) -> Tuple[Optional[Tuple[float, float]], Optional[Tuple[float, float]]]:
+        start_pt = None
+        end_pt = None
+        try:
+            holes_gdf = course_data.get('holes')
+            if holes_gdf is not None and len(holes_gdf) > 0:
+                # property may be 'ref' as string
+                ref_col = 'ref' if 'ref' in holes_gdf.columns else None
+                if ref_col is not None:
+                    rows = holes_gdf[holes_gdf[ref_col].astype(str) == str(hole_num_val)]
+                else:
+                    rows = holes_gdf.iloc[0:0]
+                if len(rows) > 0:
+                    line = rows.iloc[0].geometry
+                    if line is not None and hasattr(line, 'coords'):
+                        coords = list(line.coords)
+                        if len(coords) >= 2:
+                            start_pt = (float(coords[0][0]), float(coords[0][1]))
+                            end_pt = (float(coords[-1][0]), float(coords[-1][1]))
+        except Exception:
+            pass
+        return start_pt, end_pt
+
+    def _get_tee_point(hole_num_val: int) -> Optional[Tuple[float, float]]:
+        try:
+            tees_gdf = course_data.get('tees')
+            if tees_gdf is not None and len(tees_gdf) > 0 and 'ref' in tees_gdf.columns:
+                rows = tees_gdf[tees_gdf['ref'].astype(str) == str(hole_num_val)]
+                if len(rows) > 0:
+                    geom = rows.iloc[0].geometry
+                    if geom.geom_type == 'Point':
+                        return (float(geom.x), float(geom.y))
+        except Exception:
+            pass
+        return None
+
+    for order in delivered_orders:
+        order_id = order.get('order_id', 'unknown')
+        hole_num = order.get('hole_num', 'unknown')
+        golfer_id = order.get('golfer_id', 'unknown')
+        # Per-order stats (drive time, queue delay)
+        ds_list = results.get('delivery_stats', []) or []
+        ds = next((d for d in ds_list if str(d.get('order_id')) == str(order_id)), None)
+        delivery_time_s = float(ds.get('delivery_time_s', 0.0)) if ds else 0.0
+        queue_delay_s = float(ds.get('queue_delay_s', 0.0)) if ds else 0.0
+        
+        # Create figure for this specific order
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+        
+        # Plot course features
+        if style == "simple":
+            plot_course_boundary(ax, course_data)
+        else:
+            plot_course_features(ax, course_data)
+        
+        # Plot cart network if available
+        if cart_graph:
+            plot_cart_network(ax, cart_graph, alpha=0.3)
+        
+        # Plot clubhouse
+        ax.plot(
+            clubhouse_coords[0], clubhouse_coords[1],
+            's',
+            markersize=12,
+            color='red',
+            label='Clubhouse',
+            markeredgecolor='darkred',
+            markeredgewidth=2,
+            zorder=10,
+        )
+        
+        # Find placed and delivery locations using GeoDataFrames
+        logger.info("Order %s: Looking for hole %s", order_id, hole_num)
+        hole_start, hole_end = _get_hole_start_end(int(hole_num))
+        tee_point = _get_tee_point(int(hole_num))
+        green_centroid = _get_green_centroid(int(hole_num))
+
+        placed_location = tee_point or hole_start
+        # Delivery target priority: green centroid > hole end > midpoint of hole line
+        delivery_location = green_centroid or hole_end
+        if not delivery_location and hole_start is not None and hole_end is not None:
+            delivery_location = ((hole_start[0] + hole_end[0]) / 2.0, (hole_start[1] + hole_end[1]) / 2.0)
+        if not delivery_location:
+            logger.warning("Order %s: Could not find delivery location for hole %s", order_id, hole_num)
+        
+        # Plot order placed location
+        if placed_location:
+            ax.plot(
+                placed_location[0], placed_location[1],
+                'o', markersize=10, color='blue', label='Order Placed', zorder=10,
+            )
+            ax.annotate(
+                f'Placed (Hole {hole_num})', xy=placed_location, xytext=(10, -15),
+                textcoords='offset points', fontsize=9, bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7),
+            )
+            # Show order placed clock time if available
+            try:
+                _order_time_s = int(float(order.get('order_time_s', 0) or 0))
+                if _order_time_s > 0:
+                    _clock = format_time_from_baseline(_order_time_s)
+                    ax.annotate(
+                        f'{_clock}', xy=placed_location, xytext=(10, -32),
+                        textcoords='offset points', fontsize=9, color='black',
+                        bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.9),
+                    )
+            except Exception:
+                pass
+
+        # Delivered marker: draw only at actual route end when available; else fallback
+        delivered_marker_xy = None
+        fallback_delivery_location = delivery_location
+        
+        # Plot runner path for this specific order if coordinates are available
+        if runner_coords is not None and len(runner_coords) > 0:
+            # Prefer precise delivery window from delivery_stats: clubhouse -> golfer leg
+            order_time_s = float(order.get('order_time_s', 0) or 0)
+            completion_time_s = float(order.get('total_completion_time_s', 0) or 0)
+
+            if ds is not None:
+                delivered_at = float(ds.get('delivered_at_time_s', order_time_s + completion_time_s) or 0)
+                delivery_time = float(ds.get('delivery_time_s', completion_time_s) or 0)
+                start_time = delivered_at - delivery_time
+                end_time = delivered_at
+            else:
+                # Fallback to broad window around order
+                start_time = order_time_s - 300
+                end_time = order_time_s + completion_time_s + 300
+            
+            # Check available time column (could be 'time_s' or 'timestamp')
+            time_col = None
+            if 'time_s' in runner_coords.columns:
+                time_col = 'time_s'
+            elif 'timestamp' in runner_coords.columns:
+                time_col = 'timestamp'
+            
+            if time_col:
+                order_coords = runner_coords[
+                    (runner_coords[time_col] >= start_time) &
+                    (runner_coords[time_col] <= end_time) &
+                    (runner_coords['type'].str.lower().isin(['runner','delivery-runner']))
+                ].copy()
+                
+                if len(order_coords) > 0:
+                    # If we know the exact delivered_at time, trim path to that precise point
+                    if ds is not None:
+                        try:
+                            delivered_at = float(ds.get('delivered_at_time_s', end_time) or end_time)
+                            times_arr = order_coords[time_col].astype(float).to_numpy()
+                            if len(times_arr) > 0:
+                                nearest_idx = int(np.argmin(np.abs(times_arr - delivered_at)))
+                                if nearest_idx >= 0:
+                                    order_coords = order_coords.iloc[: nearest_idx + 1]
+                        except Exception:
+                            pass
+
+                    lons = order_coords['longitude'].values
+                    lats = order_coords['latitude'].values
+                    
+                    # Plot the delivery route for this order
+                    ax.plot(
+                        lons, lats,
+                        color='orange',
+                        linewidth=4,
+                        alpha=0.8,
+                        label='Delivery Path',
+                        linestyle='-',
+                        zorder=6,
+                    )
+                    # Ensure delivered marker exactly matches route end
+                    if len(lons) > 0:
+                        end_xy = (float(lons[-1]), float(lats[-1]))
+                        # Draw delivered marker only here (no duplicate at predicted spot)
+                        delivered_marker_xy = end_xy
+                        ax.plot(
+                            end_xy[0], end_xy[1],
+                            'D', markersize=12, color='green', label='Delivered',
+                            markeredgecolor='darkgreen', markeredgewidth=2, zorder=12,
+                        )
+                        ax.annotate(
+                            f'Order {order_id} delivered', xy=end_xy, xytext=(10, 10),
+                            textcoords='offset points', bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.8),
+                            fontsize=10, fontweight='bold', zorder=13
+                        )
+
+                        # Ensure path shows from clubhouse -> first point if not already there
+                        try:
+                            dx = abs(lons[0] - clubhouse_coords[0])
+                            dy = abs(lats[0] - clubhouse_coords[1])
+                            if dx + dy > 0.0005:  # ~50m threshold
+                                ax.plot([clubhouse_coords[0], lons[0]], [clubhouse_coords[1], lats[0]],
+                                        color='orange', linewidth=3, alpha=0.5, linestyle='--', zorder=5,
+                                        label='Clubhouse to Route')
+                        except Exception:
+                            pass
+        
+        # If we didn't draw from route end, fallback to delivery location
+        if delivered_marker_xy is None and fallback_delivery_location is not None:
+            delivered_marker_xy = fallback_delivery_location
+            ax.plot(
+                delivered_marker_xy[0], delivered_marker_xy[1],
+                'D', markersize=12, color='green', label='Delivered',
+                markeredgecolor='darkgreen', markeredgewidth=2, zorder=10,
+            )
+            ax.annotate(
+                f'Order {order_id} delivered', xy=delivered_marker_xy, xytext=(10, 10),
+                textcoords='offset points', bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.8),
+                fontsize=10, fontweight='bold', zorder=11
+            )
+
+        # Set up plot styling
+        course_bounds = calculate_course_bounds(course_data)
+        
+        # Title and labels
+        title = f"{course_name} - Order {order_id} Delivery\nGolfer {golfer_id} - Hole {hole_num}"
+        
+        if 'total_completion_time_s' in order:
+            completion_time_min = order['total_completion_time_s'] / 60
+            title += f" - Completion: {completion_time_min:.1f} min"
+        # Append drive time, pre-return, and backlog queue delay if available
+        if delivery_time_s > 0:
+            title += f" — Drive: {delivery_time_s/60:.1f} min"
+        if ds is not None:
+            pre_return = float(ds.get('pre_return_time_s', 0.0) or 0.0)
+            if pre_return > 0:
+                title += f" — Return-to-clubhouse: {pre_return/60:.1f} min"
+        if queue_delay_s > 0:
+            title += f" — Queue: {queue_delay_s/60:.1f} min"
+            
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+        ax.set_xlabel('Longitude', fontsize=12)
+        ax.set_ylabel('Latitude', fontsize=12)
+        
+        # Set bounds with some padding
+        if course_bounds:
+            # calculate_course_bounds returns (lon_min, lon_max, lat_min, lat_max)
+            lon_min, lon_max, lat_min, lat_max = course_bounds
+            padding = 0.001
+            ax.set_xlim(lon_min - padding, lon_max + padding)
+            ax.set_ylim(lat_min - padding, lat_max + padding)
+        
+        ax.grid(True, alpha=0.3)
+        # Build a concise legend without background layers or route start/end
+        handles, labels = ax.get_legend_handles_labels()
+        allowed = {
+            'Clubhouse', 'Order Placed', 'Delivered', 'Delivery Path', 'Clubhouse to Route'
+        }
+        filtered = [(h, l) for h, l in zip(handles, labels) if l in allowed]
+        if filtered:
+            fh, fl = zip(*filtered)
+            ax.legend(fh, fl, loc='upper right', fontsize=10)
+        ax.set_aspect('equal')
+        
+        # Save the individual order map
+        order_filename = f"order_{order_id}_hole_{hole_num}_delivery_map.png"
+        save_path = output_dir / order_filename
+        
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        
+        saved_paths.append(save_path)
+        logger.info("Saved individual order map: %s", save_path)
+    
+    logger.info("Generated %d individual order maps", len(saved_paths))
+    return saved_paths
 
 
 def render_delivery_plot(results: Dict, course_data: Dict, clubhouse_coords: Tuple[float, float],

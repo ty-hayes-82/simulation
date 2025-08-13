@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""Archived helper to compare phase CSV hole sequences.
+
+Kept for historical troubleshooting. Prefer using CI tests and unified outputs.
+"""
+
 import csv
 from pathlib import Path
 
@@ -58,5 +63,6 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 

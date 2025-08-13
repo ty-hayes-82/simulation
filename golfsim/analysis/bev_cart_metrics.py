@@ -67,7 +67,7 @@ def calculate_bev_cart_metrics(
     simulation_id: str = "unknown",
     cart_id: str = "bev_cart_1",
     tip_rate_percentage: float = 15.0,  # Default 15% tip rate
-    proximity_threshold_m: float = 70.0,  # 70m proximity for visibility
+    proximity_threshold_m: float = 100.0,  # Align with visibility service default (100m)
     proximity_duration_s: int = 30,  # 30 seconds minimum for visibility event
 ) -> BevCartMetrics:
     """

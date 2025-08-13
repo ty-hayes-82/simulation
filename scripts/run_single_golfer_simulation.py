@@ -11,6 +11,7 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Dict
 
 import pandas as pd
 
@@ -59,12 +60,15 @@ def create_delivery_log(results: Dict, save_path: Path) -> None:
     prep_completed_s = results.get('prep_completed_s', 0)
     delivered_s = results.get('delivered_s', 0)
     runner_returned_s = results.get('runner_returned_s', 0)
+    pickup_delay_s = results.get('pickup_delay_s', 0)
+    pickup_ready_s = results.get('pickup_ready_s', 0)
     
     # Calculate derived times
     prep_duration = prep_completed_s - order_created_s
     delivery_duration = delivered_s - prep_completed_s
     return_duration = runner_returned_s - delivered_s
     total_service_time = results.get('total_service_time_s', 0)
+    pickup_delay_min = pickup_delay_s / 60.0 if pickup_delay_s else 0.0
     
     # Get delivery details
     order_hole = results.get('order_hole', 'Unknown')
@@ -90,6 +94,7 @@ def create_delivery_log(results: Dict, save_path: Path) -> None:
         ("Order Placed", order_created_s, "Customer places order"),
         ("Food Preparation Started", order_created_s, "Kitchen begins preparing order"),
         ("Food Ready", prep_completed_s, "Order prepared and ready for pickup"),
+        ("Runner Available After Delay", pickup_ready_s, f"Runner becomes available after {pickup_delay_min:.1f} min delay"),
         ("Delivery Started", prep_completed_s, "Runner departs from clubhouse"),
         ("Order Delivered", delivered_s, "Customer receives their order"),
         ("Runner Returned", runner_returned_s, "Runner arrives back at clubhouse"),
@@ -108,6 +113,7 @@ def create_delivery_log(results: Dict, save_path: Path) -> None:
         "## Duration Breakdown",
         "",
         f"- **Food Preparation**: {format_time_from_seconds(prep_duration)}",
+        f"- **Pickup Delay**: {format_time_from_seconds(pickup_delay_s)}",
         f"- **Delivery Time**: {format_time_from_seconds(delivery_duration)}",
         f"- **Return Time**: {format_time_from_seconds(return_duration)}",
         f"- **Total Service**: {format_time_from_seconds(total_service_time)}",
@@ -184,6 +190,8 @@ def main() -> int:
                        help="Output directory (default: outputs/simulation_TIMESTAMP)")
     parser.add_argument("--no-visualization", action="store_true",
                        help="Skip creating delivery route visualization")
+    parser.add_argument("--pickup-delay-min", type=int, default=0,
+                       help="Minutes the delivery runner is unavailable before pickup (default: 0)")
     
     args = parser.parse_args()
     init_logging(args.log_level)
@@ -203,6 +211,7 @@ def main() -> int:
     logger.info(f"Prep time: {args.prep_time} minutes")
     logger.info(f"Runner speed: {args.runner_speed} m/s")
     logger.info(f"Enhanced routing: {'No' if args.no_enhanced else 'Yes'}")
+    logger.info(f"Pickup delay: {args.pickup_delay_min} minutes")
     logger.info(f"Output: {output_dir}")
     
     try:
@@ -213,7 +222,8 @@ def main() -> int:
             prep_time_min=args.prep_time,
             runner_speed_mps=args.runner_speed,
             use_enhanced_network=not args.no_enhanced,
-            track_coordinates=not args.no_coordinates
+            track_coordinates=not args.no_coordinates,
+            pickup_delay_min=args.pickup_delay_min,
         )
         
         # Save results using library function

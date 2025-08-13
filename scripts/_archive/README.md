@@ -37,8 +37,17 @@ If you need functionality from an archived script:
 
 ## Current Archive Status
 
-*This archive is currently empty. Scripts will be moved here as part of the ongoing refactoring process when duplicates or obsolete functionality is identified.*
+The following scripts were superseded by the unified runner or exist as older variants. They are retained for reference only and should not be used:
+
+- `scripts/sim/run_bev_cart_dynamic.py` (use `scripts/sim/run_unified_simulation.py --mode bev-carts` or `--mode bev-with-golfers`)
+- `scripts/sim/run_delivery_dynamic.py` (use `scripts/sim/run_unified_simulation.py --mode delivery-runner`)
+- `scripts/sim/run_single_golfer.py` (use `scripts/sim/run_single_golfer_simulation.py` or unified runner)
+- `scripts/sim/run_reference_crossings.py` (experimental; functionality integrated elsewhere)
+- `scripts/sim/build_holes_loop_segments.py` (replaced by `scripts/routing/extract_course_data.py` outputs)
+- `scripts/sim/build_optimal_course_nodes.py` (prototype LCM node builder; not used by production flows)
+- `scripts/sim/generate_lcm_course_nodes.py` (prototype LCM node generator; not used by production flows)
+- `scripts/sim/validate_optimal_nodes.py` (tied to LCM prototypes)
 
 ---
 
-*Last updated: 2024*
+*Last updated: 2025*

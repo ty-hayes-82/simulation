@@ -15,12 +15,16 @@ import osmnx as ox
 import shapely
 from shapely.geometry import Point, Polygon
 
+# Configure osmnx settings for better reliability
+ox.settings.timeout = 300
+ox.settings.max_query_area_size = 50 * 1000 * 1000  # 50 square km
+
 from golfsim.logging import get_logger
 
 logger = get_logger(__name__)
 
 # Overpass timeout (seconds)
-OVERPASS_TIMEOUT = 180
+OVERPASS_TIMEOUT = 300
 
 
 def _geoms_from_place_or_bbox(
@@ -30,7 +34,7 @@ def _geoms_from_place_or_bbox(
     state: Optional[str] = None,
     center_lat: Optional[float] = None,
     center_lon: Optional[float] = None,
-    radius_km: float = 10.0,
+    radius_km: float = 3.0,
 ) -> gpd.GeoDataFrame:
     if (
         within is None
@@ -65,15 +69,27 @@ def _geoms_from_place_or_bbox(
         search_polygon = buffer_latlon.geometry.iloc[0]
 
         try:
-            result = ox.features_from_polygon(search_polygon, tags=tags)
-            if len(result) > 0:
-                logger.info("Found %d features around coordinates", len(result))
-                return result
-            else:
-                logger.warning("No features found around coordinates")
-                raise ValueError(
-                    f"No features found around coordinates {center_lat}, {center_lon} within {radius_km} km"
-                )
+            # Try with retries for network issues
+            import time
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    result = ox.features_from_polygon(search_polygon, tags=tags)
+                    if len(result) > 0:
+                        logger.info("Found %d features around coordinates", len(result))
+                        return result
+                    else:
+                        logger.warning("No features found around coordinates")
+                        raise ValueError(
+                            f"No features found around coordinates {center_lat}, {center_lon} within {radius_km} km"
+                        )
+                except Exception as network_e:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5  # 5, 10, 15 seconds
+                        logger.warning(f"Network attempt {attempt + 1} failed: {network_e}. Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
+                    else:
+                        raise network_e
         except Exception as e:
             logger.error("Search failed around coordinates: %s", e)
             raise ValueError(f"Search failed around coordinates {center_lat}, {center_lon}: {e}")
@@ -136,7 +152,7 @@ def _course_polygon_by_name(
     state: str | None = None,
     center_lat: float | None = None,
     center_lon: float | None = None,
-    radius_km: float = 10.0,
+    radius_km: float = 3.0,
 ) -> Polygon:
     """
     Try to fetch the golf course polygon by name (exact or fuzzy) and leisure=golf_course tag.
@@ -212,7 +228,7 @@ def load_course(
     state: Optional[str] = None,
     center_lat: Optional[float] = None,
     center_lon: Optional[float] = None,
-    radius_km: float = 10.0,
+    radius_km: float = 3.0,
     include_cart_paths: bool = False,
     cartpath_geojson: Optional[str] = None,
     broaden: bool = False,

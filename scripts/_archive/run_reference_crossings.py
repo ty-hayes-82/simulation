@@ -27,7 +27,7 @@ except Exception:  # pragma: no cover - optional
 def main() -> None:
     init_logging("INFO")
 
-    parser = argparse.ArgumentParser(description="Crossings demo using reference logic (no modifications).")
+    parser = argparse.ArgumentParser(description="Crossings demo using reference logic (archived).")
     parser.add_argument(
         "--nodes_geojson",
         type=str,
@@ -156,5 +156,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 

@@ -31,6 +31,8 @@ class DeliveryOrder:
     golfer_id: str
     order_time_s: float
     hole_num: int
+    group_tee_time_s: int = 0
+    minutes_per_hole: float = 12.0
     order_placed_time: Optional[float] = None
     prep_started_time: Optional[float] = None
     prep_completed_time: Optional[float] = None
@@ -210,8 +212,10 @@ class SingleRunnerDeliveryService:
             order.order_id,
         )
 
+        pre_return_time_s = 0.0
         if self.runner_location != "clubhouse":
             return_time = self._calculate_return_time()
+            pre_return_time_s = float(return_time)
             self.log_activity("returning", f"Returning to clubhouse from {self.runner_location} ({return_time/60:.1f} min)", order.order_id, self.runner_location)
             yield self.env.timeout(return_time)
             self.runner_location = "clubhouse"
@@ -223,12 +227,26 @@ class SingleRunnerDeliveryService:
         order.prep_completed_time = self.env.now
         self.log_activity("prep_complete", f"Completed food preparation for Order {order.order_id} ({self.prep_time_s/60:.0f} min)", order.order_id, "clubhouse")
 
-        delivery_distance_m, delivery_time_s = self._calculate_delivery_details(order.hole_num)
+        # Determine target hole at arrival time using golfer pace
+        target_hole = int(order.hole_num)
+        if int(order.group_tee_time_s) > 0 and float(order.minutes_per_hole) > 0:
+            # Iterate to converge arrival time and target hole
+            depart_time = self.env.now
+            for _ in range(4):
+                _, tt_guess = self._calculate_delivery_details(target_hole)
+                arrival_time = depart_time + tt_guess
+                holes_since_tee = int(max(0.0, (arrival_time - float(order.group_tee_time_s))) // float(order.minutes_per_hole * 60.0)) + 1
+                hole_at_arrival = min(18, max(1, holes_since_tee))
+                if hole_at_arrival == target_hole:
+                    break
+                target_hole = hole_at_arrival
+
+        delivery_distance_m, delivery_time_s = self._calculate_delivery_details(target_hole)
         order.delivery_started_time = self.env.now
         self.log_activity("delivery_start", f"Departing clubhouse to deliver Order {order.order_id} to Hole {order.hole_num} ({delivery_distance_m:.0f}m, {delivery_time_s/60:.1f} min)", order.order_id, "clubhouse")
         yield self.env.timeout(delivery_time_s)
         order.delivered_time = self.env.now
-        self.runner_location = f"hole_{order.hole_num}"
+        self.runner_location = f"hole_{target_hole}"
 
         placed_time = order.order_placed_time if order.order_placed_time is not None else order.delivered_time
         order.total_completion_time_s = order.delivered_time - placed_time
@@ -242,11 +260,13 @@ class SingleRunnerDeliveryService:
                 "order_id": order.order_id,
                 "golfer_group_id": order.golfer_group_id,
                 "hole_num": order.hole_num,
+                "delivered_hole_num": int(target_hole),
                 "order_time_s": order.order_time_s,
                 "queue_delay_s": order.queue_delay_s,
                 "prep_time_s": self.prep_time_s,
                 "delivery_time_s": delivery_time_s,
                 "return_time_s": return_time_s,
+                "pre_return_time_s": pre_return_time_s,
                 "total_drive_time_s": total_drive_time_s,
                 "delivery_distance_m": delivery_distance_m,
                 "total_completion_time_s": order.total_completion_time_s,
@@ -315,10 +335,13 @@ def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: fl
         group_id = group["group_id"]
         tee_time_s = group["tee_time_s"]
 
+        # Pull pace from config if provided per group metadata
+        mph = float(group.get("minutes_per_hole", minutes_per_hole))
+
         # Front nine (holes 1..9)
         if random.random() < order_probability_per_9_holes:
             hole_front = int(random.randint(1, 9))
-            order_time_front_s = tee_time_s + (hole_front - 1) * minutes_per_hole * 60
+            order_time_front_s = tee_time_s + (hole_front - 1) * mph * 60
             orders.append(
                 DeliveryOrder(
                     order_id=None,
@@ -326,13 +349,15 @@ def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: fl
                     golfer_id=f"G{group_id}",
                     order_time_s=order_time_front_s,
                     hole_num=hole_front,
+                    group_tee_time_s=tee_time_s,
+                    minutes_per_hole=mph,
                 )
             )
 
         # Back nine (holes 10..18)
         if random.random() < order_probability_per_9_holes:
             hole_back = int(random.randint(10, 18))
-            order_time_back_s = tee_time_s + (hole_back - 1) * minutes_per_hole * 60
+            order_time_back_s = tee_time_s + (hole_back - 1) * mph * 60
             orders.append(
                 DeliveryOrder(
                     order_id=None,
@@ -340,6 +365,8 @@ def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: fl
                     golfer_id=f"G{group_id}",
                     order_time_s=order_time_back_s,
                     hole_num=hole_back,
+                    group_tee_time_s=tee_time_s,
+                    minutes_per_hole=mph,
                 )
             )
 

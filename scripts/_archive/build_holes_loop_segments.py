@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""Archived: replaced by data generated in scripts/routing/extract_course_data.py.
+
+Kept for historical reference.
+"""
+
 import argparse
 import json
 import math
@@ -15,16 +20,10 @@ logger = get_logger(__name__)
 
 
 def haversine_meters(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
-    """Return great-circle distance in meters between two lon/lat points.
-
-    Uses a mean Earth radius of 6371 km.
-    """
-    # Convert degrees to radians
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
-
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return 6371000.0 * c
@@ -33,21 +32,14 @@ def haversine_meters(lon1: float, lat1: float, lon2: float, lat2: float) -> floa
 def _flatten_hole_lines_in_order(
     holes_gdf: gpd.GeoDataFrame, close_loop: bool
 ) -> List[Tuple[float, float]]:
-    """Return a continuous list of (lon, lat) coordinates for holes 1..18.
-
-    - Sorts by the `ref` property numerically
-    - Concatenates each hole `LineString` vertices in order
-    - Optionally appends the first point at the end to close the loop
-    """
     if holes_gdf.empty:
         raise ValueError("Holes GeoDataFrame is empty")
 
-    # Ensure we have the reference numbers as integers
     def _get_ref(v) -> int:
         try:
             return int(v)
         except Exception:
-            return 10**9  # push invalid refs to the end
+            return 10**9
 
     holes_gdf = holes_gdf.copy()
     if "ref" not in holes_gdf.columns:
@@ -62,7 +54,6 @@ def _flatten_hole_lines_in_order(
         if geom is None or geom.is_empty:
             continue
         if geom.geom_type != "LineString":
-            # If MultiLineString or others, take the longest LineString part
             try:
                 longest = max(geom.geoms, key=lambda g: g.length)
                 coords_seq: Iterable[Tuple[float, float]] = longest.coords  # type: ignore[attr-defined]
@@ -74,11 +65,9 @@ def _flatten_hole_lines_in_order(
         for (lon, lat) in coords_seq:
             path_coords.append((float(lon), float(lat)))
 
-    # Optionally close the loop by returning to the first coordinate
     if close_loop and len(path_coords) > 1:
         path_coords.append(path_coords[0])
 
-    # Deduplicate consecutive identical coordinates to avoid zero-length steps
     deduped: List[Tuple[float, float]] = []
     last: Tuple[float, float] | None = None
     for pt in path_coords:
@@ -93,7 +82,6 @@ def _flatten_hole_lines_in_order(
 
 
 def _cumulative_distances(coords: Sequence[Tuple[float, float]]) -> List[float]:
-    """Compute cumulative haversine distances along a polyline."""
     cum: List[float] = [0.0]
     total = 0.0
     for i in range(1, len(coords)):
@@ -106,10 +94,6 @@ def _cumulative_distances(coords: Sequence[Tuple[float, float]]) -> List[float]:
 
 
 def _interpolate_between(p1: Tuple[float, float], p2: Tuple[float, float], frac: float) -> Tuple[float, float]:
-    """Simple linear interpolation in lon/lat space for small steps.
-
-    For short segments typical to hole centerlines, linear interpolation is sufficient.
-    """
     lon = p1[0] + frac * (p2[0] - p1[0])
     lat = p1[1] + frac * (p2[1] - p1[1])
     return (lon, lat)
@@ -118,11 +102,6 @@ def _interpolate_between(p1: Tuple[float, float], p2: Tuple[float, float], frac:
 def resample_path_uniform(
     coords: Sequence[Tuple[float, float]], num_points: int
 ) -> List[Tuple[float, float]]:
-    """Resample a path to a fixed number of points, uniformly by arc length.
-
-    Includes the starting point. If `num_points` > 1, the final point will be at
-    the full path length (end of path).
-    """
     if num_points <= 0:
         raise ValueError("num_points must be positive")
     if len(coords) < 2:
@@ -157,7 +136,6 @@ def write_outputs(
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1) LineString of the ordered holes path
     line_geojson = {
         "type": "FeatureCollection",
         "features": [
@@ -173,7 +151,6 @@ def write_outputs(
     }
     (output_dir / "holes_path_line.geojson").write_text(json.dumps(line_geojson, indent=2))
 
-    # 2) Sampled points as a FeatureCollection
     points_features = [
         {
             "type": "Feature",
@@ -187,56 +164,18 @@ def write_outputs(
         json.dumps(points_geojson, indent=2)
     )
 
-    # 3) Raw points JSON for direct consumption
     raw = {"coordinates": [[lon, lat] for (lon, lat) in sampled_points]}
     (output_dir / "holes_path_points.json").write_text(json.dumps(raw, indent=2))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Build a path from hole 1 to 18 and resample into minute-based segments. "
-            "Outputs GeoJSON and JSON under outputs/holes_path/."
-        )
-    )
-    parser.add_argument(
-        "--course-dir",
-        type=str,
-        default=str(Path("courses") / "pinetree_country_club"),
-        help="Course directory containing a geojson/holes.geojson file",
-    )
-    parser.add_argument(
-        "--total-minutes",
-        type=int,
-        required=True,
-        help="Total minutes to complete the 18-hole loop. Determines number of segments.",
-    )
-    parser.add_argument(
-        "--points-per-minute",
-        type=int,
-        default=1,
-        help=(
-            "How many points to sample per minute. For example, 2 means 2 points per minute. "
-            "Total points = total_minutes * points_per_minute."
-        ),
-    )
-    parser.add_argument(
-        "--close-loop",
-        action="store_true",
-        help="Close the loop by returning to the starting point after hole 18.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=str(Path("outputs") / "holes_path"),
-        help="Directory to write outputs",
-    )
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        default="INFO",
-        help="Logging level: DEBUG, INFO, WARNING, ERROR",
-    )
+    parser = argparse.ArgumentParser(description=("Build a path from hole 1 to 18 and resample into segments (archived)."))
+    parser.add_argument("--course-dir", type=str, default=str(Path("courses") / "pinetree_country_club"))
+    parser.add_argument("--total-minutes", type=int, required=True)
+    parser.add_argument("--points-per-minute", type=int, default=1)
+    parser.add_argument("--close-loop", action="store_true")
+    parser.add_argument("--output-dir", type=str, default=str(Path("outputs") / "holes_path"))
+    parser.add_argument("--log-level", type=str, default="INFO")
 
     args = parser.parse_args()
     init_logging(args.log_level)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import random
-import runpy
+# runpy no longer needed - using unified track generator
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -176,9 +176,9 @@ def generate_golfer_track(course_dir: str, tee_time_s: int) -> List[Dict]:
     Returns:
         List of golfer GPS coordinate dictionaries
     """
-    gen_module = runpy.run_path("scripts/sim/generate_simple_tracks.py")
-    generate_tracks = gen_module["generate_tracks"]
-    tracks = generate_tracks(course_dir)
+    # Use unified track generator
+    from ..tools.track_generator import generate_simple_tracks
+    tracks = generate_simple_tracks(course_dir)
     golfer_points: List[Dict] = tracks.get("golfer", [])
     
     # Align timestamps to tee time

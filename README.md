@@ -162,7 +162,7 @@ python scripts/routing/test_routing_integration.py \
   --course-dir courses/pinetree_country_club
 
 # Validate optimal course nodes
-python scripts/sim/validate_optimal_nodes.py \
+# (archived) scripts/sim/validate_optimal_nodes.py \
   --course-dir courses/pinetree_country_club
 ```
 
@@ -185,9 +185,9 @@ The simulation system requires these pickle files in `courses/pinetree_country_c
 The scripts are organized by function:
 
 - **`scripts/sim/`** - Simulation entrypoints
-  - `run_single_golfer.py` - Single golfer delivery simulation
-  - `run_scenarios_batch.py` - Batch simulation runner
+  - `run_unified_simulation.py` - Unified CLI for all production modes
   - `run_single_golfer_simulation.py` - Thin CLI for single simulations
+  - `run_scenarios_batch.py` - Batch simulation runner
 
 - **`scripts/routing/`** - Routing and network utilities
   - `compute_travel_times.py` - Calculate travel times between holes
@@ -218,7 +218,7 @@ The system uses configuration files located in `courses/pinetree_country_club/co
 Run a single delivery simulation for a specific hole:
 
 ```bash
-python scripts/sim/run_single_golfer.py --course-dir courses/pinetree_country_club --hole 9 --prep-time 10 --runner-speed 6.0 --save-coordinates --output-dir outputs/single_sim
+python scripts/sim/run_single_golfer_simulation.py --course-dir courses/pinetree_country_club --hole 9 --prep-time 10 --runner-speed 6.0 --save-coordinates --output-dir outputs/single_sim
 ```
 
 **Parameters:**

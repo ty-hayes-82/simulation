@@ -160,6 +160,129 @@ def save_results_bundle(results: Dict[str, Any], output_dir: str | Path) -> Dict
     return artifacts
 
 
+def write_order_tracking_log(sim_result: Dict[str, Any], output_path: str | Path) -> Path:
+    """Write a comprehensive order tracking CSV from a simulation result.
+
+    Columns:
+      - Timestamp (seconds since start)
+      - Clock_Time (HH:MM from 07:00 base)
+      - Order_ID
+      - Golfer_ID
+      - Hole_Number
+      - Activity_Type
+      - Description
+      - Location
+      - Queue_Position
+      - Context_Info
+
+    This is a shared utility so multiple runners/modes can emit the same format.
+    """
+    import csv as _csv
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    activity_log: List[Dict[str, Any]] = list(sim_result.get("activity_log", []))
+    orders: List[Dict[str, Any]] = list(sim_result.get("orders", []))
+
+    # Map orders by id for quick context lookups
+    order_by_id: Dict[str, Dict[str, Any]] = {
+        str(o.get("order_id")): o for o in orders if o.get("order_id") is not None
+    }
+
+    header = [
+        "Timestamp",
+        "Clock_Time",
+        "Order_ID",
+        "Golfer_ID",
+        "Hole_Number",
+        "Activity_Type",
+        "Description",
+        "Location",
+        "Queue_Position",
+        "Context_Info",
+    ]
+
+    def _build_context(entry: Dict[str, Any]) -> tuple[str, str, str, str]:
+        order_id = str(entry.get("order_id", "")) if entry.get("order_id") is not None else ""
+        golfer_id = ""
+        hole_number = ""
+        queue_position = ""
+        context = ""
+
+        activity_type = str(entry.get("activity_type", ""))
+        description = str(entry.get("description", ""))
+
+        if order_id and order_id in order_by_id:
+            order = order_by_id[order_id]
+            golfer_id = str(order.get("golfer_id", ""))
+            hole_number = str(order.get("hole_num", ""))
+
+            if activity_type == "order_received":
+                context = f"Order placed by {golfer_id} for delivery to hole {hole_number}"
+            elif activity_type == "order_queued":
+                # Try to parse queue position from description
+                if "position" in description:
+                    try:
+                        queue_position = description.split("position ")[1].split(")")[0]
+                        context = "Order waiting in preparation queue"
+                    except Exception:
+                        context = "Order added to queue"
+                else:
+                    context = "Order added to queue"
+            elif activity_type == "prep_start":
+                context = f"Kitchen started preparing order for {golfer_id}"
+            elif activity_type == "prep_complete":
+                context = f"Order ready for delivery to hole {hole_number}"
+            elif activity_type == "delivery_start":
+                context = f"Runner departing clubhouse with order for {golfer_id}"
+            elif activity_type == "delivery_complete":
+                context = f"Order successfully delivered to {golfer_id} at hole {hole_number}"
+            elif activity_type == "order_failed":
+                context = f"Order failed - unable to deliver to {golfer_id}"
+        else:
+            if activity_type == "service_opened":
+                context = "Delivery service became available for orders"
+            elif activity_type == "service_closed":
+                context = "Delivery service no longer accepting orders"
+            elif activity_type == "idle":
+                context = "Runner waiting for new orders"
+            elif activity_type == "queue_status":
+                context = "Queue status update"
+
+        return golfer_id, hole_number, queue_position, context
+
+    with output_path.open("w", newline="", encoding="utf-8") as f:
+        writer = _csv.writer(f)
+        writer.writerow(header)
+
+        for entry in activity_log:
+            ts = float(entry.get("timestamp_s", 0))
+            # Maintain existing 07:00 base clock strings if present
+            clock = str(entry.get("time_str", ""))
+            order_id = str(entry.get("order_id", "")) if entry.get("order_id") is not None else ""
+            activity_type = str(entry.get("activity_type", ""))
+            description = str(entry.get("description", ""))
+            location = str(entry.get("location", ""))
+
+            golfer_id, hole_number, queue_pos, context = _build_context(entry)
+
+            writer.writerow([
+                f"{int(round(ts))}.0s",
+                clock,
+                order_id,
+                golfer_id,
+                hole_number,
+                activity_type,
+                description,
+                location,
+                queue_pos,
+                context,
+            ])
+
+    logger.info("Saved order tracking log: %s", output_path)
+    return output_path
+
 def normalize_coordinate_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize a coordinate entry to unified schema fields.
 

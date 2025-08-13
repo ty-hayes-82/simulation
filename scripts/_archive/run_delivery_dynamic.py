@@ -1,15 +1,7 @@
 """
 Dynamic delivery runner simulation runner.
 
-Supports:
-- Delivery runner only (no beverage cart), with 0..N golfer groups
-- Parameterized order probability, prep time, runner speed
-
-Outputs per run:
-- results.json (raw + metrics)
-- delivery_metrics_run_XX.json
-- stats_run_XX.md
-- delivery_orders_map.png (if coordinates available)
+Superseded by `scripts/sim/run_unified_simulation.py --mode delivery-runner`.
 """
 
 from __future__ import annotations
@@ -151,5 +143,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 

@@ -27,7 +27,8 @@ import pickle
 import geopandas as gpd
 from shapely.geometry import mapping
 import networkx as nx
-from scripts.course_prep.geofence_holes import split_course_into_holes
+# Removed: from scripts.course_prep.geofence_holes import split_course_into_holes
+# Now using unified tools for hole geofencing
 
 from golfsim.data.osm_ingest import load_course, build_cartpath_graph, _get_streets_near_course
 from golfsim.preprocess.course_model import build_traditional_route
@@ -456,7 +457,7 @@ def main():
             state=args.state,
             center_lat=args.clubhouse_lat,
             center_lon=args.clubhouse_lon,
-            radius_km=10.0,
+            radius_km=3.0,
             include_cart_paths=True,
             broaden=args.broaden,
             include_streets=False  # We'll handle this separately to use custom buffer
@@ -495,22 +496,34 @@ def main():
             geojson_dir = os.path.join(args.output_dir, "geojson")
             boundary_path = os.path.join(geojson_dir, "course_polygon.geojson")
             holes_path = os.path.join(geojson_dir, "holes.geojson")
-            if os.path.exists(boundary_path) and os.path.exists(holes_path):
-                generated_dir = os.path.join(geojson_dir, "generated")
-                os.makedirs(generated_dir, exist_ok=True)
-                out_path = os.path.join(generated_dir, "holes_geofenced.geojson")
-                logger.info("Generating geofenced holes...")
-                split_course_into_holes(
-                    course_polygon_path=boundary_path,
-                    hole_lines_path=holes_path,
-                    output_path=out_path,
-                    step_m=20.0,
-                    smooth_m=1.0,
-                    max_points_per_hole=300,
-                )
-                logger.info(f"Saved geofenced holes to {out_path}")
-            else:
-                logger.warning("Skipping geofenced holes: boundary or holes GeoJSON not found")
+            # Use unified tools for automatic course data generation
+            logger.info("Using unified tools for course data generation...")
+            try:
+                from golfsim.tools import CourseDataGenerator
+                cdg = CourseDataGenerator(args.output_dir)
+                results = cdg.ensure_all_required_files()
+                logger.info(f"Course data generation results: {results}")
+            except Exception as e:
+                logger.warning(f"Unified tools unavailable, skipping automated geofencing: {e}")
+                if os.path.exists(boundary_path) and os.path.exists(holes_path):
+                    logger.info("Attempting legacy geofencing fallback...")
+                    try:
+                        # Legacy fallback - try importing the old function 
+                        from scripts.course_prep.geofence_holes import split_course_into_holes
+                        generated_dir = os.path.join(geojson_dir, "generated")
+                        os.makedirs(generated_dir, exist_ok=True)
+                        out_path = os.path.join(generated_dir, "holes_geofenced.geojson")
+                        split_course_into_holes(
+                            course_polygon_path=boundary_path,
+                            hole_lines_path=holes_path,
+                            output_path=out_path,
+                            step_m=20.0,
+                            smooth_m=1.0,
+                            max_points_per_hole=300,
+                        )
+                        logger.info(f"Legacy geofencing completed: {out_path}")
+                    except ImportError:
+                        logger.warning("Legacy geofencing also unavailable - install geopandas or use unified tools")
         except Exception as ge:
             logger.warning(f"Failed to create geofenced holes automatically: {ge}")
         cart_paths_saved = save_cart_paths(cart_graph, args.output_dir)

@@ -1,23 +1,21 @@
+"""
+Track generation utilities for golfer and beverage cart GPS tracks.
+
+This module provides functions to generate simple tracks at 1-minute cadence
+using hole geometries for golfers and beverage carts.
+"""
+
 from __future__ import annotations
-
-"""
-Generate three simple tracks at 1-minute cadence using hole geometries:
-- Golfer: holes 1→18, 12 minutes per hole, 2 minutes transfer between holes
-- Beverage cart: holes 18→1, same timing but reverse order
-- Cart path coverage: iterate cart path graph nodes in index order (no timing guarantees)
-
-Outputs JSON files under outputs/simple_tracks/ with identical schema for golfer and bev-cart.
-"""
 
 import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-# Remove geopandas dependency and use simple JSON loading instead
 from shapely.geometry import LineString, Point
 
 
 def _interpolate_along_linestring(line: LineString, fraction: float) -> Tuple[float, float]:
+    """Interpolate coordinates along a LineString at the given fraction (0.0 to 1.0)."""
     if not isinstance(line, LineString) or len(line.coords) == 0:
         return (0.0, 0.0)
     if fraction <= 0:
@@ -31,7 +29,7 @@ def _interpolate_along_linestring(line: LineString, fraction: float) -> Tuple[fl
 
 
 def load_hole_lines(course_dir: str) -> Dict[int, LineString]:
-    """Load hole lines from GeoJSON without geopandas dependency"""
+    """Load hole lines from GeoJSON without geopandas dependency."""
     holes_path = Path(course_dir) / "geojson" / "holes.geojson"
     
     with open(holes_path, 'r', encoding='utf-8') as f:
@@ -62,54 +60,54 @@ def build_minute_points(
     minutes_per_hole: int = 12,
     minutes_between_holes: int = 2,
 ) -> List[Dict]:
+    """Build GPS points at 1-minute intervals along hole sequence."""
     points: List[Dict] = []
     current_time_s = 0
+    
     for idx, (hole, line) in enumerate(lines_in_order):
         # Hole play minutes
         for m in range(minutes_per_hole):
             frac = 0.0 if m == 0 and len(points) == 0 else (m / max(minutes_per_hole - 1, 1))
             lon, lat = _interpolate_along_linestring(line, frac)
-            points.append(
-                {
-                    "timestamp": current_time_s,
-                    "longitude": lon,
-                    "latitude": lat,
-                    "current_hole": hole,
-                    "type": "hole",
-                }
-            )
+            points.append({
+                "timestamp": current_time_s,
+                "longitude": lon,
+                "latitude": lat,
+                "current_hole": hole,
+                "type": "hole",
+            })
             current_time_s += 60
+            
         # Transfer between holes (2 minutes) except after last
         if idx < len(lines_in_order) - 1:
             this_end = Point(line.coords[-1])
             next_line = lines_in_order[idx + 1][1]
             next_start = Point(next_line.coords[0])
             transfer = LineString([(this_end.x, this_end.y), (next_start.x, next_start.y)])
+            
             for m in range(minutes_between_holes):
                 frac = 0.0 if m == 0 else (m / max(minutes_between_holes - 1, 1))
                 lon, lat = _interpolate_along_linestring(transfer, frac)
-                points.append(
-                    {
-                        "timestamp": current_time_s,
-                        "longitude": lon,
-                        "latitude": lat,
-                        "current_hole": hole,
-                        "type": "transfer",
-                    }
-                )
+                points.append({
+                    "timestamp": current_time_s,
+                    "longitude": lon,
+                    "latitude": lat,
+                    "current_hole": hole,
+                    "type": "transfer",
+                })
                 current_time_s += 60
+    
     return points
 
 
-def generate_tracks(course_dir: str = "courses/pinetree_country_club") -> Dict[str, List[Dict]]:
-    """Legacy wrapper - use golfsim.tools.track_generator.generate_simple_tracks instead."""
-    from golfsim.tools.track_generator import generate_simple_tracks
-    return generate_simple_tracks(course_dir)
-
-
-def _legacy_generate_tracks(course_dir: str = "courses/pinetree_country_club") -> Dict[str, List[Dict]]:
+def generate_simple_tracks(course_dir: str = "courses/pinetree_country_club") -> Dict[str, List[Dict]]:
+    """
+    Generate simple tracks for golfer, beverage cart, and cart path coverage.
+    
+    Returns:
+        Dict with keys 'golfer', 'bev_cart', and 'cart_path' containing GPS points.
+    """
     hole_lines = load_hole_lines(course_dir)
-    ordered = [hole_lines[i] for i in sorted(hole_lines.keys()) if i in hole_lines]
     ordered_pairs = [(i, hole_lines[i]) for i in sorted(hole_lines.keys())]
     reverse_pairs = [(i, hole_lines[i]) for i in sorted(hole_lines.keys(), reverse=True)]
 
@@ -120,7 +118,6 @@ def _legacy_generate_tracks(course_dir: str = "courses/pinetree_country_club") -
     cart_points: List[Dict] = []
     try:
         import pickle
-        import networkx as nx  # noqa: F401  # for type context
         cart_graph_path = Path(course_dir) / "pkl" / "cart_graph.pkl"
         if cart_graph_path.exists():
             with open(cart_graph_path, "rb") as f:
@@ -129,17 +126,16 @@ def _legacy_generate_tracks(course_dir: str = "courses/pinetree_country_club") -
             for node in cart_graph.nodes():
                 data = cart_graph.nodes[node]
                 if "x" in data and "y" in data:
-                    cart_points.append(
-                        {
-                            "timestamp": t,
-                            "longitude": float(data["x"]),
-                            "latitude": float(data["y"]),
-                            "node_id": str(node),
-                            "type": "cart_path_node",
-                        }
-                    )
+                    cart_points.append({
+                        "timestamp": t,
+                        "longitude": float(data["x"]),
+                        "latitude": float(data["y"]),
+                        "node_id": str(node),
+                        "type": "cart_path_node",
+                    })
                     t += 60
     except Exception:
+        # Gracefully handle missing cart graph
         pass
 
     return {
@@ -147,22 +143,3 @@ def _legacy_generate_tracks(course_dir: str = "courses/pinetree_country_club") -
         "bev_cart": bev_points,
         "cart_path": cart_points,
     }
-
-
-def main() -> None:
-    course_dir = "courses/pinetree_country_club"
-    tracks = generate_tracks(course_dir)
-    out_dir = Path("outputs/simple_tracks")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "golfer.json").write_text(json.dumps(tracks["golfer"], indent=2))
-    (out_dir / "bev_cart.json").write_text(json.dumps(tracks["bev_cart"], indent=2))
-    (out_dir / "cart_path_nodes.json").write_text(json.dumps(tracks["cart_path"], indent=2))
-    print(
-        f"Wrote golfer={len(tracks['golfer'])} bev_cart={len(tracks['bev_cart'])} cart_nodes={len(tracks['cart_path'])}"
-    )
-
-
-if __name__ == "__main__":
-    main()
-
-

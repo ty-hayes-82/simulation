@@ -19,16 +19,17 @@ from ..analysis.bev_cart_metrics import (
 )
 
 
-def write_phase3_stats_file(
+def write_simulation_stats_file(
     result: Dict,
     save_path: Path,
     tee_time_s: int,
     bev_cart_loop_min: int,
     pass_events: List[Dict],
     sim_runtime_s: float,
+    simulation_title: str = "Beverage cart + 1 group (order-on-pass)",
 ) -> None:
     """
-    Write a Phase 3 stats.md file with simulation results.
+    Write a simulation stats.md file with simulation results.
     
     Args:
         result: Sales simulation result dictionary
@@ -37,6 +38,7 @@ def write_phase3_stats_file(
         bev_cart_loop_min: Beverage cart loop time in minutes
         pass_events: List of pass event dictionaries
         sim_runtime_s: How long the simulation took to run
+        simulation_title: Title for the simulation type
     """
     # Revenue and orders
     sales: List[Dict] = result.get("sales", []) or []
@@ -49,7 +51,7 @@ def write_phase3_stats_file(
 
     # Compose lines
     lines: List[str] = [
-        "# Phase 3 — Beverage cart + 1 group (order-on-pass)",
+        f"# {simulation_title}",
         "",
         f"Simulation run time: {sim_runtime_s:.2f} seconds",
         f"Golfer tee time: {format_time_from_baseline(int(tee_time_s))}",
@@ -102,21 +104,24 @@ def write_phase3_stats_file(
     save_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def save_phase3_output_files(
+def save_simulation_output_files(
     simulation_result: Dict,
     output_dir: Path,
     include_coordinates: bool = True,
     include_visualizations: bool = True,
     include_stats: bool = True,
+    simulation_title: str = "Beverage cart + 1 group (order-on-pass)",
 ) -> None:
     """
-    Save all output files for a Phase 3 simulation.
+    Save all output files for a simulation.
     
     Args:
-        simulation_result: Result from run_phase3_beverage_cart_simulation
+        simulation_result: Result from simulation
         output_dir: Directory to save files in
         include_coordinates: Whether to save coordinates CSV
         include_visualizations: Whether to generate visualization files
+        include_stats: Whether to generate stats file
+        simulation_title: Title for the simulation type
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -127,16 +132,23 @@ def save_phase3_output_files(
     tee_time_s = simulation_result["tee_time_s"]
     run_idx = simulation_result["run_idx"]
     
-    # Save sales data
-    (output_dir / "sales.json").write_text(
-        json.dumps(sales_result.get("sales", []), indent=2), 
-        encoding="utf-8"
-    )
+    # Save sales data: do not overwrite integrated full sales.json if it already exists
+    sales_path = output_dir / "sales.json"
+    if not sales_path.exists():
+        sales_path.write_text(
+            json.dumps(sales_result, indent=2),
+            encoding="utf-8",
+        )
     
-    # Save full result
+    # Save full result: include sales_result for downstream consumers
+    full_result = {
+        "sales_result": sales_result,
+        "run_idx": run_idx,
+        "tee_time_s": tee_time_s,
+    }
     (output_dir / "result.json").write_text(
-        json.dumps(sales_result, indent=2), 
-        encoding="utf-8"
+        json.dumps(full_result, indent=2),
+        encoding="utf-8",
     )
     
     # Save coordinates if requested
@@ -169,7 +181,7 @@ def save_phase3_output_files(
     
     # Generate visualizations if requested
     if include_visualizations:
-        _generate_phase3_visualizations(simulation_result, output_dir)
+        _generate_simulation_visualizations(simulation_result, output_dir)
     
     # Generate stats file (optional)
     if include_stats:
@@ -181,19 +193,21 @@ def save_phase3_output_files(
             sync_timing = simulation_result.get("sync_timing", {})
             bev_cart_loop_min = sync_timing.get("bev_cart_hole_total_s", 600) // 60
         
-        write_phase3_stats_file(
+        write_simulation_stats_file(
             sales_result,
             output_dir / "stats.md",
             tee_time_s,
             bev_cart_loop_min,
             pass_events,
             simulation_result.get("simulation_runtime_s", 0.0),
+            simulation_title,
         )
 
-    # Always generate beverage cart metrics report if bev cart coordinates are present
+    # Generate beverage cart metrics report only if integrated metrics were not already written
     try:
         bev_points = simulation_result.get("bev_points", []) or []
-        if bev_points:
+        integrated_metrics_md = output_dir / "bev_cart_metrics.md"
+        if bev_points and not integrated_metrics_md.exists():
             sales = sales_result.get("sales", []) or []
             golfer_points = simulation_result.get("golfer_points", []) or []
             svc = simulation_result.get("beverage_cart_service")
@@ -211,7 +225,8 @@ def save_phase3_output_files(
                 simulation_id=f"phase3_run_{run_idx:02d}",
                 cart_id=cart_id,
             )
-            (output_dir / "metrics_report.md").write_text(
+            # Write a single metrics report name aligned with integrated writer for consistency
+            integrated_metrics_md.write_text(
                 format_bev_metrics_report(metrics), encoding="utf-8"
             )
     except Exception:
@@ -219,11 +234,16 @@ def save_phase3_output_files(
         pass
 
 
-def _generate_phase3_visualizations(simulation_result: Dict, output_dir: Path) -> None:
-    """Generate visualization files for Phase 3 simulation.
+def _generate_simulation_visualizations(simulation_result: Dict, output_dir: Path, title_prefix: str = "") -> None:
+    """Generate visualization files for simulation.
 
     Avoid hardcoded course path by accepting `course_dir` on simulation_result
     or falling back to a sensible default.
+    
+    Args:
+        simulation_result: Simulation result dictionary
+        output_dir: Directory to save visualizations
+        title_prefix: Optional prefix for the visualization title
     """
     # Import here to avoid circular dependencies
     from ..viz.matplotlib_viz import render_beverage_cart_plot
@@ -236,9 +256,9 @@ def _generate_phase3_visualizations(simulation_result: Dict, output_dir: Path) -
     if simulation_result["type"] == "synchronized":
         sync_calc = simulation_result.get("sync_calc", {})
         offset_min = sync_calc.get("sync_offset_s", 0) / 60
-        title = f"Synchronized Beverage Cart Route (Phase 3) - Offset {offset_min:.1f}min"
+        title = f"{title_prefix}Synchronized Beverage Cart Route - Offset {offset_min:.1f}min"
     else:
-        title = "Beverage Cart Route (Phase 3)"
+        title = f"{title_prefix}Beverage Cart Route"
     
     # Render beverage cart route
     render_beverage_cart_plot(
@@ -249,13 +269,14 @@ def _generate_phase3_visualizations(simulation_result: Dict, output_dir: Path) -
     )
 
 
-def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
+def write_simulation_summary(results: List[Dict], output_root: Path, summary_title: str = "Bev cart + 1 group (5-run summary)") -> None:
     """
-    Write a summary.md file for multiple Phase 3 simulation runs.
+    Write a summary.md file for multiple simulation runs.
     
     Args:
         results: List of simulation result dictionaries
         output_root: Root directory for output files
+        summary_title: Title for the summary
     """
     if not results:
         return
@@ -266,7 +287,7 @@ def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
     total_sales = sum(sales_counts)
     
     lines: List[str] = [
-        "# Phase 3 — Bev cart + 1 group (5-run summary)",
+        f"# {summary_title}",
         "",
         f"Runs: {len(results)}",
         f"Revenue per run: min={min(revenues):.2f}, max={max(revenues):.2f}, mean={(sum(revenues)/len(revenues)):.2f}",
@@ -336,19 +357,37 @@ def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
     (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-# Duplicate Phase 5 functions removed. Single authoritative implementations exist above.
+# Backward compatibility aliases
+def save_phase3_output_files(*args, **kwargs):
+    """Backward compatibility alias for save_simulation_output_files."""
+    if 'simulation_title' not in kwargs:
+        kwargs['simulation_title'] = "Phase 3 — Beverage cart + 1 group (order-on-pass)"
+    return save_simulation_output_files(*args, **kwargs)
+
+def write_phase3_summary(*args, **kwargs):
+    """Backward compatibility alias for write_simulation_summary.""" 
+    if 'summary_title' not in kwargs:
+        kwargs['summary_title'] = "Phase 3 — Bev cart + 1 group (5-run summary)"
+    return write_simulation_summary(*args, **kwargs)
+
+def write_phase3_stats_file(*args, **kwargs):
+    """Backward compatibility alias for write_simulation_stats_file."""
+    if 'simulation_title' not in kwargs:
+        kwargs['simulation_title'] = "Phase 3 — Beverage cart + 1 group (order-on-pass)"
+    return write_simulation_stats_file(*args, **kwargs)
 
 
-def write_phase4_stats_file(
+def write_multi_group_stats_file(
     result: Dict,
     save_path: Path,
     groups: List[Dict],
     bev_cart_loop_min: int,
     pass_events: List[Dict],
     sim_runtime_s: float,
+    simulation_title: str = "Beverage cart + multiple groups",
 ) -> None:
     """
-    Write a Phase 4 stats.md file with simulation results.
+    Write a multi-group simulation stats.md file with simulation results.
     
     Args:
         result: Sales simulation result dictionary
@@ -357,6 +396,7 @@ def write_phase4_stats_file(
         bev_cart_loop_min: Beverage cart loop time in minutes
         pass_events: List of pass event dictionaries
         sim_runtime_s: How long the simulation took to run
+        simulation_title: Title for the simulation type
     """
     # Revenue and orders
     sales: List[Dict] = result.get("sales", []) or []
@@ -373,7 +413,7 @@ def write_phase4_stats_file(
 
     # Compose lines
     lines: List[str] = [
-        "# Phase 4 — Beverage cart + 4 groups (15-min intervals)",
+        f"# {simulation_title}",
         "",
         f"Simulation run time: {sim_runtime_s:.2f} seconds",
         f"Group 1 tee time: {format_time_from_baseline(int(first_tee_time_s))}",
@@ -449,21 +489,24 @@ def write_phase4_stats_file(
     save_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def save_phase4_output_files(
+def save_multi_group_output_files(
     simulation_result: Dict,
     output_dir: Path,
     include_coordinates: bool = True,
     include_visualizations: bool = True,
     include_stats: bool = True,
+    simulation_title: str = "Beverage cart + multiple groups",
 ) -> None:
     """
-    Save all output files for a Phase 4 simulation.
+    Save all output files for a multi-group simulation.
     
     Args:
-        simulation_result: Result from run_phase4_beverage_cart_simulation
+        simulation_result: Result from multi-group simulation
         output_dir: Directory to save files in
         include_coordinates: Whether to save coordinates CSV
         include_visualizations: Whether to generate visualization files
+        include_stats: Whether to generate stats file
+        simulation_title: Title for the simulation type
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -514,7 +557,7 @@ def save_phase4_output_files(
     
     # Generate visualizations if requested
     if include_visualizations:
-        _generate_phase4_visualizations(simulation_result, output_dir)
+        _generate_simulation_visualizations(simulation_result, output_dir)
     
     # Generate stats file (optional)
     if include_stats:
@@ -526,13 +569,14 @@ def save_phase4_output_files(
             sync_timing = simulation_result.get("sync_timing", {})
             bev_cart_loop_min = sync_timing.get("bev_cart_hole_total_s", 600) // 60
         
-        write_phase4_stats_file(
+        write_multi_group_stats_file(
             sales_result,
             output_dir / "stats.md",
             groups,
             bev_cart_loop_min,
             pass_events,
             simulation_result.get("simulation_runtime_s", 0.0),
+            simulation_title,
         )
 
     # Always generate beverage cart metrics report if bev cart coordinates are present
@@ -564,43 +608,17 @@ def save_phase4_output_files(
         pass
 
 
-def _generate_phase4_visualizations(simulation_result: Dict, output_dir: Path) -> None:
-    """Generate visualization files for Phase 4 simulation.
+# _generate_phase4_visualizations removed - now uses generic _generate_simulation_visualizations
 
-    Avoid hardcoded course path by accepting `course_dir` on simulation_result
-    or falling back to a sensible default.
+
+def write_multi_group_summary(results: List[Dict], output_root: Path, summary_title: str = "Bev cart + multiple groups (summary)") -> None:
     """
-    # Import here to avoid circular dependencies
-    from ..viz.matplotlib_viz import render_beverage_cart_plot
-    
-    bev_points = simulation_result["bev_points"] 
-    # Prefer explicit course_dir on simulation result; fall back to common default
-    course_dir = simulation_result.get("course_dir", simulation_result.get("metadata", {}).get("course_dir", "courses/pinetree_country_club"))
-    
-    # Determine title based on simulation type
-    if simulation_result["type"] == "synchronized":
-        sync_calc = simulation_result.get("sync_calc", {})
-        offset_min = sync_calc.get("sync_offset_s", 0) / 60
-        title = f"Synchronized Beverage Cart Route (Phase 4) - Offset {offset_min:.1f}min"
-    else:
-        title = "Beverage Cart Route (Phase 4)"
-    
-    # Render beverage cart route
-    render_beverage_cart_plot(
-        bev_points,
-        course_dir=course_dir,
-        save_path=output_dir / "bev_cart_route.png",
-        title=title,
-    )
-
-
-def write_phase4_summary(results: List[Dict], output_root: Path) -> None:
-    """
-    Write a summary.md file for multiple Phase 4 simulation runs.
+    Write a summary.md file for multiple multi-group simulation runs.
     
     Args:
         results: List of simulation result dictionaries
         output_root: Root directory for output files
+        summary_title: Title for the summary
     """
     if not results:
         return
@@ -611,7 +629,7 @@ def write_phase4_summary(results: List[Dict], output_root: Path) -> None:
     total_sales = sum(sales_counts)
     
     lines: List[str] = [
-        "# Phase 4 — Bev cart + 4 groups (15-min intervals, 5-run summary)",
+        f"# {summary_title}",
         "",
         f"Runs: {len(results)}",
         f"Revenue per run: min={min(revenues):.2f}, max={max(revenues):.2f}, mean={(sum(revenues)/len(revenues)):.2f}",
@@ -684,13 +702,34 @@ def write_phase4_summary(results: List[Dict], output_root: Path) -> None:
     (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def save_phase5_output_files(result: Dict, run_dir: Path) -> None:
+# Additional backward compatibility aliases
+def save_phase4_output_files(*args, **kwargs):
+    """Backward compatibility alias for save_multi_group_output_files."""
+    if 'simulation_title' not in kwargs:
+        kwargs['simulation_title'] = "Phase 4 — Beverage cart + 4 groups (15-min intervals)"
+    return save_multi_group_output_files(*args, **kwargs)
+
+def write_phase4_summary(*args, **kwargs):
+    """Backward compatibility alias for write_multi_group_summary.""" 
+    if 'summary_title' not in kwargs:
+        kwargs['summary_title'] = "Phase 4 — Bev cart + 4 groups (15-min intervals, 5-run summary)"
+    return write_multi_group_summary(*args, **kwargs)
+
+def write_phase4_stats_file(*args, **kwargs):
+    """Backward compatibility alias for write_multi_group_stats_file."""
+    if 'simulation_title' not in kwargs:
+        kwargs['simulation_title'] = "Phase 4 — Beverage cart + 4 groups (15-min intervals)"
+    return write_multi_group_stats_file(*args, **kwargs)
+
+
+def save_scenario_output_files(result: Dict, run_dir: Path, scenario_name: str = "scenario") -> None:
     """
-    Save all output files for a Phase 5 simulation run.
+    Save all output files for a scenario-based simulation run.
     
     Args:
         result: Simulation result dictionary
         run_dir: Directory to save outputs to
+        scenario_name: Name of the scenario used
     """
     run_dir.mkdir(parents=True, exist_ok=True)
     
@@ -758,10 +797,10 @@ def save_phase5_output_files(result: Dict, run_dir: Path) -> None:
         json.dump(result_copy, f, indent=2, default=str)
     
     # Generate stats markdown
-    write_phase5_stats_file(
+    write_scenario_stats_file(
         result=result,
         save_path=run_dir / "stats.md",
-        scenario_name=result.get("scenario_name", "unknown"),
+        scenario_name=scenario_name,
         groups=result.get("groups", []),
         sales_result=sales_result,
         pass_events=result.get("pass_events", []),
@@ -769,7 +808,7 @@ def save_phase5_output_files(result: Dict, run_dir: Path) -> None:
     )
 
 
-def write_phase5_stats_file(
+def write_scenario_stats_file(
     result: Dict,
     save_path: Path,
     scenario_name: str,
@@ -779,7 +818,7 @@ def write_phase5_stats_file(
     sim_runtime_s: float,
 ) -> None:
     """
-    Write a Phase 5 stats.md file with simulation results.
+    Write a scenario-based simulation stats.md file with simulation results.
     
     Args:
         result: Full simulation result dictionary

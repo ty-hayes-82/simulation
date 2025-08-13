@@ -385,20 +385,21 @@ def find_strategic_delivery_route(
     runner_speed_mps: float = 6.0,
 ) -> Dict[str, object]:
     """
-    Analyze strategic route options for delivery optimization.
+    Analyze route options for delivery optimization without hard-coded hole heuristics.
 
-    NOTE: This function is kept for analysis but runner always starts from clubhouse.
+    Note: Runner starts from the clubhouse in the main simulation; this function is
+    retained for analysis and generic evaluation only.
 
     Args:
         cart_graph: Cart path network
         order_location: Where the order was placed (lon, lat)
         hole_lines: Dictionary of hole geometries
         clubhouse_lonlat: Clubhouse location (where runner starts)
-        order_hole: Which hole the order was placed at
+        order_hole: Which hole the order was placed at (unused for heuristics)
         predicted_delivery_location: Where we expect to deliver
 
     Returns:
-        Always returns clubhouse location (runner always starts there)
+        Candidate starting location with the shortest cart-path distance to target
     """
     min_distance = float('inf')
     best_position = clubhouse_lonlat
@@ -406,68 +407,22 @@ def find_strategic_delivery_route(
     # Use predicted delivery location if available for better positioning
     target_location = predicted_delivery_location if predicted_delivery_location else order_location
 
-    # Strategic positioning based on order hole
-    strategic_holes = []
-    if order_hole is not None:
-        if order_hole == 6:
-            # Golfer at hole 6: likely to progress toward 7, 8, 9
-            strategic_holes = [7, 8, 9, 6]  # Prioritize intercept holes
-        elif order_hole <= 3:
-            # Early holes: position near holes 1-6
-            strategic_holes = list(range(1, 7))
-        elif order_hole >= 15:
-            # Late holes: position near holes 15-18
-            strategic_holes = list(range(15, 19))
-        else:
-            # Middle holes: position near current and next few holes
-            strategic_holes = list(range(max(1, order_hole - 1), min(19, order_hole + 4)))
-
-    # Check strategic hole positions first
-    for hole_num in strategic_holes:
-        if hole_num in hole_lines:
-            hole_line = hole_lines[hole_num]
-            if isinstance(hole_line, LineString) and len(hole_line.coords) > 0:
-                hole_start = hole_line.coords[0]  # Tee position
-                hole_end = hole_line.coords[-1]  # Green position
-
-                # Try both tee and green as starting positions
-                for position in [hole_start, hole_end]:
-                    try:
-                        route = shortest_path_on_cartpaths(
-                            cart_graph, position, target_location, speed_mps=6.0
-                        )
-
-                        # Add small bonus for strategic holes near the order hole
-                        distance_penalty = 0
-                        if order_hole and abs(hole_num - order_hole) <= 2:
-                            distance_penalty = -50  # 50m bonus for nearby holes
-
-                        total_distance = route['length_m'] + distance_penalty
-
-                        if total_distance < min_distance:
-                            min_distance = total_distance
-                            best_position = position
-                    except Exception:
-                        continue
-
-    # Check all other hole positions as fallback
+    # Evaluate all hole tee and green positions uniformly
     for hole_num, hole_line in hole_lines.items():
-        if hole_num not in strategic_holes:
-            if isinstance(hole_line, LineString) and len(hole_line.coords) > 0:
-                hole_start = hole_line.coords[0]  # Tee position
-                hole_end = hole_line.coords[-1]  # Green position
+        if isinstance(hole_line, LineString) and len(hole_line.coords) > 0:
+            hole_start = hole_line.coords[0]  # Tee position
+            hole_end = hole_line.coords[-1]  # Green position
 
-                # Try both tee and green as starting positions
-                for position in [hole_start, hole_end]:
-                    try:
-                        route = shortest_path_on_cartpaths(
-                            cart_graph, position, target_location, speed_mps=6.0
-                        )
-                        if route['length_m'] < min_distance:
-                            min_distance = route['length_m']
-                            best_position = position
-                    except Exception:
-                        continue
+            for position in [hole_start, hole_end]:
+                try:
+                    route = shortest_path_on_cartpaths(
+                        cart_graph, position, target_location, speed_mps=6.0
+                    )
+                    if route['length_m'] < min_distance:
+                        min_distance = route['length_m']
+                        best_position = position
+                except Exception:
+                    continue
 
     # Also consider clubhouse as fallback
     try:
@@ -489,6 +444,7 @@ def predict_golfer_position_at_delivery(
     travel_time_s: float,
     hole_lines: Optional[Dict[int, LineString]] = None,
     order_hole: Optional[int] = None,
+    pickup_delay_s: float = 0.0,
 ) -> Tuple[float, float]:
     """
     Smart prediction of where the golfer will be when the delivery arrives.
@@ -509,7 +465,7 @@ def predict_golfer_position_at_delivery(
     Returns:
         Predicted golfer position (lon, lat) at delivery time
     """
-    delivery_time_s = order_time_s + prep_time_s + travel_time_s
+    delivery_time_s = order_time_s + prep_time_s + pickup_delay_s + travel_time_s
 
     # Find golfer position closest to delivery time
     golfer_df = pd.DataFrame(golfer_coordinates)
@@ -542,8 +498,8 @@ def predict_golfer_position_at_delivery(
                 distance_moved = math.sqrt(lat_diff**2 + lon_diff**2)
                 speed_deg_per_sec = distance_moved / time_diff
 
-                # Predict how far they'll move during prep + travel time
-                total_prediction_time = prep_time_s + travel_time_s
+                # Predict how far they'll move during prep + delay + travel time
+                total_prediction_time = prep_time_s + pickup_delay_s + travel_time_s
                 predicted_movement = speed_deg_per_sec * total_prediction_time
 
                 # Get the golfer's current position at order time
@@ -867,6 +823,7 @@ def predict_optimal_delivery_location(
     runner_speed_mps: float = 6.0,
     order_time_s: float = 0,
     clubhouse_lonlat: Tuple[float, float] = None,
+    pickup_delay_min: float = 0.0,
 ) -> Tuple[float, float]:
     """
     IMPROVED: Iterative convergence method for accurate delivery prediction.
@@ -896,6 +853,7 @@ def predict_optimal_delivery_location(
         hole_lines=hole_lines,
         clubhouse_lonlat=clubhouse_lonlat,
         course_dir=course_dir,
+        pickup_delay_min=pickup_delay_min,
     )
 
 
@@ -913,6 +871,7 @@ def iterative_convergence_prediction(
     minutes_per_hole: float = 12.0,
     minutes_between_holes: float = 2.0,
     time_quantum_s: int = 60,
+    pickup_delay_min: float = 0.0,
 ) -> Tuple[float, float]:
     """
     Iterative convergence method for optimal delivery location prediction.
@@ -964,6 +923,7 @@ def iterative_convergence_prediction(
 
     # INITIAL ESTIMATE: Start with speed-based prediction
     prep_time_s = prep_time_min * 60
+    pickup_delay_s = pickup_delay_min * 60
 
     # Estimate initial travel time using straight-line distance
     dx = (current_golfer_pos[0] - clubhouse_lonlat[0]) * 111139  # rough m per degree
@@ -974,7 +934,7 @@ def iterative_convergence_prediction(
     initial_travel_time_s = (straight_line_distance * 1.3) / runner_speed_mps
 
     # Start with prediction based on total delivery window
-    total_initial_time_s = prep_time_s + initial_travel_time_s
+    total_initial_time_s = prep_time_s + pickup_delay_s + initial_travel_time_s
     delivery_minute = current_minute + int(total_initial_time_s // max(1, int(time_quantum_s)))
     delivery_minute = min(delivery_minute, len(minute_points) - 1)
 
@@ -1019,7 +979,7 @@ def iterative_convergence_prediction(
             actual_travel_time_s = (distance * 1.4) / runner_speed_mps
 
         # Calculate when delivery will actually occur
-        actual_delivery_time_s = order_time_s + prep_time_s + actual_travel_time_s
+        actual_delivery_time_s = order_time_s + prep_time_s + pickup_delay_s + actual_travel_time_s
         new_delivery_minute = int(actual_delivery_time_s // max(1, int(time_quantum_s)))
         new_delivery_minute = min(new_delivery_minute, len(minute_points) - 1)
 
@@ -1060,6 +1020,7 @@ def get_prediction_debug_info(
     order_time_s: float,
     runner_speed_mps: float,
     time_quantum_s: int = 60,
+    pickup_delay_min: float = 0.0,
 ) -> Dict:
     """
     Get debugging information about the prediction process.
@@ -1078,6 +1039,7 @@ def get_prediction_debug_info(
         'runner_speed_mps': runner_speed_mps,
         'prediction_coordinates': prediction_result,
         'algorithm_version': '2.0_iterative',
+        'pickup_delay_min': pickup_delay_min,
     }
 
 
@@ -1098,6 +1060,7 @@ def run_improved_single_golfer_simulation(
     per_hole_minutes_list: Optional[List[int]] = None,
     per_transfer_minutes_list: Optional[List[int]] = None,
     time_quantum_s: int = 60,
+    pickup_delay_min: int = 0,
 ) -> Dict[str, object]:
     """
     Enhanced single golfer simulation with optimized routing and position prediction.
@@ -1302,6 +1265,13 @@ def run_improved_single_golfer_simulation(
         yield env.timeout(prep_time_s)
         order_data['prep_completed_s'] = env.now
 
+        # Additional pickup delay (runner is busy elsewhere)
+        pickup_delay_s = max(0, int(pickup_delay_min) * 60)
+        if pickup_delay_s > 0:
+            yield env.timeout(pickup_delay_s)
+        order_data['pickup_delay_s'] = pickup_delay_s
+        order_data['pickup_ready_s'] = env.now
+
         # IMPROVEMENT 2: Estimate travel time and predict golfer position using enhanced routing
         try:
             initial_route = enhanced_delivery_routing(
@@ -1322,12 +1292,18 @@ def run_improved_single_golfer_simulation(
                 runner_speed_mps=runner_speed_mps,
                 order_time_s=order_time_s,
                 clubhouse_lonlat=clubhouse_lonlat,
+                pickup_delay_min=pickup_delay_min,
             )
 
             # Add prediction method info for analysis
             order_data['prediction_method'] = 'iterative_convergence_v2'
             order_data['prediction_debug'] = get_prediction_debug_info(
-                predicted_delivery_location, order_hole, order_time_s, runner_speed_mps, time_quantum_s=time_quantum_s
+                predicted_delivery_location,
+                order_hole,
+                order_time_s,
+                runner_speed_mps,
+                time_quantum_s=time_quantum_s,
+                pickup_delay_min=pickup_delay_min,
             )
         else:
             # Fallback to original method if no hole specified
@@ -1338,6 +1314,7 @@ def run_improved_single_golfer_simulation(
                 estimated_travel_time,
                 hole_lines,
                 order_hole,
+                pickup_delay_s=pickup_delay_s,
             )
             order_data['prediction_method'] = 'legacy_fallback'
 
@@ -1491,6 +1468,7 @@ def run_golf_delivery_simulation(
     use_enhanced_network: bool = True,
     track_coordinates: bool = False,
     time_quantum_s: Optional[int] = None,
+    pickup_delay_min: int = 0,
 ) -> Dict[str, object]:
     """
     Simple interface to run golf delivery simulation with automatic data loading.
@@ -1611,6 +1589,7 @@ def run_golf_delivery_simulation(
         per_hole_minutes_list=scaled_holes,
         per_transfer_minutes_list=scaled_transfers,
         time_quantum_s=time_quantum_s,
+        pickup_delay_min=pickup_delay_min,
     )
 
     return result
@@ -1631,6 +1610,7 @@ def run_simulation(
     tee_interval_min: float = 10.0,
     n_runners: int = 1,
     duration_min: int = 60,
+    pickup_delay_min: int = 0,
 ) -> Dict[str, object]:
     """Compatibility wrapper for legacy demo usage.
 
@@ -1648,6 +1628,7 @@ def run_simulation(
             runner_speed_mps=runner_speed_mps,
             use_enhanced_network=use_enhanced_network,
             track_coordinates=track_coordinates,
+            pickup_delay_min=pickup_delay_min,
         )
     except Exception:
         results = {"success": True}
