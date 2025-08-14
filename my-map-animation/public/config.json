@@ -1,0 +1,110 @@
+{
+  "data": {
+    "csvFileName": "/coordinates.csv",
+    "cartPathFileName": "/cart_paths.geojson",
+    "coordinatesDir": "/coordinates"
+  },
+  "animation": {
+    "speedMultiplier": 250,
+    "defaultMapStyle": "outdoors",
+    "startingHour": 9
+  },
+  "mapStyles": {
+    "satellite-streets": {
+      "name": "Golf Satellite Pro",
+      "url": "mapbox://styles/mapbox/satellite-streets-v12",
+      "description": "Satellite imagery with course features - shows fairways, greens, and hazards clearly",
+      "golfOptimized": true
+    },
+    "satellite": {
+      "name": "Pure Satellite",
+      "url": "mapbox://styles/mapbox/satellite-v9",
+      "description": "High-resolution satellite imagery - best for seeing actual course conditions"
+    },
+    "outdoors": {
+      "name": "Golf Course Terrain Pro",
+      "url": "mapbox://styles/mapbox/outdoors-v12",
+      "description": "Perfect for golf - vivid hillshading shows elevation changes, natural features like water hazards, and soft contrasting colors highlight course terrain",
+      "golfOptimized": true
+    },
+    "streets": {
+      "name": "Course Navigation",
+      "url": "mapbox://styles/mapbox/streets-v12",
+      "description": "Clean layout with cart paths and hole markers visible"
+    },
+    "navigation-day": {
+      "name": "Golf GPS Day",
+      "url": "mapbox://styles/mapbox/navigation-day-v1",
+      "description": "GPS-style view optimized for on-course navigation and yardage"
+    },
+    "navigation-night": {
+      "name": "Golf GPS Night",
+      "url": "mapbox://styles/mapbox/navigation-night-v1",
+      "description": "Night mode for dawn/dusk rounds with high contrast"
+    },
+    "light": {
+      "name": "Scorecard View",
+      "url": "mapbox://styles/mapbox/light-v11",
+      "description": "Clean, minimal style perfect for course layout overview"
+    },
+    "dark": {
+      "name": "Tournament Mode",
+      "url": "mapbox://styles/mapbox/dark-v11",
+      "description": "Professional dark theme for broadcast-style viewing"
+    }
+  },
+  "display": {
+    "cartPath": {
+      "color": "#888888",
+      "width": 1.5,
+      "opacity": 0.6,
+      "dashArray": [3, 3]
+    },
+    "golferTrails": {
+      "width": 2,
+      "opacity": 0.6
+    },
+    "golferMarkers": {
+      "radius": 12,
+      "strokeWidth": 3,
+      "strokeColor": "#ffffff",
+      "strokeOpacity": 0.8
+    }
+  },
+  "entityTypes": {
+    "golfer": {
+      "name": "Golfer",
+      "color": "#007cbf",
+      "description": "Golf players on the course"
+    },
+    "bev-cart": {
+      "name": "Beverage Cart",
+      "color": "#333333",
+      "description": "Mobile beverage service cart"
+    },
+    "runner": {
+      "name": "Runner",
+      "color": "#FF8B00",
+      "description": "Runners using the course paths"
+    },
+    "bevcart": {
+      "name": "Beverage Cart",
+      "color": "#333333",
+      "description": "Mobile beverage service cart"
+    }
+  },
+  "golferColors": [
+    "#007cbf",
+    "#ff6b6b",
+    "#4ecdc4",
+    "#45b7d1",
+    "#f9ca24",
+    "#6c5ce7",
+    "#a55eea",
+    "#26de81",
+    "#fd79a8",
+    "#e17055",
+    "#00b894",
+    "#0984e3"
+  ]
+}

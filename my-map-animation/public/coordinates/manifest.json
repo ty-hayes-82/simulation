@@ -1,0 +1,52 @@
+{
+  "simulationGroups": {
+    "Local": [
+      {
+        "id": "coordinates",
+        "name": "GPS Coordinates",
+        "filename": "coordinates.csv",
+        "description": "250 coordinate points"
+      }
+    ],
+    "Scenario Busy Weekday - Bev With Golfers": [
+      {
+        "id": "scenario_busy_weekday_bev_with_golfers_sim_01_coordinates",
+        "name": "SIM_01 (Coordinates)",
+        "filename": "scenario_busy_weekday_bev_with_golfers_sim_01_coordinates.csv",
+        "description": "9,481 coordinate points"
+      }
+    ],
+    "Scenario Busy Weekend - Bev With Golfers": [
+      {
+        "id": "scenario_busy_weekend_bev_with_golfers_sim_01_coordinates",
+        "name": "SIM_01 (Coordinates)",
+        "filename": "scenario_busy_weekend_bev_with_golfers_sim_01_coordinates.csv",
+        "description": "11,731 coordinate points"
+      }
+    ],
+    "Scenario Quiet Day - Bev With Golfers": [
+      {
+        "id": "scenario_quiet_day_bev_with_golfers_sim_01_coordinates",
+        "name": "SIM_01 (Coordinates)",
+        "filename": "scenario_quiet_day_bev_with_golfers_sim_01_coordinates.csv",
+        "description": "4,731 coordinate points"
+      },
+      {
+        "id": "scenario_quiet_day_bev_with_golfers_sim_02_coordinates",
+        "name": "SIM_02 (Coordinates)",
+        "filename": "scenario_quiet_day_bev_with_golfers_sim_02_coordinates.csv",
+        "description": "4,731 coordinate points"
+      }
+    ],
+    "Scenario Typical Weekday - Bev With Golfers": [
+      {
+        "id": "scenario_typical_weekday_bev_with_golfers_sim_01_coordinates",
+        "name": "SIM_01 (Coordinates)",
+        "filename": "scenario_typical_weekday_bev_with_golfers_sim_01_coordinates.csv",
+        "description": "8,731 coordinate points"
+      }
+    ]
+  },
+  "defaultGroup": "Scenario Busy Weekday - Bev With Golfers",
+  "defaultSimulation": "scenario_busy_weekday_bev_with_golfers_sim_01_coordinates"
+}
