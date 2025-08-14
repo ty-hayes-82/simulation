@@ -79,6 +79,8 @@ class DeliveryRunnerMetrics:
     active_runner_hours: float
     simulation_id: str
     runner_id: str
+    # Per-runner utilization breakdown (percentages)
+    runner_utilization_by_runner: Dict[str, Dict[str, float]] | None = None
 
 
 def calculate_delivery_runner_metrics(
@@ -145,6 +147,7 @@ def calculate_delivery_runner_metrics(
     
     # Runner utilization analysis
     utilization_mix = _calculate_runner_utilization(activity_log, service_hours)
+    utilization_by_runner = _calculate_runner_utilization_by_runner(activity_log, service_hours)
     
     # Distance metrics
     distances = [d.get('delivery_distance_m', 0) for d in delivery_stats]
@@ -193,6 +196,7 @@ def calculate_delivery_runner_metrics(
         active_runner_hours=service_hours,
         simulation_id=simulation_id,
         runner_id=runner_id,
+        runner_utilization_by_runner=utilization_by_runner,
     )
 
 
@@ -276,6 +280,56 @@ def _calculate_runner_utilization(activity_log: List[Dict[str, Any]], service_ho
         'handoff': (handoff_time / total_time) * 100,
         'deadhead': (deadhead_time / total_time) * 100,
     }
+
+
+def _calculate_runner_utilization_by_runner(activity_log: List[Dict[str, Any]], service_hours: float) -> Dict[str, Dict[str, float]]:
+    """Calculate utilization percentages per runner_id (driving, waiting, handoff, deadhead)."""
+    service_seconds = service_hours * 3600
+
+    # Collect runner_ids
+    runner_ids = []
+    for a in activity_log:
+        rid = a.get('runner_id')
+        if isinstance(rid, str) and rid:
+            if rid not in runner_ids:
+                runner_ids.append(rid)
+
+    def categorize(activity_type: str) -> str:
+        if 'delivery_start' in activity_type or 'returning' in activity_type:
+            return 'driving'
+        if 'prep_start' in activity_type or 'prep_complete' in activity_type:
+            return 'waiting'
+        if 'delivery_complete' in activity_type:
+            return 'handoff'
+        if 'idle' in activity_type or 'queue_status' in activity_type:
+            return 'deadhead'
+        return 'other'
+
+    # Initialize structures
+    by_runner: Dict[str, Dict[str, float]] = {rid: {'driving': 0.0, 'waiting': 0.0, 'handoff': 0.0, 'deadhead': 0.0} for rid in runner_ids}
+
+    # Compute durations per runner by walking activity stream and attributing to that runner
+    for idx, activity in enumerate(activity_log):
+        rid = activity.get('runner_id')
+        if not isinstance(rid, str) or not rid:
+            continue
+        activity_type = activity.get('activity_type', '')
+        start_t = activity.get('timestamp_s', 0)
+        end_t = service_seconds
+        if idx + 1 < len(activity_log):
+            end_t = activity_log[idx + 1].get('timestamp_s', service_seconds)
+        duration = max(0.0, float(end_t - start_t))
+        bucket = categorize(activity_type)
+        if bucket in by_runner.get(rid, {}):
+            by_runner[rid][bucket] += duration
+
+    # Convert to percentages
+    for rid, buckets in by_runner.items():
+        total = max(1.0, float(service_seconds))
+        for k in buckets:
+            buckets[k] = (buckets[k] / total) * 100.0
+
+    return by_runner
 
 
 def _calculate_queue_metrics(activity_log: List[Dict[str, Any]]) -> Dict[str, float]:
@@ -461,7 +515,38 @@ def summarize_delivery_runner_metrics(metrics_list: List[DeliveryRunnerMetrics])
 def format_delivery_runner_metrics_report(metrics: DeliveryRunnerMetrics) -> str:
     """Format delivery runner metrics as a markdown report."""
     
+    # Metric definitions as inline HTML comments
+    defs = {
+        'RPR': 'Revenue per round = total revenue / total rounds during service window.',
+        'OrdersPerRunnerHour': 'Successful orders divided by active runner hours.',
+        'Penetration': 'Total orders placed per round (orders / rounds).',
+        'OnTimeRate': 'Share of deliveries completed within SLA minutes.',
+        'CycleP50': 'Median (50th percentile) of total completion time in minutes.',
+        'CycleP90': '90th percentile of total completion time in minutes.',
+        'DispatchDelay': 'Average time from order ready/received to prep start (queue delay).',
+        'TravelTime': 'Average one-way travel time from clubhouse to hole.',
+        'DistancePerDelivery': 'Average distance per successful delivery (meters).',
+        'FailedRate': 'Failed orders divided by total orders.',
+        'AOV': 'Average revenue per successful order.',
+        'QueueDepth': 'Average number of orders waiting in queue when sampled.',
+        'QueueWait': 'Estimated average minutes an order waits in queue.',
+        'Capacity15Min': 'Maximum orders placed within any 15-minute window.',
+        'BreakEven': 'Orders needed for added runner to break even under assumed costs.',
+    }
+
     report = f"""# Delivery Runner Metrics Report
+
+## Top 10 Metrics
+- **Revenue per Round (RPR)**: ${metrics.revenue_per_round:.2f} <!-- {defs['RPR']} -->
+- **Orders per Runner-Hour**: {metrics.orders_per_runner_hour:.2f} <!-- {defs['OrdersPerRunnerHour']} -->
+- **Order Penetration Rate**: {metrics.order_penetration_rate:.1%} <!-- {defs['Penetration']} -->
+- **On-Time Rate**: {metrics.on_time_rate:.1%} <!-- {defs['OnTimeRate']} -->
+- **Delivery Cycle Time (P50)**: {metrics.delivery_cycle_time_p50:.1f} minutes <!-- {defs['CycleP50']} -->
+- **Delivery Cycle Time (P90)**: {metrics.delivery_cycle_time_p90:.1f} minutes <!-- {defs['CycleP90']} -->
+- **Dispatch Delay (Avg)**: {metrics.dispatch_delay_avg:.1f} minutes <!-- {defs['DispatchDelay']} -->
+- **Travel Time (Avg)**: {metrics.travel_time_avg:.1f} minutes <!-- {defs['TravelTime']} -->
+- **Distance per Delivery (Avg)**: {metrics.distance_per_delivery_avg:.0f} meters <!-- {defs['DistancePerDelivery']} -->
+- **Failed Rate**: {metrics.failed_rate:.1%} <!-- {defs['FailedRate']} -->
 
 ## Simulation Details
 - **Simulation ID**: {metrics.simulation_id}
@@ -475,18 +560,18 @@ def format_delivery_runner_metrics_report(metrics: DeliveryRunnerMetrics) -> str
 ## Core Business Metrics
 
 ### Revenue & Orders
-- **Revenue per Round (RPR)**: ${metrics.revenue_per_round:.2f}
-- **Order Penetration Rate**: {metrics.order_penetration_rate:.1%}
-- **Average Order Value (AOV)**: ${metrics.average_order_value:.2f}
-- **Orders per Runner-Hour**: {metrics.orders_per_runner_hour:.2f}
+- **Revenue per Round (RPR)**: ${metrics.revenue_per_round:.2f} <!-- {defs['RPR']} -->
+- **Order Penetration Rate**: {metrics.order_penetration_rate:.1%} <!-- {defs['Penetration']} -->
+- **Average Order Value (AOV)**: ${metrics.average_order_value:.2f} <!-- {defs['AOV']} -->
+- **Orders per Runner-Hour**: {metrics.orders_per_runner_hour:.2f} <!-- {defs['OrdersPerRunnerHour']} -->
 
 ### Service Quality
-- **On-Time Rate**: {metrics.on_time_rate:.1%}
-- **Delivery Cycle Time (P50)**: {metrics.delivery_cycle_time_p50:.1f} minutes
-- **Delivery Cycle Time (P90)**: {metrics.delivery_cycle_time_p90:.1f} minutes
-- **Dispatch Delay (Avg)**: {metrics.dispatch_delay_avg:.1f} minutes
-- **Travel Time (Avg)**: {metrics.travel_time_avg:.1f} minutes
-- **Failed Rate**: {metrics.failed_rate:.1%}
+- **On-Time Rate**: {metrics.on_time_rate:.1%} <!-- {defs['OnTimeRate']} -->
+- **Delivery Cycle Time (P50)**: {metrics.delivery_cycle_time_p50:.1f} minutes <!-- {defs['CycleP50']} -->
+- **Delivery Cycle Time (P90)**: {metrics.delivery_cycle_time_p90:.1f} minutes <!-- {defs['CycleP90']} -->
+- **Dispatch Delay (Avg)**: {metrics.dispatch_delay_avg:.1f} minutes <!-- {defs['DispatchDelay']} -->
+- **Travel Time (Avg)**: {metrics.travel_time_avg:.1f} minutes <!-- {defs['TravelTime']} -->
+- **Failed Rate**: {metrics.failed_rate:.1%} <!-- {defs['FailedRate']} -->
 
 ## Operational Metrics
 
@@ -496,14 +581,25 @@ def format_delivery_runner_metrics_report(metrics: DeliveryRunnerMetrics) -> str
 - **Handoff**: {metrics.runner_utilization_handoff_pct:.1f}%
 - **Deadhead**: {metrics.runner_utilization_deadhead_pct:.1f}%
 
+### Runner Utilization by Runner
+"""
+    # Append per-runner utilization if available
+    if metrics.runner_utilization_by_runner:
+        for rid, buckets in metrics.runner_utilization_by_runner.items():
+            report += f"- **{rid}**: Driving {buckets.get('driving', 0):.1f}%, Waiting {buckets.get('waiting', 0):.1f}%, Handoff {buckets.get('handoff', 0):.1f}%, Deadhead {buckets.get('deadhead', 0):.1f}%\n"
+    else:
+        report += "- n/a\n"
+
+    report += f"""
+
 ### Distance & Capacity
-- **Distance per Delivery (Avg)**: {metrics.distance_per_delivery_avg:.0f} meters
-- **Queue Depth (Avg)**: {metrics.queue_depth_avg:.1f} orders
-- **Queue Wait (Avg)**: {metrics.queue_wait_avg:.1f} minutes
-- **Capacity per 15-min Window**: {metrics.capacity_15min_window} orders
+- **Distance per Delivery (Avg)**: {metrics.distance_per_delivery_avg:.0f} meters <!-- {defs['DistancePerDelivery']} -->
+- **Queue Depth (Avg)**: {metrics.queue_depth_avg:.1f} orders <!-- {defs['QueueDepth']} -->
+- **Queue Wait (Avg)**: {metrics.queue_wait_avg:.1f} minutes <!-- {defs['QueueWait']} -->
+- **Capacity per 15-min Window**: {metrics.capacity_15min_window} orders <!-- {defs['Capacity15Min']} -->
 
 ### Financial Analysis
-- **Second Runner Break-Even**: {metrics.second_runner_break_even_orders:.1f} orders
+- **Second Runner Break-Even**: {metrics.second_runner_break_even_orders:.1f} orders <!-- {defs['BreakEven']} -->
 
 ## Zone Service Times
 

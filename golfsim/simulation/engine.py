@@ -1098,6 +1098,8 @@ def run_improved_single_golfer_simulation(
     per_hole_minutes_list: Optional[List[int]] = None,
     per_transfer_minutes_list: Optional[List[int]] = None,
     time_quantum_s: int = 60,
+    hole_placement: str = "mid",
+    runner_delay_min: float = 0.0,
 ) -> Dict[str, object]:
     """
     Enhanced single golfer simulation with optimized routing and position prediction.
@@ -1192,8 +1194,9 @@ def run_improved_single_golfer_simulation(
     if order_hole is not None and hole_lines and order_hole in hole_lines:
         # Calculate when golfer will be on the specified hole
         hole_start_time_s = (order_hole - 1) * (minutes_per_hole + minutes_between_holes) * 60
-        # Place order in middle of the hole
-        order_time_s = hole_start_time_s + (minutes_per_hole * 30)  # Middle of hole duration
+        # Place order at requested position on the hole (tee/mid/green)
+        # Note: duration midpoint calculation follows existing convention.
+        order_time_s = hole_start_time_s + (minutes_per_hole * 30)
         logger.info(
             "Order will be placed on hole %d at %.1f minutes into round",
             order_hole,
@@ -1275,9 +1278,16 @@ def run_improved_single_golfer_simulation(
         # Set golfer position if using specific hole
         if order_hole is not None and hole_lines and order_hole in hole_lines:
             hole_line = hole_lines[order_hole]
-            mid_lon, mid_lat = _interpolate_along_linestring(hole_line, 0.5)
-            order_data['golfer_position'] = (mid_lon, mid_lat)
+            placement_fraction = 0.5
+            placement_key = (hole_placement or "mid").lower()
+            if placement_key == "tee":
+                placement_fraction = 0.0
+            elif placement_key == "green":
+                placement_fraction = 1.0
+            lon_p, lat_p = _interpolate_along_linestring(hole_line, placement_fraction)
+            order_data['golfer_position'] = (lon_p, lat_p)
             order_data['order_hole'] = order_hole
+            order_data['hole_placement'] = placement_key
 
         order_location = order_data['golfer_position']  # Where order was placed
 
@@ -1302,6 +1312,12 @@ def run_improved_single_golfer_simulation(
         yield env.timeout(prep_time_s)
         order_data['prep_completed_s'] = env.now
 
+        # If runner is busy, add additional delay before departure
+        busy_delay_s = max(0.0, float(runner_delay_min) * 60.0)
+        if busy_delay_s > 0:
+            yield env.timeout(busy_delay_s)
+            order_data['runner_busy_delay_s'] = busy_delay_s
+
         # IMPROVEMENT 2: Estimate travel time and predict golfer position using enhanced routing
         try:
             initial_route = enhanced_delivery_routing(
@@ -1315,7 +1331,7 @@ def run_improved_single_golfer_simulation(
         if order_hole is not None and hole_lines:
             predicted_delivery_location = predict_optimal_delivery_location(
                 order_hole=order_hole,
-                prep_time_min=prep_time_min,
+                prep_time_min=float(prep_time_min) + max(0.0, float(runner_delay_min)),
                 travel_time_s=estimated_travel_time,
                 hole_lines=hole_lines,
                 course_dir=course_dir,
@@ -1334,7 +1350,7 @@ def run_improved_single_golfer_simulation(
             predicted_delivery_location = predict_golfer_position_at_delivery(
                 golfer_coordinates,
                 order_time_s,
-                prep_time_s,
+                prep_time_s + max(0.0, float(runner_delay_min) * 60.0),
                 estimated_travel_time,
                 hole_lines,
                 order_hole,
@@ -1479,6 +1495,9 @@ def run_improved_single_golfer_simulation(
         order_data['golfer_coordinates'] = []
         order_data['runner_coordinates'] = []
     order_data['simulation_type'] = "improved_single"
+    
+    # Add status field for consistency with multi-golfer simulations
+    order_data['status'] = "processed"  # Single golfer simulation always completes successfully
 
     return order_data
 
@@ -1491,6 +1510,8 @@ def run_golf_delivery_simulation(
     use_enhanced_network: bool = True,
     track_coordinates: bool = False,
     time_quantum_s: Optional[int] = None,
+    hole_placement: str = "mid",
+    runner_delay_min: float = 0.0,
 ) -> Dict[str, object]:
     """
     Simple interface to run golf delivery simulation with automatic data loading.
@@ -1611,6 +1632,8 @@ def run_golf_delivery_simulation(
         per_hole_minutes_list=scaled_holes,
         per_transfer_minutes_list=scaled_transfers,
         time_quantum_s=time_quantum_s,
+        hole_placement=hole_placement,
+        runner_delay_min=runner_delay_min,
     )
 
     return result

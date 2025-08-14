@@ -33,7 +33,7 @@ def log_simulation_results(results: Dict, run_idx: Optional[int] = None, track_c
     logger.info("   Service time: %.1f minutes", results['total_service_time_s']/60)
     logger.info("   Delivery distance: %.0f meters", results['delivery_distance_m'])
     logger.info("   Preparation time: %.1f minutes", results['prep_time_s']/60)
-    logger.info("   Travel time: %.1f minutes", results['delivery_travel_time_s']/60)
+    logger.info("   Travel time (out+back): %.1f minutes", results['delivery_travel_time_s']/60)
     
     # Show route efficiency if available
     trip_to_golfer = results.get('trip_to_golfer', {})
@@ -44,8 +44,13 @@ def log_simulation_results(results: Dict, run_idx: Optional[int] = None, track_c
     if track_coords:
         delivery_location = find_actual_delivery_location(results)
         if delivery_location:
-            logger.info("   Actual delivery location: Hole %s at %.6f, %.6f", 
-                       delivery_location['hole'], delivery_location['latitude'], delivery_location['longitude'])
+            hole = delivery_location.get('hole')
+            if hole:
+                logger.info("   Actual delivery location: Hole %s at %.6f, %.6f",
+                            hole, delivery_location['latitude'], delivery_location['longitude'])
+            else:
+                logger.info("   Actual delivery location: %.6f, %.6f",
+                            delivery_location['latitude'], delivery_location['longitude'])
     
     if results.get('prediction_method'):
         logger.info("   Prediction method: %s", results['prediction_method'])

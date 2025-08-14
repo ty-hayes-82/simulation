@@ -43,7 +43,7 @@ def load_course_geospatial_data(course_dir: str | Path) -> Dict:
     # Load all available geospatial features
     geojson_files = {
         'course_polygon': 'course_polygon.geojson',
-        'holes': 'holes.geojson', 
+        'holes': 'generated/holes_geofenced.geojson',  # Use the geofenced version
         'cart_paths': 'cart_paths.geojson',
         'greens': 'greens.geojson',
         'tees': 'tees.geojson',
@@ -283,10 +283,152 @@ def plot_golfer_path(ax, golfer_df: pd.DataFrame, results: Dict):
 
 
 def plot_runner_route(ax, runner_df: Optional[pd.DataFrame], results: Dict, course_data: Dict, clubhouse_coords: Tuple[float, float], cart_graph=None):
-    """Plot the runner's delivery route with start, path, and end points."""
+    """
+    Plot the runner's delivery route and return the coordinates used for plotting.
     
-    # If we have actual runner coordinates, use them
-    if runner_df is not None and len(runner_df) > 0:
+    Returns:
+        A tuple of (outbound_coords, return_coords)
+    """
+    
+    outbound_coords = []
+    return_coords = []
+
+    # Priority 1: Use actual routing data from simulation if available
+    if 'trip_to_golfer' in results and 'trip_back' in results:
+        trip_to_golfer = results['trip_to_golfer']
+        trip_back = results['trip_back']
+        
+        if 'nodes' in trip_to_golfer and len(trip_to_golfer['nodes']) > 1:
+            # Plot the actual route taken to golfer
+            
+            for node in trip_to_golfer['nodes']:
+                # Handle both node ID format and coordinate pair format
+                if isinstance(node, (list, tuple)) and len(node) == 2:
+                    # Direct coordinate pair: [lon, lat]
+                    outbound_coords.append((node[0], node[1]))
+                elif cart_graph and node in cart_graph.nodes:
+                    # Node ID that needs lookup in cart graph
+                    node_data = cart_graph.nodes[node]
+                    if 'x' in node_data and 'y' in node_data:
+                        outbound_coords.append((node_data['x'], node_data['y']))
+            
+            if len(outbound_coords) > 1:
+                xs, ys = zip(*outbound_coords)
+                ax.plot(
+                    xs, ys,
+                    color='orange',
+                    linewidth=4,
+                    alpha=0.8,
+                    linestyle='-',
+                    label='Delivery Route (Cart Path)',
+                    zorder=6,
+                )
+                _add_path_arrows(ax, outbound_coords)
+        
+        if 'nodes' in trip_back and len(trip_back['nodes']) > 1:
+            # Plot the actual return route
+            
+            for node in trip_back['nodes']:
+                # Handle both node ID format and coordinate pair format
+                if isinstance(node, (list, tuple)) and len(node) == 2:
+                    # Direct coordinate pair: [lon, lat]
+                    return_coords.append((node[0], node[1]))
+                elif cart_graph and node in cart_graph.nodes:
+                    # Node ID that needs lookup in cart graph
+                    node_data = cart_graph.nodes[node]
+                    if 'x' in node_data and 'y' in node_data:
+                        return_coords.append((node_data['x'], node_data['y']))
+            
+            if len(return_coords) > 1:
+                xs, ys = zip(*return_coords)
+                ax.plot(
+                    xs, ys,
+                    color='purple',
+                    linewidth=3,
+                    alpha=0.6,
+                    linestyle='--',
+                    label='Return Route (Cart Path)',
+                    zorder=5,
+                )
+        return outbound_coords, return_coords
+    
+    # Priority 2: Fallback to cart path routing approximation
+    if cart_graph is not None:
+        orders = results.get('orders', [])
+        # If no orders, check for single delivery simulation results
+        if not orders and "order_hole" in results:
+            orders = [{"hole_num": results["order_hole"]}]
+
+        delivery_stats = results.get('delivery_stats', [])
+        
+        if not orders:
+            return [], []
+            
+        # Get hole locations for approximation
+        hole_locations = {}
+        if 'holes' in course_data:
+            holes_gdf = course_data['holes']
+            for _, row in holes_gdf.iterrows():
+                hole_locations[row['hole']] = (row.geometry.centroid.x, row.geometry.centroid.y)
+
+        for i, order in enumerate(orders):
+            hole_num = order.get('hole_num')
+            hole_location = hole_locations.get(hole_num)
+            
+            if not hole_location:
+                continue
+
+            try:
+                # Find nearest nodes in cart graph
+                clubhouse_node = _find_nearest_cart_node(cart_graph, clubhouse_coords)
+                hole_node = _find_nearest_cart_node(cart_graph, hole_location)
+
+                if clubhouse_node and hole_node:
+                    try:
+                        path = nx.shortest_path(cart_graph, clubhouse_node, hole_node, weight='length')
+                        
+                        path_coords = []
+                        for node in path:
+                            node_data = cart_graph.nodes[node]
+                            if 'x' in node_data and 'y' in node_data:
+                                path_coords.append((node_data['x'], node_data['y']))
+                        
+                        if len(path_coords) > 1:
+                            outbound_coords.extend(path_coords)
+                            xs, ys = zip(*path_coords)
+                            ax.plot(
+                                xs, ys,
+                                color='orange',
+                                linewidth=4,
+                                alpha=0.8,
+                                linestyle='-',
+                                label='Delivery Route (Cart Path)' if i == 0 else "",
+                                zorder=6,
+                            )
+                            _add_path_arrows(ax, path_coords)
+
+                    except (nx.NetworkXNoPath, nx.NodeNotFound):
+                        # Fallback to straight line if no path is found
+                        ax.plot(
+                            [clubhouse_coords[0], hole_location[0]], 
+                            [clubhouse_coords[1], hole_location[1]],
+                            color='red',
+                            linewidth=2,
+                            alpha=0.8,
+                            linestyle='--',
+                            label='Delivery Route (Fallback)' if i == 0 else "",
+                            zorder=6,
+                        )
+                        outbound_coords.append(clubhouse_coords)
+                        outbound_coords.append(hole_location)
+
+            except Exception as e:
+                logger.warning(f"Could not render delivery route using cart graph fallback: {e}")
+        
+        return outbound_coords, return_coords
+
+    # Priority 3: Fallback to raw runner coordinates if provided
+    if runner_df is not None and not runner_df.empty:
         runner_positions = runner_df[runner_df['type'] == 'delivery-runner'].copy()
         
         if len(runner_positions) > 0:
@@ -299,7 +441,7 @@ def plot_runner_route(ax, runner_df: Optional[pd.DataFrame], results: Dict, cour
                 color='orange',
                 linewidth=5,
                 alpha=0.9,
-                label='Delivery Runner Path',
+                label='Delivery Runner Path (GPS)',
                 linestyle='-',
                 zorder=6,
             )
@@ -315,100 +457,25 @@ def plot_runner_route(ax, runner_df: Optional[pd.DataFrame], results: Dict, cour
                             arrowprops=dict(arrowstyle='->', color='darkorange', lw=2),
                             zorder=7
                         )
-            return
-    
-    # If no runner coordinates, create delivery routes using cart path network
-    orders = results.get('orders', [])
-    delivery_stats = results.get('delivery_stats', [])
-    
-    if not orders:
-        return
-        
-    # Get hole locations for approximation
-    hole_locations = {}
-    if 'holes' in course_data:
-        holes_gdf = course_data['holes']
-        for idx, hole in holes_gdf.iterrows():
-            hole_ref = hole.get('ref', str(idx + 1))
-            if hole.geometry.geom_type == "LineString":
-                midpoint = hole.geometry.interpolate(0.5, normalized=True)
-                hole_locations[int(hole_ref)] = (midpoint.x, midpoint.y)
-    
-    # Use cart_graph parameter directly (passed from render_delivery_plot)
-    
-    # Draw delivery routes for each order
-    for i, order in enumerate(orders):
-        hole_num = order.get('hole_num')
-        if hole_num and hole_num in hole_locations:
-            hole_location = hole_locations[hole_num]
+            outbound_coords.extend(list(zip(runner_positions['longitude'], runner_positions['latitude'])))
+            return outbound_coords, return_coords
+
+    # Priority 4: Fallback to a straight line from clubhouse to delivery location
+    else:
+        # Try to find delivery location from results
+        predicted_delivery = results.get('predicted_delivery_location', [None, None])
+        if predicted_delivery[0] is not None:
+            start_point = (clubhouse_coords[0], clubhouse_coords[1])
+            end_point = (predicted_delivery[0], predicted_delivery[1])
             
-            # If we have cart graph, try to find the actual cart path route
-            if cart_graph is not None:
-                try:
-                    import networkx as nx
-                    
-                    # Find nearest nodes in cart graph to clubhouse and hole location
-                    clubhouse_node = _find_nearest_cart_node(cart_graph, clubhouse_coords)
-                    hole_node = _find_nearest_cart_node(cart_graph, hole_location)
-                    
-                    if clubhouse_node and hole_node:
-                        try:
-                            # Find shortest path using cart network
-                            path = nx.shortest_path(cart_graph, clubhouse_node, hole_node, weight='length')
-                            
-                            # Extract coordinates for the path
-                            path_coords = []
-                            for node in path:
-                                node_data = cart_graph.nodes[node]
-                                path_coords.append((node_data['x'], node_data['y']))
-                            
-                            if len(path_coords) > 1:
-                                # Plot the cart path route
-                                xs, ys = zip(*path_coords)
-                                ax.plot(
-                                    xs, ys,
-                                    color='orange',
-                                    linewidth=4,
-                                    alpha=0.8,
-                                    linestyle='-',
-                                    label='Delivery Route (Cart Path)' if i == 0 else "",
-                                    zorder=6,
-                                )
-                                
-                                # Add arrows along the path
-                                _add_path_arrows(ax, path_coords)
-                                continue  # Skip straight line fallback
-                                
-                        except (nx.NetworkXNoPath, nx.NodeNotFound):
-                            pass  # Fall back to straight line if no path found
-                            
-                except ImportError:
-                    pass  # NetworkX not available, fall back to straight line
+            ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
+                    color='orange', linewidth=4, alpha=0.8, linestyle='-',
+                    label='Delivery Route (Fallback)', zorder=6)
             
-            # Fallback: Draw straight line from clubhouse to delivery location
-            ax.plot(
-                [clubhouse_coords[0], hole_location[0]], 
-                [clubhouse_coords[1], hole_location[1]],
-                color='orange',
-                linewidth=3,
-                alpha=0.7,
-                linestyle='--',
-                label='Delivery Route (Straight Line)' if i == 0 else "",
-                zorder=6,
-            )
-            
-            # Add arrow to show direction
-            mid_x = (clubhouse_coords[0] + hole_location[0]) / 2
-            mid_y = (clubhouse_coords[1] + hole_location[1]) / 2
-            dx = hole_location[0] - clubhouse_coords[0]
-            dy = hole_location[1] - clubhouse_coords[1]
-            
-            ax.annotate(
-                '', xy=(mid_x + dx*0.1, mid_y + dy*0.1), 
-                xytext=(mid_x - dx*0.1, mid_y - dy*0.1),
-                arrowprops=dict(arrowstyle='->', color='darkorange', lw=2),
-                zorder=7
-            )
+            outbound_coords.append(start_point)
+            outbound_coords.append(end_point)
+
+    return outbound_coords, return_coords
 
 
 def render_beverage_cart_plot(
@@ -658,71 +725,43 @@ def plot_key_locations(ax, results: Dict, clubhouse_coords: Tuple[float, float],
 
 
 def setup_plot_styling(ax, results: Dict, course_name: str, clubhouse_coords: Tuple[float, float], 
-                      course_bounds: Optional[Tuple[float, float, float, float]] = None):
-    """Set up plot with clean styling, bounds, labels, and legend."""
-    
-    # Calculate bounds from key points if not provided
-    if not course_bounds:
-        all_lons = [clubhouse_coords[0]]
-        all_lats = [clubhouse_coords[1]]
+                       course_bounds: Tuple[float, float, float, float]):
+    """Configure plot titles, labels, legends, and aspect ratio."""
 
-        order_pos = results.get('golfer_position', [None, None])
-        if order_pos[0] is not None:
-            all_lons.append(order_pos[0])
-            all_lats.append(order_pos[1])
+    title = f'{course_name} - Golf Delivery Simulation'
 
-        predicted_delivery = results.get('predicted_delivery_location', [None, None])
-        if predicted_delivery[0] is not None:
-            all_lons.append(predicted_delivery[0])
-            all_lats.append(predicted_delivery[1])
-
-        # Set reasonable bounds with margin
-        if len(all_lons) > 1:
-            lon_margin = (max(all_lons) - min(all_lons)) * 0.15
-            lat_margin = (max(all_lats) - min(all_lats)) * 0.15
-            ax.set_xlim(min(all_lons) - lon_margin, max(all_lons) + lon_margin)
-            ax.set_ylim(min(all_lats) - lat_margin, max(all_lats) + lat_margin)
-    else:
-        lon_min, lon_max, lat_min, lat_max = course_bounds
-        # Add some margin for better visualization
-        lon_margin = (lon_max - lon_min) * 0.08
-        lat_margin = (lat_max - lat_min) * 0.08
-        ax.set_xlim(lon_min - lon_margin, lon_max + lon_margin)
-        ax.set_ylim(lat_min - lat_margin, lat_max + lat_margin)
-
-    # Create informative title based on simulation results
-    orders = results.get('orders', [])
-    agg_metrics = results.get('aggregate_metrics', {})
-    
-    if len(orders) == 1:
-        # Single order - show specific details
-        order_time = results.get('order_time_s', 0) / 60
-        service_time = results.get('total_service_time_s', 0) / 60
-        delivery_distance = results.get('delivery_distance_m', 0)
-        ax.set_title(
-            f'{course_name} - Golf Delivery Simulation\n'
-            f'Order placed at {order_time:.1f} min, delivered in {service_time:.1f} min\n'
-            f'Delivery distance: {delivery_distance:.0f}m',
-            fontsize=16,
-            pad=20,
-            weight='bold',
-        )
-    else:
-        # Multiple orders - show aggregate statistics
-        total_orders = len(orders)
-        processed = agg_metrics.get('orders_processed', 0)
-        failed = agg_metrics.get('orders_failed', 0)
-        avg_order_time = agg_metrics.get('average_order_time_s', 0) / 60
-        total_distance = agg_metrics.get('total_delivery_distance_m', 0)
+    # Handle single delivery simulation results
+    if results.get("simulation_type") == "improved_single":
+        service_time_min = results.get('total_service_time_s', 0) / 60
+        distance_m = results.get('delivery_distance_m', 0)
+        title += f'\n1 Order Delivered | Service Time: {service_time_min:.1f} min | Distance: {distance_m:.0f}m'
+    # Handle multi-order simulation results from run_unified_simulation
+    elif 'orders' in results and 'delivery_stats' in results:
+        orders = results.get('orders', [])
+        delivery_stats = results.get('delivery_stats', [])
+        num_orders = len(orders)
+        num_delivered = len([o for o in orders if o.get('status') == 'processed'])
+        num_failed = num_orders - num_delivered
         
-        ax.set_title(
-            f'{course_name} - Golf Delivery Simulation\n'
-            f'{total_orders} orders total: {processed} delivered, {failed} failed\n'
-            f'Average order time: {avg_order_time:.1f} min, Total distance: {total_distance:.0f}m',
-            fontsize=16,
-            pad=20,
-            weight='bold',
-        )
+        title += f'\n{num_orders} orders total: {num_delivered} delivered, {num_failed} failed'
+
+        if delivery_stats:
+            avg_time_min = np.mean([d.get('total_completion_time_s', 0) for d in delivery_stats]) / 60
+            total_dist_km = sum(d.get('delivery_distance_m', 0) for d in delivery_stats) / 1000
+            title += f'\nAverage order time: {avg_time_min:.1f} min, Total distance: {total_dist_km:.1f} km'
+    # Fallback for empty/unknown results
+    else:
+        title += '\n0 orders total: 0 delivered, 0 failed\nAverage order time: 0.0 min, Total distance: 0m'
+
+    ax.set_title(title, fontsize=16, weight='bold')
+
+    # Set plot bounds and aspect ratio
+    lon_min, lon_max, lat_min, lat_max = course_bounds
+    # Add some margin for better visualization
+    lon_margin = (lon_max - lon_min) * 0.08
+    lat_margin = (lat_max - lat_min) * 0.08
+    ax.set_xlim(lon_min - lon_margin, lon_max + lon_margin)
+    ax.set_ylim(lat_min - lat_margin, lat_max + lat_margin)
 
     ax.set_xlabel('Longitude', fontsize=12)
     ax.set_ylabel('Latitude', fontsize=12)
@@ -738,15 +777,197 @@ def setup_plot_styling(ax, results: Dict, course_name: str, clubhouse_coords: Tu
     ax.set_aspect('equal')
 
 
-def render_delivery_plot(results: Dict, course_data: Dict, clubhouse_coords: Tuple[float, float],
-                        golfer_coords: Optional[pd.DataFrame] = None, 
-                        runner_coords: Optional[pd.DataFrame] = None,
-                        cart_graph: Optional[nx.Graph] = None,
-                        save_path: str | Path = "delivery_visualization.png",
-                        course_name: str = "Golf Course",
-                        style: str = "simple") -> Path:
+def render_single_delivery_plot(order: Dict, order_index: int, results: Dict, course_data: Dict, 
+                               clubhouse_coords: Tuple[float, float],
+                               golfer_coords: Optional[pd.DataFrame] = None, 
+                               runner_coords: Optional[pd.DataFrame] = None,
+                               cart_graph: Optional[nx.Graph] = None,
+                               save_path: str | Path = "delivery_order.png",
+                               course_name: str = "Golf Course",
+                               style: str = "simple") -> Path:
     """
-    Create a comprehensive delivery route visualization.
+    Create a visualization for a single delivery order.
+    
+    Args:
+        order: Individual order dictionary
+        order_index: Index of the order in the full results
+        results: Full simulation results dictionary  
+        course_data: Dictionary containing geospatial course data
+        clubhouse_coords: Tuple of (longitude, latitude) for clubhouse
+        golfer_coords: DataFrame with golfer position tracking (optional)
+        runner_coords: DataFrame with runner position tracking (optional)
+        cart_graph: NetworkX graph for cart paths (optional)
+        save_path: Output file path
+        course_name: Name of the golf course
+        style: Visualization style ("simple" or "detailed")
+        
+    Returns:
+        Path to saved visualization file
+    """
+    save_path = Path(save_path)
+    
+    logger.info("Creating single delivery visualization: %s", save_path)
+    
+    # Create a modified results dict for single order
+    single_order_results = results.copy()
+    single_order_results['orders'] = [order]
+    
+    # Filter delivery stats for this specific order if available
+    delivery_stats = results.get('delivery_stats', [])
+    if delivery_stats and order_index < len(delivery_stats):
+        single_order_results['delivery_stats'] = [delivery_stats[order_index]]
+    else:
+        single_order_results['delivery_stats'] = []
+    
+    # Filter runner coordinates for this specific delivery if available
+    filtered_runner_coords = None
+    if runner_coords is not None and len(runner_coords) > 0:
+        # Try to filter based on order timing or runner assignment
+        order_time = order.get('order_time_s', 0)
+        # For now, include all runner coordinates - could be refined later
+        # to show only the coordinates during this specific delivery
+        filtered_runner_coords = runner_coords
+    
+    # Create figure with single panel layout
+    fig, ax = plt.subplots(1, 1, figsize=(16, 12))
+
+    # Plot course features
+    if style == "simple":
+        plot_course_boundary(ax, course_data)
+    else:
+        plot_course_features(ax, course_data)
+    
+    # Plot cart network if available
+    if cart_graph:
+        plot_cart_network(ax, cart_graph, alpha=0.4)
+
+    # Plot golfer path (if this is part of a golfer simulation)
+    if golfer_coords is not None:
+        plot_golfer_path(ax, golfer_coords, single_order_results)
+
+    # Plot runner delivery route for this specific order
+    plot_runner_route(ax, filtered_runner_coords, single_order_results, course_data, clubhouse_coords, cart_graph)
+
+    # Plot key locations for this order
+    plot_key_locations(ax, single_order_results, clubhouse_coords, course_data)
+
+    # Set up styling and bounds
+    course_bounds = calculate_course_bounds(course_data)
+    setup_plot_styling(ax, single_order_results, course_name, clubhouse_coords, course_bounds)
+
+    # Update title to reflect single order
+    order_id = order.get('order_id', order_index + 1)
+    hole_num = order.get('hole_num', 'Unknown')
+    
+    # Ensure order_id is displayed properly
+    try:
+        order_id_display = int(order_id) if order_id is not None else order_index + 1
+    except (ValueError, TypeError):
+        order_id_display = order_index + 1
+    
+    ax.set_title(f'{course_name} - Delivery Order #{order_id_display} (Hole {hole_num})')
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+    logger.info("Saved single delivery visualization: %s (%.1f KB)", 
+                save_path, save_path.stat().st_size / 1024)
+    return save_path
+
+
+def render_individual_delivery_plots(results: Dict, course_data: Dict, clubhouse_coords: Tuple[float, float],
+                                   golfer_coords: Optional[pd.DataFrame] = None, 
+                                   runner_coords: Optional[pd.DataFrame] = None,
+                                   cart_graph: Optional[nx.Graph] = None,
+                                   output_dir: str | Path = ".",
+                                   filename_prefix: str = "delivery_order",
+                                   course_name: str = "Golf Course",
+                                   style: str = "simple") -> List[Path]:
+    """
+    Create individual visualization files for each delivery order.
+    
+    Args:
+        results: Simulation results dictionary
+        course_data: Dictionary containing geospatial course data
+        clubhouse_coords: Tuple of (longitude, latitude) for clubhouse
+        golfer_coords: DataFrame with golfer position tracking (optional)
+        runner_coords: DataFrame with runner position tracking (optional)
+        cart_graph: NetworkX graph for cart paths (optional)
+        output_dir: Directory to save individual PNG files
+        filename_prefix: Prefix for individual PNG filenames
+        course_name: Name of the golf course
+        style: Visualization style ("simple" or "detailed")
+        
+    Returns:
+        List of paths to saved visualization files
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    orders = results.get('orders', [])
+    if not orders:
+        logger.info("No orders found, skipping individual delivery visualizations")
+        return []
+    
+    saved_paths = []
+    
+    for i, order in enumerate(orders):
+        order_id = order.get('order_id', i + 1)
+        hole_num = order.get('hole_num', 'unknown')
+        
+        # Ensure order_id is an integer for formatting
+        try:
+            order_id_int = int(order_id) if order_id is not None else i + 1
+        except (ValueError, TypeError):
+            order_id_int = i + 1
+        
+        # Create filename: delivery_order_001_hole_5.png
+        filename = f"{filename_prefix}_{order_id_int:03d}_hole_{hole_num}.png"
+        save_path = output_dir / filename
+        
+        try:
+            # Generate individual delivery plot
+            saved_path = render_single_delivery_plot(
+                order=order,
+                order_index=i,
+                results=results,
+                course_data=course_data,
+                clubhouse_coords=clubhouse_coords,
+                golfer_coords=golfer_coords,
+                runner_coords=runner_coords,
+                cart_graph=cart_graph,
+                save_path=save_path,
+                course_name=course_name,
+                style=style
+            )
+            saved_paths.append(saved_path)
+            logger.info("Created individual delivery visualization %d/%d: %s", 
+                       i + 1, len(orders), saved_path.name)
+            
+        except Exception as e:
+            logger.warning("Failed to create individual visualization for order %d: %s", 
+                          order_id, e)
+    
+    logger.info("Created %d individual delivery visualizations in %s", 
+                len(saved_paths), output_dir)
+    return saved_paths
+
+
+def render_delivery_plot(
+    results: Dict,
+    course_data: Dict,
+    clubhouse_coords: Tuple[float, float],
+    golfer_coords: Optional[pd.DataFrame] = None, 
+    runner_coords: Optional[pd.DataFrame] = None,
+    cart_graph: Optional[nx.Graph] = None,
+    save_path: Optional[Path] = None,
+    course_name: Optional[str] = None,
+    style: str = "simple",
+    save_debug_coords_path: Optional[Path] = None
+):
+    """
+    Main function to render a delivery plot for single or multiple deliveries.
     
     Args:
         results: Simulation results dictionary
@@ -757,12 +978,11 @@ def render_delivery_plot(results: Dict, course_data: Dict, clubhouse_coords: Tup
         save_path: Output file path
         course_name: Name of the golf course
         style: Visualization style ("simple" or "detailed")
-        
-    Returns:
-        Path to saved visualization file
+        save_debug_coords_path: Optional path to save debug coordinates
     """
-    save_path = Path(save_path)
-    
+    save_path = Path(save_path) if save_path else None
+    save_debug_coords_path = Path(save_debug_coords_path) if save_debug_coords_path else None
+
     logger.info("Creating delivery visualization: %s", save_path)
     
     # Create figure with single panel layout
@@ -783,7 +1003,7 @@ def render_delivery_plot(results: Dict, course_data: Dict, clubhouse_coords: Tup
         plot_golfer_path(ax, golfer_coords, results)
 
     # Plot runner delivery route (pass cart_graph directly to avoid JSON serialization issues)
-    plot_runner_route(ax, runner_coords, results, course_data, clubhouse_coords, cart_graph)
+    outbound_coords, return_coords = plot_runner_route(ax, runner_coords, results, course_data, clubhouse_coords, cart_graph)
 
     # Plot key locations
     plot_key_locations(ax, results, clubhouse_coords, course_data)
@@ -793,13 +1013,31 @@ def render_delivery_plot(results: Dict, course_data: Dict, clubhouse_coords: Tup
     setup_plot_styling(ax, results, course_name, clubhouse_coords, course_bounds)
 
     # Save the plot
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close()
+    if save_path:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        logger.info(f"Saved delivery visualization: {save_path} ({save_path.stat().st_size / 1024:.1f} KB)")
     
-    logger.info("Saved delivery visualization: %s (%.1f KB)", save_path, save_path.stat().st_size / 1024)
-    return save_path
+    # Save debug coordinates if path is provided
+    if save_debug_coords_path:
+        all_coords = []
+        if outbound_coords:
+            for i, (lon, lat) in enumerate(outbound_coords):
+                all_coords.append({'type': 'outbound', 'seq': i, 'lon': lon, 'lat': lat})
+        if return_coords:
+            for i, (lon, lat) in enumerate(return_coords):
+                all_coords.append({'type': 'return', 'seq': i, 'lon': lon, 'lat': lat})
+        
+        if all_coords:
+            try:
+                import pandas as pd
+                df = pd.DataFrame(all_coords)
+                df.to_csv(save_debug_coords_path, index=False)
+                logger.info(f"Saved visualization debug coordinates to: {save_debug_coords_path}")
+            except Exception as e:
+                logger.error(f"Failed to save visualization debug coordinates: {e}")
+
+    plt.close(fig)
 
 
 def create_timeline_visualization(results: Dict, save_path: str | Path = "timeline.png") -> Path:
@@ -851,3 +1089,51 @@ def create_timeline_visualization(results: Dict, save_path: str | Path = "timeli
     
     logger.info("Saved timeline visualization: %s", save_path)
     return save_path
+
+
+def create_folium_delivery_map(results: Dict, course_data: Dict, output_path: Path):
+    """
+    Creates an interactive Folium map of the delivery route.
+    """
+    import folium
+    
+    # Get center of the map from course boundary if available
+    if 'boundary' in course_data and hasattr(course_data['boundary'], 'centroid'):
+        center_lat = course_data['boundary'].centroid.y
+        center_lon = course_data['boundary'].centroid.x
+    else:
+        # Fallback to clubhouse or a default location
+        clubhouse_coords = results.get('runner_start_position', [-84.5928, 34.0379])
+        center_lon, center_lat = clubhouse_coords[0], clubhouse_coords[1]
+
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=15)
+
+    # Add course boundary
+    if 'boundary' in course_data:
+        folium.GeoJson(course_data['boundary'], name='Course Boundary').add_to(m)
+
+    # Function to extract path coordinates
+    def get_path_coords(trip_data):
+        coords = []
+        if 'nodes' in trip_data:
+            for node in trip_data['nodes']:
+                if isinstance(node, (list, tuple)) and len(node) == 2:
+                    coords.append((node[1], node[0]))  # lat, lon
+                elif isinstance(node, dict) and 'y' in node and 'x' in node:
+                    coords.append((node['y'], node['x']))
+        return coords
+
+    # Add trip to golfer
+    if 'trip_to_golfer' in results:
+        points = get_path_coords(results['trip_to_golfer'])
+        if points:
+            folium.PolyLine(points, color="orange", weight=5, opacity=0.8, tooltip="Delivery Route").add_to(m)
+
+    # Add trip back
+    if 'trip_back' in results:
+        points = get_path_coords(results['trip_back'])
+        if points:
+            folium.PolyLine(points, color="purple", weight=3, opacity=0.8, dash_array='5, 5', tooltip="Return Route").add_to(m)
+        
+    m.save(str(output_path))
+    logger.info(f"Saved Folium map to: {output_path}")

@@ -31,6 +31,7 @@ from golfsim.config.loaders import load_tee_times_config
 from golfsim.simulation.services import (
     BeverageCartService,
     run_multi_golfer_simulation,
+    MultiRunnerDeliveryService,
 )
 from golfsim.simulation.phase_simulations import generate_golfer_track
 from golfsim.simulation.crossings import (
@@ -309,6 +310,8 @@ def _run_bev_with_groups_once(
         "num_sales": len(sales_result.get("sales", [])),
         "crossings": serialize_crossings_summary(crossings) if crossings else None,
         "simulation_runtime_s": time.time() - start_time,
+        # Include full sales payload so downstream writers can persist transaction details
+        "sales_result": sales_result,
     }
     (run_dir / "result.json").write_text(json.dumps(result_meta, indent=2), encoding="utf-8")
 
@@ -344,20 +347,39 @@ def _run_mode_bev_carts(args: argparse.Namespace) -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     logger.info("Starting beverage cart GPS runs: %d runs, %d carts", args.num_runs, args.num_carts)
-    phase3_summary_rows: List[Dict] = []
+    all_stats: List[Dict] = []
 
     for i in range(1, int(args.num_runs) + 1):
         stats = _run_bev_carts_only_once(i, args.course_dir, int(args.num_carts), output_root)
-        # Summary row compatible with phase3 writers (no revenue)
-        phase3_summary_rows.append({
-            "run_idx": i,
-            "revenue": 0.0,
-            "num_sales": 0,
-            "tee_time_s": (9 - 7) * 3600,
-        })
+        all_stats.append(stats)
 
-    if phase3_summary_rows:
-        write_phase3_summary(phase3_summary_rows, output_root)
+    # Write a mode-specific summary
+    if all_stats:
+        lines: List[str] = [
+            "# Beverage Cart GPS Summary",
+            "",
+            f"Runs: {len(all_stats)}",
+            f"Carts per run: {int(args.num_carts)}",
+            "",
+            "## Run Details",
+        ]
+        for idx, st in enumerate(all_stats, start=1):
+            ppc = st.get("points_per_cart", {}) or {}
+            first_ts = st.get("first_ts")
+            last_ts = st.get("last_ts")
+            ppc_str = ", ".join([f"{k}: {v}" for k, v in ppc.items()]) if ppc else "n/a"
+            window = f"{_seconds_to_clock_str(first_ts)}–{_seconds_to_clock_str(last_ts)}" if first_ts is not None and last_ts is not None else "n/a"
+            lines += [
+                f"### Run {idx:02d}",
+                f"- **Points per cart**: {ppc_str}",
+                f"- **Service window**: {window}",
+                "",
+                "## Artifacts",
+                "- `bev_cart_coordinates.csv` — GPS track for each cart",
+                "- `bev_cart_route.png` — Route visualization",
+                "- `bev_cart_metrics_*.md` — Metrics per cart",
+            ]
+        (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
     logger.info("Complete. Results saved to: %s", output_root)
 
 
@@ -390,13 +412,16 @@ def _run_mode_bev_with_golfers(args: argparse.Namespace) -> None:
         )
 
         # Save phase3-style outputs for the generated result
+        # Ensure we propagate full sales_result (with sales list) from the run
+        sales_result_full = res.get("sales_result", {
+            "sales": [],
+            "revenue": float(res.get("revenue", 0.0)),
+        })
+
         sim_result = {
             "type": "standard",
             "run_idx": i,
-            "sales_result": {
-                "sales": res.get("sales_result", {}).get("sales", []),
-                "revenue": res.get("revenue", 0.0),
-            },
+            "sales_result": sales_result_full,
             "golfer_points": _generate_golfer_points_for_groups(args.course_dir, groups),
             "bev_points": [],  # filled below
             "pass_events": [],
@@ -430,7 +455,7 @@ def _run_mode_golfers_only(args: argparse.Namespace) -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     logger.info("Starting golfers-only runs: %d runs, %d groups", args.num_runs, args.groups_count)
-    phase3_summary_rows: List[Dict] = []
+    run_summaries: List[Dict] = []
 
     scenario_groups_base = _build_groups_from_scenario(args.course_dir, str(args.tee_scenario))
     if scenario_groups_base:
@@ -456,15 +481,31 @@ def _run_mode_golfers_only(args: argparse.Namespace) -> None:
         run_dir = output_root / f"sim_{i:02d}"
         save_phase3_output_files(sim_result, run_dir, include_stats=False)
 
-        phase3_summary_rows.append({
+        run_summaries.append({
             "run_idx": i,
-            "revenue": 0.0,
-            "num_sales": 0,
-            "tee_time_s": sim_result["tee_time_s"],
+            "tee_time_s": int(sim_result["tee_time_s"]),
+            "groups": len(groups),
         })
 
-    if phase3_summary_rows:
-        write_phase3_summary(phase3_summary_rows, output_root)
+    # Write a mode-specific summary
+    if run_summaries:
+        lines: List[str] = [
+            "# Golfers-Only Summary",
+            "",
+            f"Runs: {len(run_summaries)}",
+            "",
+            "## Run Details",
+        ]
+        for r in run_summaries:
+            lines += [
+                f"### Run {r['run_idx']:02d}",
+                f"- **Golfer Tee Time**: {_seconds_to_clock_str(r['tee_time_s'])}",
+                f"- **Groups**: {r['groups']}",
+                "",
+                "## Artifacts",
+                "- `coordinates.csv` — GPS tracks for golfer groups",
+            ]
+        (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
     logger.info("Complete. Results saved to: %s", output_root)
 
 
@@ -485,15 +526,134 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
         else:
             groups = _build_groups_interval(int(args.groups_count), first_tee_s, float(args.groups_interval_min)) if args.groups_count > 0 else []
 
-        sim_result = run_multi_golfer_simulation(
-            course_dir=args.course_dir,
-            groups=groups,
-            order_probability_per_9_holes=float(args.order_prob_9),
-            prep_time_min=int(args.prep_time),
-            runner_speed_mps=float(args.runner_speed),
-            output_dir=str(output_dir / f"run_{run_idx:02d}"),
-            create_visualization=True,
-        )
+        if int(args.num_runners) == 1:
+            sim_result = run_multi_golfer_simulation(
+                course_dir=args.course_dir,
+                groups=groups,
+                order_probability_per_9_holes=float(args.order_prob_9),
+                prep_time_min=int(args.prep_time),
+                runner_speed_mps=float(args.runner_speed),
+                output_dir=str(output_dir / f"run_{run_idx:02d}"),
+                create_visualization=True,
+            )
+        else:
+            # Multi-runner mode using shared queue
+            env = simpy.Environment()
+            service = MultiRunnerDeliveryService(
+                env=env,
+                course_dir=args.course_dir,
+                num_runners=int(args.num_runners),
+                runner_speed_mps=float(args.runner_speed),
+                prep_time_min=int(args.prep_time),
+            )
+
+            # Generate synthetic orders and feed into shared queue
+            orders = []
+            if groups:
+                from golfsim.simulation.services import simulate_golfer_orders
+                orders = simulate_golfer_orders(groups, float(args.order_prob_9))
+
+            def order_arrival_process():  # simpy process
+                last_time = env.now
+                for order in orders:
+                    target_time = max(order.order_time_s, service.service_open_s)
+                    if target_time > last_time:
+                        yield env.timeout(target_time - last_time)
+                    service.place_order(order)
+                    last_time = target_time
+
+            env.process(order_arrival_process())
+
+            run_until = max(service.service_close_s + 1, max((o.order_time_s for o in orders), default=0) + 4 * 3600)
+            env.run(until=run_until)
+
+            # Summarize multi-runner results in unified format
+            sim_result = {
+                "success": True,
+                "simulation_type": "multi_golfer_multi_runner",
+                "orders": [
+                    {
+                        "order_id": getattr(o, "order_id", None),
+                        "golfer_group_id": getattr(o, "golfer_group_id", None),
+                        "golfer_id": getattr(o, "golfer_id", None),
+                        "hole_num": getattr(o, "hole_num", None),
+                        "order_time_s": getattr(o, "order_time_s", None),
+                        "status": getattr(o, "status", "pending"),
+                        "total_completion_time_s": getattr(o, "total_completion_time_s", 0.0),
+                    }
+                    for o in orders
+                ],
+                "delivery_stats": service.delivery_stats,
+                "failed_orders": [
+                    {"order_id": getattr(o, "order_id", None), "reason": getattr(o, "failure_reason", None)}
+                    for o in service.failed_orders
+                ],
+                "activity_log": service.activity_log,
+                "metadata": {
+                    "prep_time_min": int(args.prep_time),
+                    "runner_speed_mps": float(args.runner_speed),
+                    "num_groups": len(groups),
+                    "num_runners": int(args.num_runners),
+                    "course_dir": str(args.course_dir),
+                },
+            }
+            
+            # Create visualizations for multi-runner simulations if there are orders
+            if sim_result["orders"]:
+                try:
+                    from golfsim.viz.matplotlib_viz import render_delivery_plot, render_individual_delivery_plots
+                    from golfsim.viz.matplotlib_viz import load_course_geospatial_data
+                    from golfsim.config.loaders import load_simulation_config
+                    import networkx as nx
+                    
+                    run_path = output_dir / f"run_{run_idx:02d}"
+                    run_path.mkdir(parents=True, exist_ok=True)
+                    
+                    # Load course data for visualization
+                    sim_cfg = load_simulation_config(args.course_dir)
+                    clubhouse_coords = sim_cfg.clubhouse
+                    course_data = load_course_geospatial_data(args.course_dir)
+                    
+                    # Try to load cart graph
+                    cart_graph = None
+                    cart_graph_path = Path(args.course_dir) / "pkl" / "cart_graph.pkl"
+                    if cart_graph_path.exists():
+                        import pickle
+                        with open(cart_graph_path, "rb") as f:
+                            cart_graph = pickle.load(f)
+                    
+                    # Create main visualization (all orders together)
+                    viz_path = run_path / "delivery_orders_map.png"
+                    render_delivery_plot(
+                        results=sim_result,
+                        course_data=course_data,
+                        clubhouse_coords=clubhouse_coords,
+                        cart_graph=cart_graph,
+                        save_path=viz_path,
+                        style="detailed"
+                    )
+                    
+                    logger.info("Created multi-runner delivery visualization: %s", viz_path)
+                    sim_result["visualization_path"] = str(viz_path)
+                    
+                    # Create individual delivery visualizations
+                    individual_paths = render_individual_delivery_plots(
+                        results=sim_result,
+                        course_data=course_data,
+                        clubhouse_coords=clubhouse_coords,
+                        cart_graph=cart_graph,
+                        output_dir=run_path,
+                        filename_prefix="delivery_order",
+                        style="detailed"
+                    )
+                    
+                    if individual_paths:
+                        logger.info("Created %d individual delivery visualizations for multi-runner", len(individual_paths))
+                        sim_result["individual_visualization_paths"] = [str(p) for p in individual_paths]
+                    
+                except Exception as e:
+                    logger.warning("Failed to create multi-runner visualization: %s", e)
+                    sim_result["visualization_error"] = str(e)
 
         # Persist outputs
         run_path = output_dir / f"run_{run_idx:02d}"
@@ -511,7 +671,7 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 simulation_id=f"delivery_dynamic_{run_idx:02d}",
                 revenue_per_order=float(args.revenue_per_order),
                 sla_minutes=int(args.sla_minutes),
-                runner_id="runner_1",
+                runner_id="runner_1" if int(args.num_runners) == 1 else f"{int(args.num_runners)}_runners",
                 service_hours=float(args.service_hours),
             )
             metrics = delivery_metrics
@@ -600,6 +760,7 @@ def main() -> None:
     parser.add_argument("--revenue-per-order", type=float, default=25.0, help="Revenue per successful order")
     parser.add_argument("--sla-minutes", type=int, default=30, help="SLA in minutes")
     parser.add_argument("--service-hours", type=float, default=10.0, help="Active service hours for runner (metrics scaling)")
+    parser.add_argument("--num-runners", type=int, default=1, help="Number of delivery runners (1 for single-runner, >1 enables multi-runner shared queue)")
 
     args = parser.parse_args()
     init_logging(args.log_level)

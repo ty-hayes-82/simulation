@@ -105,7 +105,15 @@ def sanitize_for_json(data: Dict[str, Any]) -> Dict[str, Any]:
     pruned: Dict[str, Any] = {}
     for key, value in data.items():
         if key in {"trip_to_golfer", "trip_back", "trip_to_clubhouse"}:
-            # Skip heavy routing details by default
+            # Preserve essential routing data for visualization while removing heavy objects
+            if isinstance(value, dict):
+                lightweight_trip = {
+                    "nodes": value.get("nodes", []),
+                    "length_m": value.get("length_m"),
+                    "time_s": value.get("time_s"),
+                    "routing_type": value.get("routing_type")
+                }
+                pruned[key] = convert(lightweight_trip)
             continue
         pruned[key] = convert(value)
     return pruned
@@ -126,6 +134,16 @@ def write_coordinates_csvs(
     for key in ("golfer_coordinates", "runner_coordinates"):
         if key in results and isinstance(results[key], list) and results[key]:
             df = pd.DataFrame(results[key])
+            # Backward-compatible enhancement: ensure runner_id column exists for runner CSV
+            if key == "runner_coordinates":
+                if "runner_id" not in df.columns:
+                    # Prefer 'id' or fall back to 'golfer_id' if legacy schema
+                    if "id" in df.columns:
+                        df.insert(0, "runner_id", df["id"].astype(str))
+                    elif "golfer_id" in df.columns:
+                        df.insert(0, "runner_id", df["golfer_id"].astype(str))
+                    else:
+                        df.insert(0, "runner_id", "runner_1")
             csv_file = output_dir / f"{key}.csv"
             df.to_csv(csv_file, index=False)
             written[key] = csv_file

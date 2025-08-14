@@ -22,11 +22,17 @@ Features:
 """
 import argparse
 import os
+import sys
 import json
 import pickle
 import geopandas as gpd
 from shapely.geometry import mapping
 import networkx as nx
+from pathlib import Path
+
+# Add the project root to Python path to enable imports
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
 from scripts.course_prep.geofence_holes import split_course_into_holes
 
 from golfsim.data.osm_ingest import load_course, build_cartpath_graph, _get_streets_near_course

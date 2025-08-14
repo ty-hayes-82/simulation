@@ -287,6 +287,231 @@ class SingleRunnerDeliveryService:
         return distance_m, travel_time_s
 
 
+@dataclass
+class MultiRunnerDeliveryService:
+    env: simpy.Environment
+    course_dir: str
+    num_runners: int = 2
+    runner_speed_mps: float = 2.68
+    prep_time_min: int = 10
+    activity_log: List[Dict] = field(default_factory=list)
+    delivery_stats: List[Dict] = field(default_factory=list)
+    failed_orders: List[DeliveryOrder] = field(default_factory=list)
+
+    # Shared queue implemented using a SimPy Store for concurrency
+    order_store: Optional[simpy.Store] = None
+
+    # Derived/config fields
+    clubhouse_coords: Tuple[float, float] | None = None
+    service_open_s: int = 0
+    service_close_s: int = 0
+    hole_distance_m: Dict[int, float] | None = None
+
+    # Internal per-runner state
+    runner_locations: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.prep_time_s = int(self.prep_time_min) * 60
+        self._load_course_config()
+        self.order_store = simpy.Store(self.env)
+        # Initialize runner locations to clubhouse
+        self.runner_locations = ["clubhouse" for _ in range(int(self.num_runners))]
+        # Start runner processes
+        for idx in range(int(self.num_runners)):
+            self.env.process(self._runner_loop(idx))
+
+    def _load_course_config(self) -> None:
+        sim_cfg = load_simulation_config(self.course_dir)
+        self.clubhouse_coords = sim_cfg.clubhouse
+        if getattr(sim_cfg, "service_hours", None) is not None:
+            open_time = f"{int(sim_cfg.service_hours.start_hour):02d}:00"
+            close_time = f"{int(sim_cfg.service_hours.end_hour):02d}:00"
+        else:
+            open_time = "07:00"
+            close_time = "18:00"
+        self.service_open_s = self._time_str_to_seconds(open_time)
+        self.service_close_s = self._time_str_to_seconds(close_time)
+        logger.info(
+            "Delivery service hours: %s - %s (%.1fh - %.1fh)",
+            open_time,
+            close_time,
+            self.service_open_s / 3600,
+            self.service_close_s / 3600,
+        )
+        self._load_travel_distances()
+
+    def _load_travel_distances(self) -> None:
+        try:
+            import json
+            course_path = Path(self.course_dir)
+            candidates = [course_path / "travel_times.json", course_path / "travel_times_simple.json"]
+            chosen = next((p for p in candidates if p.exists()), None)
+            if not chosen:
+                self.hole_distance_m = None
+                return
+            data = json.loads(chosen.read_text(encoding="utf-8"))
+            holes = data.get("holes", [])
+            mapping: Dict[int, float] = {}
+            for h in holes:
+                hole_num = int(h.get("hole", 0))
+                tt = h.get("travel_times", {}).get("golf_cart", {}).get("to_target", {})
+                dist = tt.get("distance_m")
+                if hole_num and isinstance(dist, (int, float)):
+                    mapping[hole_num] = float(dist)
+            self.hole_distance_m = mapping if mapping else None
+            if self.hole_distance_m:
+                logger.info("Loaded travel distances for %d holes from %s", len(self.hole_distance_m), chosen.name)
+            else:
+                logger.warning("travel_times file present but no usable distances found: %s", chosen)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to load travel distances: %s", e)
+            self.hole_distance_m = None
+
+    @staticmethod
+    def _time_str_to_seconds(time_str: str) -> int:
+        hour, minute = map(int, time_str.split(":"))
+        return (hour - 7) * 3600 + minute * 60
+
+    def log_activity(self, activity_type: str, description: str, runner_id: Optional[str] = None, order_id: str | None = None, location: Optional[str] = None) -> None:
+        current_time_min = self.env.now / 60
+        hours = int(current_time_min // 60) + 7
+        minutes = int(current_time_min % 60)
+        time_str = f"{hours:02d}:{minutes:02d}"
+        self.activity_log.append(
+            {
+                "timestamp_s": self.env.now,
+                "time_str": time_str,
+                "activity_type": activity_type,
+                "description": description,
+                "runner_id": runner_id,
+                "order_id": order_id,
+                "location": location,
+            }
+        )
+
+    def place_order(self, order: DeliveryOrder) -> None:
+        order.order_placed_time = self.env.now
+        # Note: store.put returns an event; we don't need to wait on it here
+        self.order_store.put(order)
+        self.log_activity(
+            "order_received",
+            f"New order from Group {order.golfer_group_id} on Hole {order.hole_num}",
+            runner_id=None,
+            order_id=order.order_id,
+            location="clubhouse",
+        )
+
+    def _runner_loop(self, runner_index: int):  # simpy process
+        runner_label = f"runner_{runner_index + 1}"
+        # Wait until service opens
+        if self.env.now < self.service_open_s:
+            wait_time = self.service_open_s - self.env.now
+            self.log_activity("service_closed", f"{runner_label} waiting {wait_time/60:.0f} minutes until opening", runner_id=runner_label, location="clubhouse")
+            yield self.env.timeout(wait_time)
+            self.log_activity("service_opened", f"{runner_label} started shift", runner_id=runner_label, location="clubhouse")
+
+        while True:
+            # Stop condition: after close and queue empty
+            if self.env.now > self.service_close_s and len(self.order_store.items) == 0:
+                self.log_activity("service_closed", f"{runner_label} shift ended", runner_id=runner_label, location=self.runner_locations[runner_index])
+                break
+
+            # Fetch next order or wait briefly
+            evt = self.order_store.get()
+            timeout_evt = self.env.timeout(30)
+            res = yield evt | timeout_evt
+            if timeout_evt in res:
+                continue
+            order: DeliveryOrder = res[evt]
+
+            # Discard orders that waited too long in the queue
+            placed_time = order.order_placed_time if order.order_placed_time is not None else self.env.now
+            if (self.env.now - placed_time) > 3600:
+                order.status = "failed"
+                order.failure_reason = "Exceeded 1-hour queue time before processing"
+                self.failed_orders.append(order)
+                self.log_activity("order_failed", f"{runner_label} dropping Order {order.order_id} after >1h wait", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
+                continue
+
+            # Process the order
+            yield self.env.process(self._process_single_order(order, runner_index, runner_label))
+
+    def _process_single_order(self, order: DeliveryOrder, runner_index: int, runner_label: str):  # simpy process
+        # If not at clubhouse, return first
+        if self.runner_locations[runner_index] != "clubhouse":
+            return_time = self._calculate_return_time(self.runner_locations[runner_index])
+            self.log_activity("returning", f"{runner_label} returning to clubhouse from {self.runner_locations[runner_index]} ({return_time/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
+            yield self.env.timeout(return_time)
+            self.runner_locations[runner_index] = "clubhouse"
+            self.log_activity("arrived_clubhouse", f"{runner_label} arrived at clubhouse to prepare Order {order.order_id}", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
+
+        order.queue_delay_s = self.env.now - (order.order_placed_time or self.env.now)
+        order.prep_started_time = self.env.now
+        self.log_activity("prep_start", f"{runner_label} started prep for Order {order.order_id} (Hole {order.hole_num})", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
+        yield self.env.timeout(self.prep_time_s)
+        order.prep_completed_time = self.env.now
+        self.log_activity("prep_complete", f"{runner_label} completed prep for Order {order.order_id}", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
+
+        delivery_distance_m, delivery_time_s = self._calculate_delivery_details(order.hole_num)
+        order.delivery_started_time = self.env.now
+        self.log_activity("delivery_start", f"{runner_label} departing to Hole {order.hole_num} ({delivery_distance_m:.0f}m, {delivery_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
+        yield self.env.timeout(delivery_time_s)
+        order.delivered_time = self.env.now
+        self.runner_locations[runner_index] = f"hole_{order.hole_num}"
+
+        placed_time = order.order_placed_time if order.order_placed_time is not None else order.delivered_time
+        order.total_completion_time_s = order.delivered_time - placed_time
+        return_time_s = self._calculate_return_time(self.runner_locations[runner_index])
+        total_drive_time_s = delivery_time_s + return_time_s
+        self.log_activity("delivery_complete", f"{runner_label} delivered Order {order.order_id} to Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
+
+        order.status = "processed"
+        self.delivery_stats.append(
+            {
+                "order_id": order.order_id,
+                "golfer_group_id": order.golfer_group_id,
+                "hole_num": order.hole_num,
+                "order_time_s": order.order_time_s,
+                "queue_delay_s": order.queue_delay_s,
+                "prep_time_s": self.prep_time_s,
+                "delivery_time_s": delivery_time_s,
+                "return_time_s": return_time_s,
+                "total_drive_time_s": total_drive_time_s,
+                "delivery_distance_m": delivery_distance_m,
+                "total_completion_time_s": order.total_completion_time_s,
+                "delivered_at_time_s": order.delivered_time,
+                "runner_id": runner_label,
+            }
+        )
+
+    def _calculate_return_time(self, runner_location: str) -> float:
+        if runner_location == "clubhouse":
+            return 0.0
+        try:
+            if runner_location.startswith("hole_"):
+                hole_num = int(runner_location.split("_")[1])
+                _, time_s = self._calculate_delivery_details(hole_num)
+                return float(time_s)
+        except Exception:
+            pass
+        return 8 * 60.0
+
+    def _calculate_delivery_details(self, hole_num: int) -> Tuple[float, float]:
+        if self.hole_distance_m and hole_num in self.hole_distance_m:
+            distance_m = float(self.hole_distance_m[hole_num])
+            travel_time_s = distance_m / max(self.runner_speed_mps, 0.1)
+            return distance_m, travel_time_s
+        heuristic_distance_by_hole = [
+            0, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000,
+            1800, 1600, 1400, 1200, 1000, 800, 600, 400, 200,
+        ]
+        if 1 <= hole_num <= 18:
+            distance_m = float(heuristic_distance_by_hole[hole_num])
+        else:
+            distance_m = 1000.0
+        travel_time_s = distance_m / max(self.runner_speed_mps, 0.1)
+        return distance_m, travel_time_s
+
 def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: float) -> List[DeliveryOrder]:
     """Generate delivery orders on a per-group, per-9-holes basis.
 
@@ -796,7 +1021,7 @@ def run_multi_golfer_simulation(
     # Create visualization if requested and we have orders
     if create_visualization and output_dir and results["orders"]:
         try:
-            from ..viz.matplotlib_viz import render_delivery_plot
+            from ..viz.matplotlib_viz import render_delivery_plot, render_individual_delivery_plots
             from ..viz.matplotlib_viz import load_course_geospatial_data
             import networkx as nx
             
@@ -816,7 +1041,7 @@ def run_multi_golfer_simulation(
                 with open(cart_graph_path, "rb") as f:
                     cart_graph = pickle.load(f)
             
-            # Create visualization
+            # Create main visualization (all orders together)
             viz_path = output_path / "delivery_orders_map.png"
             render_delivery_plot(
                 results=results,
@@ -829,6 +1054,21 @@ def run_multi_golfer_simulation(
             
             logger.info("Created delivery visualization: %s", viz_path)
             results["visualization_path"] = str(viz_path)
+            
+            # Create individual delivery visualizations
+            individual_paths = render_individual_delivery_plots(
+                results=results,
+                course_data=course_data,
+                clubhouse_coords=clubhouse_coords,
+                cart_graph=cart_graph,
+                output_dir=output_path,
+                filename_prefix="delivery_order",
+                style="detailed"
+            )
+            
+            if individual_paths:
+                logger.info("Created %d individual delivery visualizations", len(individual_paths))
+                results["individual_visualization_paths"] = [str(p) for p in individual_paths]
             
         except Exception as e:
             logger.warning("Failed to create visualization: %s", e)

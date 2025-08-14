@@ -49,7 +49,7 @@ def write_phase3_stats_file(
 
     # Compose lines
     lines: List[str] = [
-        "# Phase 3 — Beverage cart + 1 group (order-on-pass)",
+        "# Beverage Cart + Golfers — Single Run",
         "",
         f"Simulation run time: {sim_runtime_s:.2f} seconds",
         f"Golfer tee time: {format_time_from_baseline(int(tee_time_s))}",
@@ -261,7 +261,7 @@ def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
     total_sales = sum(sales_counts)
     
     lines: List[str] = [
-        "# Phase 3 — Bev cart + 1 group (5-run summary)",
+        "# Beverage Cart + Golfers Summary",
         "",
         f"Runs: {len(results)}",
         f"Revenue per run: min={min(revenues):.2f}, max={max(revenues):.2f}, mean={(sum(revenues)/len(revenues)):.2f}",

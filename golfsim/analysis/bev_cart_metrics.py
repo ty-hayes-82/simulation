@@ -325,9 +325,22 @@ def summarize_bev_cart_metrics(metrics_list: List[BevCartMetrics]) -> Dict[str, 
 
 def format_metrics_report(metrics: BevCartMetrics) -> str:
     """Format metrics into a readable report string."""
+    # Top 10 key metrics for quick scanning
     lines = [
         f"# Beverage Cart Metrics Report - {metrics.simulation_id}",
         f"Cart ID: {metrics.cart_id}",
+        "",
+        "## Top 10 Metrics",
+        f"- Revenue per Round (RPR): ${metrics.revenue_per_round:.2f}",
+        f"- Total Revenue: ${metrics.total_revenue:.2f}",
+        f"- Total Orders: {metrics.total_orders}",
+        f"- Average Order Value (AOV): ${metrics.average_order_value:.2f}",
+        f"- Orders per Cart Hour: {metrics.orders_per_cart_hour:.2f}",
+        f"- Order Penetration Rate: {metrics.order_penetration_rate:.2f}",
+        f"- Total Tips: ${metrics.total_tips:.2f}",
+        f"- Holes Covered per Hour: {metrics.holes_covered_per_hour:.2f}",
+        f"- Minutes per Hole per Cart: {metrics.minutes_per_hole_per_cart:.1f}",
+        f"- Total Visibility Events: {metrics.total_visibility_events}",
         "",
         "## Revenue Metrics",
         f"- Revenue per Round (RPR): ${metrics.revenue_per_round:.2f}",

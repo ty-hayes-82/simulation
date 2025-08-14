@@ -118,8 +118,11 @@ def _build_bev_with_golfers_jobs(course_dir: str, base_out: Path, log_level: str
             "--log-level",
             log_level,
         ]
-        if tee_scenario:
-            cmd += ["--tee-scenario", tee_scenario]
+        # For bev-with-golfers matrix runs, prefer manual first-tee/interval combos.
+        # Disable scenario injection unless explicitly overridden by the caller.
+        eff_scenario = "none" if tee_scenario == "typical_weekday" else tee_scenario
+        if eff_scenario:
+            cmd += ["--tee-scenario", eff_scenario]
         jobs.append(cmd)
     return jobs
 
@@ -157,8 +160,11 @@ def _build_golfers_only_jobs(course_dir: str, base_out: Path, log_level: str, ts
             "--log-level",
             log_level,
         ]
-        if tee_scenario:
-            cmd += ["--tee-scenario", tee_scenario]
+        # For golfers-only matrix runs, prefer manual first-tee/interval combos.
+        # Disable scenario injection unless explicitly overridden by the caller.
+        eff_scenario = "none" if tee_scenario == "typical_weekday" else tee_scenario
+        if eff_scenario:
+            cmd += ["--tee-scenario", eff_scenario]
         jobs.append(cmd)
     return jobs
 
