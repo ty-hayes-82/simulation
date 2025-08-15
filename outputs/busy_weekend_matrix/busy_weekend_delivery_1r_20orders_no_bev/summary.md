@@ -1,4 +1,4 @@
 # Delivery Dynamic Summary
 
-Runs: 2
-Revenue per round: min=$28.57 max=$30.36 mean=$29.46
+Runs: 1
+Revenue per round: min=$29.55 max=$29.55 mean=$29.55

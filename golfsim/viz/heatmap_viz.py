@@ -70,7 +70,7 @@ def extract_order_data(results: Dict) -> List[Dict[str, Any]]:
         results: Simulation results dictionary
         
     Returns:
-        List of order data dictionaries with hole_num, delivery_time, and coordinates
+        List of order data dictionaries with hole_num, drive_time, and coordinates
     """
     orders = results.get('orders', [])
     delivery_stats = results.get('delivery_stats', [])
@@ -82,21 +82,26 @@ def extract_order_data(results: Dict) -> List[Dict[str, Any]]:
         if hole_num is None:
             continue
             
-        # Get delivery time - try multiple sources
-        delivery_time_s = None
+        # Get drive time to golfer - try multiple sources
+        drive_time_s = None
         
-        # First try from order itself
-        if 'total_completion_time_s' in order:
-            delivery_time_s = order['total_completion_time_s']
-        # Then try from delivery stats
+        # First try from delivery stats (preferred - contains actual drive time)
+        if i < len(delivery_stats) and 'delivery_time_s' in delivery_stats[i]:
+            drive_time_s = delivery_stats[i]['delivery_time_s']
+        # Fallback to order itself if it has delivery_time_s
+        elif 'delivery_time_s' in order:
+            drive_time_s = order['delivery_time_s']
+        # Last resort: use total completion time (less accurate)
+        elif 'total_completion_time_s' in order:
+            drive_time_s = order['total_completion_time_s']
         elif i < len(delivery_stats) and 'total_completion_time_s' in delivery_stats[i]:
-            delivery_time_s = delivery_stats[i]['total_completion_time_s']
+            drive_time_s = delivery_stats[i]['total_completion_time_s']
         
-        if delivery_time_s is not None:
+        if drive_time_s is not None:
             order_data.append({
                 'hole_num': hole_num,
-                'delivery_time_s': delivery_time_s,
-                'delivery_time_min': delivery_time_s / 60.0,
+                'drive_time_s': drive_time_s,
+                'drive_time_min': drive_time_s / 60.0,
                 'order_id': order.get('order_id', f'order_{i}'),
                 'golfer_group_id': order.get('golfer_group_id'),
                 'order_time_s': order.get('order_time_s', 0)
@@ -106,7 +111,7 @@ def extract_order_data(results: Dict) -> List[Dict[str, Any]]:
 
 
 def calculate_delivery_time_stats(order_data: List[Dict[str, Any]]) -> Dict[int, Dict[str, float]]:
-    """Calculate delivery time statistics for each hole.
+    """Calculate drive time statistics for each hole.
     
     Args:
         order_data: List of order data dictionaries
@@ -122,7 +127,7 @@ def calculate_delivery_time_stats(order_data: List[Dict[str, Any]]) -> Dict[int,
         hole_num = order['hole_num']
         if hole_num not in orders_by_hole:
             orders_by_hole[hole_num] = []
-        orders_by_hole[hole_num].append(order['delivery_time_min'])
+        orders_by_hole[hole_num].append(order['drive_time_min'])
     
     # Calculate stats for each hole
     for hole_num, times in orders_by_hole.items():
@@ -179,10 +184,10 @@ def load_geofenced_holes(course_dir: str | Path) -> Dict[int, Any]:
 def create_course_heatmap(results: Dict,
                          course_dir: str | Path,
                          save_path: str | Path,
-                         title: str = "Golf Course Order Delivery Time Heatmap",
+                         title: str = "Golf Course Order Drive Time Heatmap",
                          grid_resolution: int = 100,
                          colormap: str = 'RdYlGn_r') -> Path:
-    """Create a heatmap visualization of order delivery times across the golf course.
+    """Create a heatmap visualization of order drive times across the golf course.
     
     Args:
         results: Simulation results dictionary
@@ -309,7 +314,7 @@ def create_course_heatmap(results: Dict,
         sm = ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
         cbar = plt.colorbar(sm, ax=ax, shrink=0.8, aspect=30)
-        cbar.set_label('Average Delivery Time (minutes)', fontsize=12)
+        cbar.set_label('Average Drive Time to Golfer (minutes)', fontsize=12)
     
     else:
         # No delivery data - just show hole polygons in gray
@@ -334,13 +339,13 @@ def create_course_heatmap(results: Dict,
     # Calculate summary statistics
     total_orders = len(order_data)
     if order_data:
-        avg_delivery_time = np.mean([o['delivery_time_min'] for o in order_data])
-        min_delivery_time = np.min([o['delivery_time_min'] for o in order_data])
-        max_delivery_time = np.max([o['delivery_time_min'] for o in order_data])
+        avg_drive_time = np.mean([o['drive_time_min'] for o in order_data])
+        min_drive_time = np.min([o['drive_time_min'] for o in order_data])
+        max_drive_time = np.max([o['drive_time_min'] for o in order_data])
         
         subtitle = (f"{total_orders} orders | "
-                   f"Avg: {avg_delivery_time:.1f} min | "
-                   f"Range: {min_delivery_time:.1f}-{max_delivery_time:.1f} min")
+                   f"Avg drive time: {avg_drive_time:.1f} min | "
+                   f"Range: {min_drive_time:.1f}-{max_drive_time:.1f} min")
     else:
         subtitle = "No orders processed"
     
@@ -368,7 +373,7 @@ def create_course_heatmap(results: Dict,
 def create_delivery_statistics_summary(results: Dict, 
                                      hole_polygons: Dict[int, Any],
                                      save_path: Optional[str | Path] = None) -> str:
-    """Create a text summary of delivery statistics by hole.
+    """Create a text summary of drive time statistics by hole.
     
     Args:
         results: Simulation results dictionary
@@ -382,22 +387,22 @@ def create_delivery_statistics_summary(results: Dict,
     hole_stats = calculate_delivery_time_stats(order_data)
     
     summary_lines = []
-    summary_lines.append("Golf Course Delivery Statistics Summary")
+    summary_lines.append("Golf Course Drive Time Statistics Summary")
     summary_lines.append("=" * 50)
     summary_lines.append("")
     
     # Overall statistics
     if order_data:
         total_orders = len(order_data)
-        avg_time = np.mean([o['delivery_time_min'] for o in order_data])
-        min_time = np.min([o['delivery_time_min'] for o in order_data])
-        max_time = np.max([o['delivery_time_min'] for o in order_data])
+        avg_time = np.mean([o['drive_time_min'] for o in order_data])
+        min_time = np.min([o['drive_time_min'] for o in order_data])
+        max_time = np.max([o['drive_time_min'] for o in order_data])
         
         summary_lines.extend([
             f"Total Orders: {total_orders}",
-            f"Average Delivery Time: {avg_time:.1f} minutes",
-            f"Minimum Delivery Time: {min_time:.1f} minutes", 
-            f"Maximum Delivery Time: {max_time:.1f} minutes",
+            f"Average Drive Time: {avg_time:.1f} minutes",
+            f"Minimum Drive Time: {min_time:.1f} minutes", 
+            f"Maximum Drive Time: {max_time:.1f} minutes",
             ""
         ])
     else:
@@ -408,10 +413,10 @@ def create_delivery_statistics_summary(results: Dict,
     
     # Per-hole statistics
     if hole_stats:
-        summary_lines.append("Delivery Times by Hole:")
+        summary_lines.append("Drive Times by Hole:")
         summary_lines.append("-" * 30)
         
-        # Sort holes by average delivery time (descending)
+        # Sort holes by average drive time (descending)
         sorted_holes = sorted(hole_stats.items(), key=lambda x: x[1]['avg_time'], reverse=True)
         
         for hole_num, stats in sorted_holes:
@@ -427,6 +432,6 @@ def create_delivery_statistics_summary(results: Dict,
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         save_path.write_text(summary_text, encoding='utf-8')
-        logger.info("Saved delivery statistics summary: %s", save_path)
+        logger.info("Saved drive time statistics summary: %s", save_path)
     
     return summary_text
