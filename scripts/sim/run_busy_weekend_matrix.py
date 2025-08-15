@@ -65,7 +65,7 @@ def restore_config(course_dir: str, backup_path: Path) -> None:
 
 def run_simulation(mode: str, scenario: str, runners: int, orders: int, 
                   with_bev_cart: bool, course_dir: str, output_root: Path, 
-                  num_runs: int = 2) -> bool:
+                  num_runs: int = 2, no_visualization: bool = False) -> bool:
     """Run a single simulation configuration."""
     
     # Create descriptive folder name
@@ -99,6 +99,9 @@ def run_simulation(mode: str, scenario: str, runners: int, orders: int,
             "--output-dir", str(output_dir),
             "--log-level", "INFO"
         ]
+    # Visuals toggle
+    if no_visualization:
+        cmd.append("--no-visualization")
     else:
         logger.error("Unknown mode: %s", mode)
         return False
@@ -136,6 +139,7 @@ def main() -> int:
     parser.add_argument("--num-runs", type=int, default=2, 
                        help="Number of simulation runs per configuration")
     parser.add_argument("--log-level", default="INFO", help="Log level")
+    parser.add_argument("--no-visualization", action="store_true", help="Skip creating visualizations for all sims")
     
     # Matrix parameters
     parser.add_argument("--delivery-orders", default="20,30,40",
@@ -193,7 +197,8 @@ def main() -> int:
                             with_bev_cart=with_bev,
                             course_dir=args.course_dir,
                             output_root=output_root,
-                            num_runs=args.num_runs
+                            num_runs=args.num_runs,
+                            no_visualization=bool(args.no_visualization),
                         )
                         
                         if success:
@@ -212,7 +217,8 @@ def main() -> int:
                         with_bev_cart=True,
                         course_dir=args.course_dir,
                         output_root=output_root,
-                        num_runs=args.num_runs
+                        num_runs=args.num_runs,
+                        no_visualization=bool(args.no_visualization),
                     )
                     
                     if success:

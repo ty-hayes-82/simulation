@@ -842,6 +842,7 @@ def _run_bev_with_groups_once(
     avg_order_value: float,
     output_root: Path,
     rng_seed: Optional[int] = None,
+    no_visualization: bool = False,
 ) -> Dict:
     start_time = time.time()
 
@@ -902,39 +903,40 @@ def _run_bev_with_groups_once(
     write_unified_coordinates_csv(tracks, run_dir / "coordinates.csv")
 
     # Visualization for cart
-    if bev_points:
+    if bev_points and not no_visualization:
         render_beverage_cart_plot(bev_points, course_dir=course_dir, save_path=run_dir / "bev_cart_route.png")
     
     # Heatmap visualization for beverage cart sales
-    try:
-        heatmap_file = run_dir / "bev_cart_sales_heatmap.png"
-        # Format beverage cart sales for heatmap function
-        # Convert sales data to order-like format for heatmap
-        heatmap_results = {'orders': [], 'delivery_stats': []}
-        if isinstance(sales_result, dict) and 'sales' in sales_result:
-            for i, sale in enumerate(sales_result['sales']):
-                # Extract relevant fields from sales data for heatmap
-                order_entry = {
-                    'hole_num': sale.get('hole', sale.get('hole_num', 1)),
-                    'total_completion_time_s': sale.get('service_time_s', 0),  # Use service time as proxy for completion time
-                    'order_id': f'sale_{i+1}',
-                    'golfer_group_id': sale.get('golfer_group_id', sale.get('group_id', 1)),
-                    'order_time_s': sale.get('order_time_s', sale.get('timestamp_s', 0))
-                }
-                heatmap_results['orders'].append(order_entry)
-        
-        if heatmap_results['orders']:  # Only create heatmap if there are sales
-            course_name = Path(course_dir).name.replace("_", " ").title()
-            create_course_heatmap(
-                results=heatmap_results,
-                course_dir=course_dir,
-                save_path=heatmap_file,
-                title=f"{course_name} - Beverage Cart Sales Heatmap (Run {run_idx})",
-                colormap='RdYlGn_r'
-            )
-            logger.info("Created beverage cart sales heatmap: %s", heatmap_file)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Failed to create beverage cart sales heatmap: %s", e)
+    if not no_visualization:
+        try:
+            heatmap_file = run_dir / "bev_cart_sales_heatmap.png"
+            # Format beverage cart sales for heatmap function
+            # Convert sales data to order-like format for heatmap
+            heatmap_results = {'orders': [], 'delivery_stats': []}
+            if isinstance(sales_result, dict) and 'sales' in sales_result:
+                for i, sale in enumerate(sales_result['sales']):
+                    # Extract relevant fields from sales data for heatmap
+                    order_entry = {
+                        'hole_num': sale.get('hole', sale.get('hole_num', 1)),
+                        'total_completion_time_s': sale.get('service_time_s', 0),  # Use service time as proxy for completion time
+                        'order_id': f'sale_{i+1}',
+                        'golfer_group_id': sale.get('golfer_group_id', sale.get('group_id', 1)),
+                        'order_time_s': sale.get('order_time_s', sale.get('timestamp_s', 0))
+                    }
+                    heatmap_results['orders'].append(order_entry)
+            
+            if heatmap_results['orders']:  # Only create heatmap if there are sales
+                course_name = Path(course_dir).name.replace("_", " ").title()
+                create_course_heatmap(
+                    results=heatmap_results,
+                    course_dir=course_dir,
+                    save_path=heatmap_file,
+                    title=f"{course_name} - Beverage Cart Sales Heatmap (Run {run_idx})",
+                    colormap='RdYlGn_r'
+                )
+                logger.info("Created beverage cart sales heatmap: %s", heatmap_file)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to create beverage cart sales heatmap: %s", e)
 
     # Sales and result
     (run_dir / "sales.json").write_text(json.dumps(sales_result, indent=2), encoding="utf-8")
@@ -1290,6 +1292,7 @@ def _run_mode_bev_with_golfers(args: argparse.Namespace) -> None:
             float(args.avg_order_usd),
             output_root,
             rng_seed=getattr(args, "random_seed", None),
+            no_visualization=bool(getattr(args, "no_visualization", False)),
         )
 
         # Save phase3-style outputs for the generated result
