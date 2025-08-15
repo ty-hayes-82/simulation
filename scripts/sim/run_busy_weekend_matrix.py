@@ -65,24 +65,28 @@ def restore_config(course_dir: str, backup_path: Path) -> None:
 
 def run_simulation(mode: str, scenario: str, runners: int, orders: int, 
                   with_bev_cart: bool, course_dir: str, output_root: Path, 
-                  num_runs: int = 2, no_visualization: bool = False) -> bool:
+                  num_runs: int = 2, no_visualization: bool = False,
+                  block_up_to_hole: int = 0) -> bool:
     """Run a single simulation configuration."""
     
     # Create descriptive folder name
     bev_suffix = "with_bev" if with_bev_cart else "no_bev"
-    folder_name = f"busy_weekend_delivery_{runners}r_{orders}orders_{bev_suffix}"
+    block_suffix = f"_block{block_up_to_hole}" if block_up_to_hole > 0 else "_full"
+    folder_name = f"busy_weekend_delivery_{runners}r_{orders}orders_{bev_suffix}{block_suffix}"
     output_dir = output_root / folder_name
     
     # Build command based on mode
     if mode == "delivery-runner":
+        # Use the blocking-capable runner for all delivery runs
         cmd = [
-            sys.executable, "scripts/sim/run_unified_simulation.py",
+            sys.executable, "scripts/sim/run_unified_simulation_with_blocking.py",
             "--mode", "delivery-runner",
             "--tee-scenario", scenario,
             "--num-runners", str(runners),
             "--num-runs", str(num_runs),
             "--output-dir", str(output_dir),
-            "--log-level", "INFO"
+            "--log-level", "INFO",
+            "--block-up-to-hole", str(int(block_up_to_hole)),
         ]
         
         # Add beverage cart flag
@@ -140,6 +144,7 @@ def main() -> int:
                        help="Number of simulation runs per configuration")
     parser.add_argument("--log-level", default="INFO", help="Log level")
     parser.add_argument("--no-visualization", action="store_true", help="Skip creating visualizations for all sims")
+    parser.add_argument("--block-up-to-holes", default="0", help="Comma-separated list of hole blocking caps to test (e.g. '0,3,6')")
     
     # Matrix parameters
     parser.add_argument("--delivery-orders", default="20,30,40",
@@ -157,6 +162,7 @@ def main() -> int:
     # Parse parameters
     delivery_orders = [int(x.strip()) for x in args.delivery_orders.split(",")]
     runner_counts = [int(x.strip()) for x in args.runner_counts.split(",")]
+    block_caps = [int(x.strip()) for x in args.block_up_to_holes.split(",")]
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     
@@ -185,28 +191,33 @@ def main() -> int:
                 original_backup = backup_path
             
             try:
-                # Run delivery runner simulations (with and without bev cart)
+                # Run delivery runner simulations (with and without bev cart) across blocking caps
                 for runners in runner_counts:
-                    for with_bev in [False, True]:
-                        total_sims += 1
-                        success = run_simulation(
-                            mode="delivery-runner",
-                            scenario=args.scenario,
-                            runners=runners,
-                            orders=orders,
-                            with_bev_cart=with_bev,
-                            course_dir=args.course_dir,
-                            output_root=output_root,
-                            num_runs=args.num_runs,
-                            no_visualization=bool(args.no_visualization),
-                        )
-                        
-                        if success:
-                            successful_sims += 1
-                        else:
-                            failed_sims.append(f"delivery_{runners}r_{orders}orders_{'with' if with_bev else 'no'}_bev")
+                    for block_cap in block_caps:
+                        for with_bev in [False, True]:
+                            # Only run bev-with-delivery when blocking cap is zero; blocking script does not model bev interaction
+                            if with_bev and block_cap > 0:
+                                continue
+                            total_sims += 1
+                            success = run_simulation(
+                                mode="delivery-runner",
+                                scenario=args.scenario,
+                                runners=runners,
+                                orders=orders,
+                                with_bev_cart=with_bev,
+                                course_dir=args.course_dir,
+                                output_root=output_root,
+                                num_runs=args.num_runs,
+                                no_visualization=bool(args.no_visualization),
+                                block_up_to_hole=int(block_cap),
+                            )
+                            
+                            if success:
+                                successful_sims += 1
+                            else:
+                                failed_sims.append(f"delivery_{runners}r_{orders}orders_{'with' if with_bev else 'no'}_bev_block{block_cap}")
                 
-                # Run beverage cart only simulation (if not skipped)
+                # Run beverage cart only simulation (if not skipped) — blocking not applicable, run once
                 if not args.skip_bev_only:
                     total_sims += 1
                     success = run_simulation(
@@ -219,6 +230,7 @@ def main() -> int:
                         output_root=output_root,
                         num_runs=args.num_runs,
                         no_visualization=bool(args.no_visualization),
+                        block_up_to_hole=0,
                     )
                     
                     if success:
@@ -257,7 +269,8 @@ def main() -> int:
             "delivery_orders": delivery_orders,
             "runner_counts": runner_counts,
             "scenario": args.scenario,
-            "num_runs_per_config": args.num_runs
+            "num_runs_per_config": args.num_runs,
+            "block_caps": block_caps,
         },
         "results": {
             "total_simulations": total_sims,
@@ -266,10 +279,11 @@ def main() -> int:
             "failed_configurations": failed_sims
         },
         "output_directories": [
-            f"busy_weekend_delivery_{r}r_{o}orders_{b}"
+            f"busy_weekend_delivery_{r}r_{o}orders_{b}{('_block'+str(c)) if c>0 else '_full'}"
             for o in delivery_orders
             for r in runner_counts  
             for b in ["no_bev", "with_bev"]
+            for c in block_caps if not (b == "with_bev" and c > 0)
         ]
     }
     

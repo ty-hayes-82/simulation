@@ -1,22 +1,65 @@
 {
   "matrix_parameters": {
     "delivery_orders": [
-      20
+      20,
+      30,
+      40
     ],
     "runner_counts": [
-      1
+      1,
+      2,
+      3
     ],
     "scenario": "busy_weekend",
-    "num_runs_per_config": 1
+    "num_runs_per_config": 2,
+    "block_caps": [
+      0,
+      3,
+      6
+    ]
   },
   "results": {
-    "total_simulations": 3,
-    "successful": 3,
+    "total_simulations": 39,
+    "successful": 39,
     "failed": 0,
     "failed_configurations": []
   },
   "output_directories": [
-    "busy_weekend_delivery_1r_20orders_no_bev",
-    "busy_weekend_delivery_1r_20orders_with_bev"
+    "busy_weekend_delivery_1r_20orders_no_bev_full",
+    "busy_weekend_delivery_1r_20orders_no_bev_block3",
+    "busy_weekend_delivery_1r_20orders_no_bev_block6",
+    "busy_weekend_delivery_1r_20orders_with_bev_full",
+    "busy_weekend_delivery_2r_20orders_no_bev_full",
+    "busy_weekend_delivery_2r_20orders_no_bev_block3",
+    "busy_weekend_delivery_2r_20orders_no_bev_block6",
+    "busy_weekend_delivery_2r_20orders_with_bev_full",
+    "busy_weekend_delivery_3r_20orders_no_bev_full",
+    "busy_weekend_delivery_3r_20orders_no_bev_block3",
+    "busy_weekend_delivery_3r_20orders_no_bev_block6",
+    "busy_weekend_delivery_3r_20orders_with_bev_full",
+    "busy_weekend_delivery_1r_30orders_no_bev_full",
+    "busy_weekend_delivery_1r_30orders_no_bev_block3",
+    "busy_weekend_delivery_1r_30orders_no_bev_block6",
+    "busy_weekend_delivery_1r_30orders_with_bev_full",
+    "busy_weekend_delivery_2r_30orders_no_bev_full",
+    "busy_weekend_delivery_2r_30orders_no_bev_block3",
+    "busy_weekend_delivery_2r_30orders_no_bev_block6",
+    "busy_weekend_delivery_2r_30orders_with_bev_full",
+    "busy_weekend_delivery_3r_30orders_no_bev_full",
+    "busy_weekend_delivery_3r_30orders_no_bev_block3",
+    "busy_weekend_delivery_3r_30orders_no_bev_block6",
+    "busy_weekend_delivery_3r_30orders_with_bev_full",
+    "busy_weekend_delivery_1r_40orders_no_bev_full",
+    "busy_weekend_delivery_1r_40orders_no_bev_block3",
+    "busy_weekend_delivery_1r_40orders_no_bev_block6",
+    "busy_weekend_delivery_1r_40orders_with_bev_full",
+    "busy_weekend_delivery_2r_40orders_no_bev_full",
+    "busy_weekend_delivery_2r_40orders_no_bev_block3",
+    "busy_weekend_delivery_2r_40orders_no_bev_block6",
+    "busy_weekend_delivery_2r_40orders_with_bev_full",
+    "busy_weekend_delivery_3r_40orders_no_bev_full",
+    "busy_weekend_delivery_3r_40orders_no_bev_block3",
+    "busy_weekend_delivery_3r_40orders_no_bev_block6",
+    "busy_weekend_delivery_3r_40orders_with_bev_full"
   ]
 }

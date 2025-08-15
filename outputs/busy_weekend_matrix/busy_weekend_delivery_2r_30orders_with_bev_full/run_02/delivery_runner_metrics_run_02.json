@@ -1,0 +1,33 @@
+{
+  "simulation_id": "delivery_blocked_02",
+  "runner_id": "2_runners",
+  "revenue_per_round": 25.0,
+  "orders_per_runner_hour": 1.6,
+  "on_time_rate": 0.6875,
+  "delivery_cycle_time_p90": 47.55841256165661,
+  "delivery_cycle_time_avg": 28.330681733339173,
+  "failed_rate": 0.19047619047619047,
+  "second_runner_break_even_orders": 12.5,
+  "queue_wait_avg": 0.0,
+  "runner_utilization_driving_pct": 26.041403040368742,
+  "runner_utilization_waiting_pct": 16.19175225142131,
+  "distance_per_delivery_avg": 984.9078070415763,
+  "zone_service_times": {
+    "hole_2": 21.839746949147717,
+    "hole_5": 25.1107321159815,
+    "hole_7": 40.562165257134865,
+    "hole_1": 43.29315229769982,
+    "hole_9": 57.51068651088911,
+    "hole_6": 26.355402371778382,
+    "hole_4": 30.243430812593033,
+    "hole_18": 22.984588878197368,
+    "hole_10": 19.758039154697972,
+    "hole_13": 26.405501819501723
+  },
+  "total_revenue": 400.0,
+  "total_orders": 21,
+  "successful_orders": 16,
+  "failed_orders": 4,
+  "total_rounds": 16,
+  "active_runner_hours": 10.0
+}

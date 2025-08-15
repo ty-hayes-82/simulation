@@ -1,0 +1,1793 @@
+{
+  "success": true,
+  "simulation_type": "delivery_runner_with_blocking",
+  "blocking_config": {
+    "block_up_to_hole": 6,
+    "front9_prob_if_blocked": null
+  },
+  "orders": [
+    {
+      "order_id": "001",
+      "golfer_group_id": 1,
+      "golfer_id": "G1",
+      "hole_num": 7,
+      "order_time_s": 4320,
+      "status": "processed",
+      "total_completion_time_s": 1007.8746653384296
+    },
+    {
+      "order_id": "002",
+      "golfer_group_id": 4,
+      "golfer_id": "G4",
+      "hole_num": 8,
+      "order_time_s": 6840,
+      "status": "processed",
+      "total_completion_time_s": 2250.4737880059583
+    },
+    {
+      "order_id": "003",
+      "golfer_group_id": 6,
+      "golfer_id": "G6",
+      "hole_num": 7,
+      "order_time_s": 7320,
+      "status": "processed",
+      "total_completion_time_s": 3495.4737880059583
+    },
+    {
+      "order_id": "004",
+      "golfer_group_id": 7,
+      "golfer_id": "G7",
+      "hole_num": 8,
+      "order_time_s": 8640,
+      "status": "failed",
+      "total_completion_time_s": 4740.473788005958
+    },
+    {
+      "order_id": "005",
+      "golfer_group_id": 7,
+      "golfer_id": "G7",
+      "hole_num": 10,
+      "order_time_s": 10080,
+      "status": "failed",
+      "total_completion_time_s": 5764.232288676922
+    },
+    {
+      "order_id": "006",
+      "golfer_group_id": 1,
+      "golfer_id": "G1",
+      "hole_num": 17,
+      "order_time_s": 11520,
+      "status": "failed",
+      "total_completion_time_s": 6820.507532700063
+    },
+    {
+      "order_id": "007",
+      "golfer_group_id": 3,
+      "golfer_id": "G3",
+      "hole_num": 17,
+      "order_time_s": 12720,
+      "status": "failed",
+      "total_completion_time_s": 7962.748733381341
+    },
+    {
+      "order_id": "008",
+      "golfer_group_id": 5,
+      "golfer_id": "G5",
+      "hole_num": 17,
+      "order_time_s": 13920,
+      "status": "failed",
+      "total_completion_time_s": 9102.74873338134
+    },
+    {
+      "order_id": "009",
+      "golfer_group_id": 17,
+      "golfer_id": "G17",
+      "hole_num": 8,
+      "order_time_s": 14640,
+      "status": "failed",
+      "total_completion_time_s": 9966.473489358199
+    },
+    {
+      "order_id": "010",
+      "golfer_group_id": 8,
+      "golfer_id": "G8",
+      "hole_num": 16,
+      "order_time_s": 15000,
+      "status": "failed",
+      "total_completion_time_s": 10695.026308845841
+    },
+    {
+      "order_id": "011",
+      "golfer_group_id": 16,
+      "golfer_id": "G16",
+      "hole_num": 14,
+      "order_time_s": 18360,
+      "status": "failed",
+      "total_completion_time_s": 8460.085043618554
+    },
+    {
+      "order_id": "012",
+      "golfer_group_id": 20,
+      "golfer_id": "G20",
+      "hole_num": 14,
+      "order_time_s": 20760,
+      "status": "failed",
+      "total_completion_time_s": 7200.315714880482
+    },
+    {
+      "order_id": "013",
+      "golfer_group_id": 28,
+      "golfer_id": "G28",
+      "hole_num": 7,
+      "order_time_s": 20880,
+      "status": "failed",
+      "total_completion_time_s": 8360.53252277867
+    },
+    {
+      "order_id": "014",
+      "golfer_group_id": 23,
+      "golfer_id": "G23",
+      "hole_num": 13,
+      "order_time_s": 21840,
+      "status": "failed",
+      "total_completion_time_s": 8833.53814023147
+    },
+    {
+      "order_id": "015",
+      "golfer_group_id": 30,
+      "golfer_id": "G30",
+      "hole_num": 7,
+      "order_time_s": 22320,
+      "status": "failed",
+      "total_completion_time_s": 9783.53814023147
+    },
+    {
+      "order_id": "016",
+      "golfer_group_id": 34,
+      "golfer_id": "G34",
+      "hole_num": 9,
+      "order_time_s": 27360,
+      "status": "failed",
+      "total_completion_time_s": 5804.985851848185
+    },
+    {
+      "order_id": "017",
+      "golfer_group_id": 31,
+      "golfer_id": "G31",
+      "hole_num": 13,
+      "order_time_s": 27540,
+      "status": "failed",
+      "total_completion_time_s": 6697.7746614028
+    },
+    {
+      "order_id": "018",
+      "golfer_group_id": 27,
+      "golfer_id": "G27",
+      "hole_num": 18,
+      "order_time_s": 28080,
+      "status": "failed",
+      "total_completion_time_s": 7255.833061374025
+    },
+    {
+      "order_id": "019",
+      "golfer_group_id": 30,
+      "golfer_id": "G30",
+      "hole_num": 16,
+      "order_time_s": 28800,
+      "status": "failed",
+      "total_completion_time_s": 7467.5967726592935
+    },
+    {
+      "order_id": "020",
+      "golfer_group_id": 41,
+      "golfer_id": "G41",
+      "hole_num": 7,
+      "order_time_s": 33120,
+      "status": "failed",
+      "total_completion_time_s": 4410.301851516742
+    },
+    {
+      "order_id": "021",
+      "golfer_group_id": 40,
+      "golfer_id": "G40",
+      "hole_num": 18,
+      "order_time_s": 39840,
+      "status": "pending",
+      "total_completion_time_s": 0.0
+    },
+    {
+      "order_id": "022",
+      "golfer_group_id": 45,
+      "golfer_id": "G45",
+      "hole_num": 9,
+      "order_time_s": 39960,
+      "status": "pending",
+      "total_completion_time_s": 0.0
+    }
+  ],
+  "delivery_stats": [
+    {
+      "order_id": "001",
+      "golfer_group_id": 1,
+      "hole_num": 7,
+      "order_time_s": 4320,
+      "queue_delay_s": 0,
+      "prep_time_s": 600,
+      "delivery_time_s": 407.8746653384294,
+      "return_time_s": 407.8746653384294,
+      "total_drive_time_s": 815.7493306768588,
+      "delivery_distance_m": 1093.1041031069908,
+      "total_completion_time_s": 1007.8746653384296,
+      "delivered_at_time_s": 15407.87466533843,
+      "runner_id": "runner_1"
+    },
+    {
+      "order_id": "002",
+      "golfer_group_id": 4,
+      "hole_num": 8,
+      "order_time_s": 6840,
+      "queue_delay_s": 1417.8746653384296,
+      "prep_time_s": 600,
+      "delivery_time_s": 232.59912266752906,
+      "return_time_s": 232.59912266752906,
+      "total_drive_time_s": 465.1982453350581,
+      "delivery_distance_m": 623.365648748978,
+      "total_completion_time_s": 2250.4737880059583,
+      "delivered_at_time_s": 16650.47378800596,
+      "runner_id": "runner_1"
+    },
+    {
+      "order_id": "003",
+      "golfer_group_id": 6,
+      "hole_num": 7,
+      "order_time_s": 7320,
+      "queue_delay_s": 2487.5991226675287,
+      "prep_time_s": 600,
+      "delivery_time_s": 407.8746653384294,
+      "return_time_s": 407.8746653384294,
+      "total_drive_time_s": 815.7493306768588,
+      "delivery_distance_m": 1093.1041031069908,
+      "total_completion_time_s": 3495.4737880059583,
+      "delivered_at_time_s": 17895.47378800596,
+      "runner_id": "runner_1"
+    }
+  ],
+  "failed_orders": [
+    {
+      "order_id": "004",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "005",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "006",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "007",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "008",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "009",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "010",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "011",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "012",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "013",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "014",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "015",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "016",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "017",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "018",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "019",
+      "reason": "Exceeded 1-hour SLA after processing"
+    },
+    {
+      "order_id": "020",
+      "reason": "Exceeded 1-hour SLA after processing"
+    }
+  ],
+  "activity_log": [
+    {
+      "timestamp_s": 0,
+      "time_str": "07:00",
+      "activity_type": "service_closed",
+      "description": "runner_1 waiting 240 minutes until opening",
+      "runner_id": "runner_1",
+      "order_id": null,
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "service_opened",
+      "description": "runner_1 started shift",
+      "runner_id": "runner_1",
+      "order_id": null,
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "order_received",
+      "description": "New order from Group 1 on Hole 7",
+      "runner_id": null,
+      "order_id": "001",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "order_received",
+      "description": "New order from Group 4 on Hole 8",
+      "runner_id": null,
+      "order_id": "002",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "order_received",
+      "description": "New order from Group 6 on Hole 7",
+      "runner_id": null,
+      "order_id": "003",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "order_received",
+      "description": "New order from Group 7 on Hole 8",
+      "runner_id": null,
+      "order_id": "004",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "order_received",
+      "description": "New order from Group 7 on Hole 10",
+      "runner_id": null,
+      "order_id": "005",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "order_received",
+      "description": "New order from Group 1 on Hole 17",
+      "runner_id": null,
+      "order_id": "006",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "order_received",
+      "description": "New order from Group 3 on Hole 17",
+      "runner_id": null,
+      "order_id": "007",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "order_received",
+      "description": "New order from Group 5 on Hole 17",
+      "runner_id": null,
+      "order_id": "008",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 001 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "001",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14400,
+      "time_str": "11:00",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 001 (Hole 7)",
+      "runner_id": "runner_1",
+      "order_id": "001",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 14640,
+      "time_str": "11:04",
+      "activity_type": "order_received",
+      "description": "New order from Group 17 on Hole 8",
+      "runner_id": null,
+      "order_id": "009",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 15000,
+      "time_str": "11:10",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 001",
+      "runner_id": "runner_1",
+      "order_id": "001",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 15000,
+      "time_str": "11:10",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 7 (1093m, 6.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "001",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 15000,
+      "time_str": "11:10",
+      "activity_type": "order_received",
+      "description": "New order from Group 8 on Hole 16",
+      "runner_id": null,
+      "order_id": "010",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 15407.87466533843,
+      "time_str": "11:16",
+      "activity_type": "delivery_complete",
+      "description": "runner_1 delivered Order 001 to Hole 7 (Total completion: 16.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "001",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 15410,
+      "time_str": "11:16",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 002 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "002",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 15410,
+      "time_str": "11:16",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_7 (6.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "002",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 15817.87466533843,
+      "time_str": "11:23",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 002",
+      "runner_id": "runner_1",
+      "order_id": "002",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 15817.87466533843,
+      "time_str": "11:23",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 002 (Hole 8)",
+      "runner_id": "runner_1",
+      "order_id": "002",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 16417.87466533843,
+      "time_str": "11:33",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 002",
+      "runner_id": "runner_1",
+      "order_id": "002",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 16417.87466533843,
+      "time_str": "11:33",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 8 (623m, 3.9 min)",
+      "runner_id": "runner_1",
+      "order_id": "002",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 16650.47378800596,
+      "time_str": "11:37",
+      "activity_type": "delivery_complete",
+      "description": "runner_1 delivered Order 002 to Hole 8 (Total completion: 37.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "002",
+      "location": "hole_8"
+    },
+    {
+      "timestamp_s": 16655,
+      "time_str": "11:37",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 003 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "003",
+      "location": "hole_8"
+    },
+    {
+      "timestamp_s": 16655,
+      "time_str": "11:37",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_8 (3.9 min)",
+      "runner_id": "runner_1",
+      "order_id": "003",
+      "location": "hole_8"
+    },
+    {
+      "timestamp_s": 16887.59912266753,
+      "time_str": "11:41",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 003",
+      "runner_id": "runner_1",
+      "order_id": "003",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 16887.59912266753,
+      "time_str": "11:41",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 003 (Hole 7)",
+      "runner_id": "runner_1",
+      "order_id": "003",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 17487.59912266753,
+      "time_str": "11:51",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 003",
+      "runner_id": "runner_1",
+      "order_id": "003",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 17487.59912266753,
+      "time_str": "11:51",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 7 (1093m, 6.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "003",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 17895.47378800596,
+      "time_str": "11:58",
+      "activity_type": "delivery_complete",
+      "description": "runner_1 delivered Order 003 to Hole 7 (Total completion: 58.3 min)",
+      "runner_id": "runner_1",
+      "order_id": "003",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 17900,
+      "time_str": "11:58",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 004 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "004",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 17900,
+      "time_str": "11:58",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_7 (6.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "004",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 18307.87466533843,
+      "time_str": "12:05",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 004",
+      "runner_id": "runner_1",
+      "order_id": "004",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 18307.87466533843,
+      "time_str": "12:05",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 004 (Hole 8)",
+      "runner_id": "runner_1",
+      "order_id": "004",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 18360,
+      "time_str": "12:06",
+      "activity_type": "order_received",
+      "description": "New order from Group 16 on Hole 14",
+      "runner_id": null,
+      "order_id": "011",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 18907.87466533843,
+      "time_str": "12:15",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 004",
+      "runner_id": "runner_1",
+      "order_id": "004",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 18907.87466533843,
+      "time_str": "12:15",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 8 (623m, 3.9 min)",
+      "runner_id": "runner_1",
+      "order_id": "004",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 19140.47378800596,
+      "time_str": "12:19",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 004 (Total: 79.0 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "004",
+      "location": "hole_8"
+    },
+    {
+      "timestamp_s": 19145,
+      "time_str": "12:19",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 005 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "005",
+      "location": "hole_8"
+    },
+    {
+      "timestamp_s": 19145,
+      "time_str": "12:19",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_8 (3.9 min)",
+      "runner_id": "runner_1",
+      "order_id": "005",
+      "location": "hole_8"
+    },
+    {
+      "timestamp_s": 19377.59912266753,
+      "time_str": "12:22",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 005",
+      "runner_id": "runner_1",
+      "order_id": "005",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 19377.59912266753,
+      "time_str": "12:22",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 005 (Hole 10)",
+      "runner_id": "runner_1",
+      "order_id": "005",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 19977.59912266753,
+      "time_str": "12:32",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 005",
+      "runner_id": "runner_1",
+      "order_id": "005",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 19977.59912266753,
+      "time_str": "12:32",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 10 (500m, 3.1 min)",
+      "runner_id": "runner_1",
+      "order_id": "005",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 20164.23228867692,
+      "time_str": "12:36",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 005 (Total: 96.1 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "005",
+      "location": "hole_10"
+    },
+    {
+      "timestamp_s": 20165,
+      "time_str": "12:36",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 006 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "006",
+      "location": "hole_10"
+    },
+    {
+      "timestamp_s": 20165,
+      "time_str": "12:36",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_10 (3.1 min)",
+      "runner_id": "runner_1",
+      "order_id": "006",
+      "location": "hole_10"
+    },
+    {
+      "timestamp_s": 20351.633166009393,
+      "time_str": "12:39",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 006",
+      "runner_id": "runner_1",
+      "order_id": "006",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 20351.633166009393,
+      "time_str": "12:39",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 006 (Hole 17)",
+      "runner_id": "runner_1",
+      "order_id": "006",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 20760,
+      "time_str": "12:46",
+      "activity_type": "order_received",
+      "description": "New order from Group 20 on Hole 14",
+      "runner_id": null,
+      "order_id": "012",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 20880,
+      "time_str": "12:48",
+      "activity_type": "order_received",
+      "description": "New order from Group 28 on Hole 7",
+      "runner_id": null,
+      "order_id": "013",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 20951.633166009393,
+      "time_str": "12:49",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 006",
+      "runner_id": "runner_1",
+      "order_id": "006",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 20951.633166009393,
+      "time_str": "12:49",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 17 (721m, 4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "006",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 21220.507532700063,
+      "time_str": "12:53",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 006 (Total: 113.7 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "006",
+      "location": "hole_17"
+    },
+    {
+      "timestamp_s": 21225,
+      "time_str": "12:53",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 007 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "007",
+      "location": "hole_17"
+    },
+    {
+      "timestamp_s": 21225,
+      "time_str": "12:53",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_17 (4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "007",
+      "location": "hole_17"
+    },
+    {
+      "timestamp_s": 21493.87436669067,
+      "time_str": "12:58",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 007",
+      "runner_id": "runner_1",
+      "order_id": "007",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 21493.87436669067,
+      "time_str": "12:58",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 007 (Hole 17)",
+      "runner_id": "runner_1",
+      "order_id": "007",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 21840,
+      "time_str": "13:04",
+      "activity_type": "order_received",
+      "description": "New order from Group 23 on Hole 13",
+      "runner_id": null,
+      "order_id": "014",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 22093.87436669067,
+      "time_str": "13:08",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 007",
+      "runner_id": "runner_1",
+      "order_id": "007",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 22093.87436669067,
+      "time_str": "13:08",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 17 (721m, 4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "007",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 22320,
+      "time_str": "13:12",
+      "activity_type": "order_received",
+      "description": "New order from Group 30 on Hole 7",
+      "runner_id": null,
+      "order_id": "015",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 22362.74873338134,
+      "time_str": "13:12",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 007 (Total: 132.7 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "007",
+      "location": "hole_17"
+    },
+    {
+      "timestamp_s": 22365,
+      "time_str": "13:12",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 008 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "008",
+      "location": "hole_17"
+    },
+    {
+      "timestamp_s": 22365,
+      "time_str": "13:12",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_17 (4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "008",
+      "location": "hole_17"
+    },
+    {
+      "timestamp_s": 22633.87436669067,
+      "time_str": "13:17",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 008",
+      "runner_id": "runner_1",
+      "order_id": "008",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 22633.87436669067,
+      "time_str": "13:17",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 008 (Hole 17)",
+      "runner_id": "runner_1",
+      "order_id": "008",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 23233.87436669067,
+      "time_str": "13:27",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 008",
+      "runner_id": "runner_1",
+      "order_id": "008",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 23233.87436669067,
+      "time_str": "13:27",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 17 (721m, 4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "008",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 23502.74873338134,
+      "time_str": "13:31",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 008 (Total: 151.7 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "008",
+      "location": "hole_17"
+    },
+    {
+      "timestamp_s": 23505,
+      "time_str": "13:31",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 009 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "009",
+      "location": "hole_17"
+    },
+    {
+      "timestamp_s": 23505,
+      "time_str": "13:31",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_17 (4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "009",
+      "location": "hole_17"
+    },
+    {
+      "timestamp_s": 23773.87436669067,
+      "time_str": "13:36",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 009",
+      "runner_id": "runner_1",
+      "order_id": "009",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 23773.87436669067,
+      "time_str": "13:36",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 009 (Hole 8)",
+      "runner_id": "runner_1",
+      "order_id": "009",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 24373.87436669067,
+      "time_str": "13:46",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 009",
+      "runner_id": "runner_1",
+      "order_id": "009",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 24373.87436669067,
+      "time_str": "13:46",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 8 (623m, 3.9 min)",
+      "runner_id": "runner_1",
+      "order_id": "009",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 24606.4734893582,
+      "time_str": "13:50",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 009 (Total: 166.1 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "009",
+      "location": "hole_8"
+    },
+    {
+      "timestamp_s": 24610,
+      "time_str": "13:50",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 010 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "010",
+      "location": "hole_8"
+    },
+    {
+      "timestamp_s": 24610,
+      "time_str": "13:50",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_8 (3.9 min)",
+      "runner_id": "runner_1",
+      "order_id": "010",
+      "location": "hole_8"
+    },
+    {
+      "timestamp_s": 24842.59912266753,
+      "time_str": "13:54",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 010",
+      "runner_id": "runner_1",
+      "order_id": "010",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 24842.59912266753,
+      "time_str": "13:54",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 010 (Hole 16)",
+      "runner_id": "runner_1",
+      "order_id": "010",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 25442.59912266753,
+      "time_str": "14:04",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 010",
+      "runner_id": "runner_1",
+      "order_id": "010",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 25442.59912266753,
+      "time_str": "14:04",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 16 (677m, 4.2 min)",
+      "runner_id": "runner_1",
+      "order_id": "010",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 25695.02630884584,
+      "time_str": "14:08",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 010 (Total: 178.3 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "010",
+      "location": "hole_16"
+    },
+    {
+      "timestamp_s": 25700,
+      "time_str": "14:08",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 011 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "011",
+      "location": "hole_16"
+    },
+    {
+      "timestamp_s": 25700,
+      "time_str": "14:08",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_16 (4.2 min)",
+      "runner_id": "runner_1",
+      "order_id": "011",
+      "location": "hole_16"
+    },
+    {
+      "timestamp_s": 25952.427186178313,
+      "time_str": "14:12",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 011",
+      "runner_id": "runner_1",
+      "order_id": "011",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 25952.427186178313,
+      "time_str": "14:12",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 011 (Hole 14)",
+      "runner_id": "runner_1",
+      "order_id": "011",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 26552.427186178313,
+      "time_str": "14:22",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 011",
+      "runner_id": "runner_1",
+      "order_id": "011",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 26552.427186178313,
+      "time_str": "14:22",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 14 (717m, 4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "011",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 26820.085043618554,
+      "time_str": "14:27",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 011 (Total: 141.0 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "011",
+      "location": "hole_14"
+    },
+    {
+      "timestamp_s": 26825,
+      "time_str": "14:27",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 012 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "012",
+      "location": "hole_14"
+    },
+    {
+      "timestamp_s": 26825,
+      "time_str": "14:27",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_14 (4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "012",
+      "location": "hole_14"
+    },
+    {
+      "timestamp_s": 27092.65785744024,
+      "time_str": "14:31",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 012",
+      "runner_id": "runner_1",
+      "order_id": "012",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 27092.65785744024,
+      "time_str": "14:31",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 012 (Hole 14)",
+      "runner_id": "runner_1",
+      "order_id": "012",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 27360,
+      "time_str": "14:36",
+      "activity_type": "order_received",
+      "description": "New order from Group 34 on Hole 9",
+      "runner_id": null,
+      "order_id": "016",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 27540,
+      "time_str": "14:39",
+      "activity_type": "order_received",
+      "description": "New order from Group 31 on Hole 13",
+      "runner_id": null,
+      "order_id": "017",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 27692.65785744024,
+      "time_str": "14:41",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 012",
+      "runner_id": "runner_1",
+      "order_id": "012",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 27692.65785744024,
+      "time_str": "14:41",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 14 (717m, 4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "012",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 27960.315714880482,
+      "time_str": "14:46",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 012 (Total: 120.0 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "012",
+      "location": "hole_14"
+    },
+    {
+      "timestamp_s": 27965,
+      "time_str": "14:46",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 013 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "013",
+      "location": "hole_14"
+    },
+    {
+      "timestamp_s": 27965,
+      "time_str": "14:46",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_14 (4.5 min)",
+      "runner_id": "runner_1",
+      "order_id": "013",
+      "location": "hole_14"
+    },
+    {
+      "timestamp_s": 28080,
+      "time_str": "14:48",
+      "activity_type": "order_received",
+      "description": "New order from Group 27 on Hole 18",
+      "runner_id": null,
+      "order_id": "018",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 28232.65785744024,
+      "time_str": "14:50",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 013",
+      "runner_id": "runner_1",
+      "order_id": "013",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 28232.65785744024,
+      "time_str": "14:50",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 013 (Hole 7)",
+      "runner_id": "runner_1",
+      "order_id": "013",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 28800,
+      "time_str": "15:00",
+      "activity_type": "order_received",
+      "description": "New order from Group 30 on Hole 16",
+      "runner_id": null,
+      "order_id": "019",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 28832.65785744024,
+      "time_str": "15:00",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 013",
+      "runner_id": "runner_1",
+      "order_id": "013",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 28832.65785744024,
+      "time_str": "15:00",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 7 (1093m, 6.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "013",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 29240.53252277867,
+      "time_str": "15:07",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 013 (Total: 139.3 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "013",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 29245,
+      "time_str": "15:07",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 014 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "014",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 29245,
+      "time_str": "15:07",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_7 (6.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "014",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 29652.87466533843,
+      "time_str": "15:14",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 014",
+      "runner_id": "runner_1",
+      "order_id": "014",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 29652.87466533843,
+      "time_str": "15:14",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 014 (Hole 13)",
+      "runner_id": "runner_1",
+      "order_id": "014",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 30252.87466533843,
+      "time_str": "15:24",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 014",
+      "runner_id": "runner_1",
+      "order_id": "014",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 30252.87466533843,
+      "time_str": "15:24",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 13 (1127m, 7.0 min)",
+      "runner_id": "runner_1",
+      "order_id": "014",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 30673.53814023147,
+      "time_str": "15:31",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 014 (Total: 147.2 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "014",
+      "location": "hole_13"
+    },
+    {
+      "timestamp_s": 30675,
+      "time_str": "15:31",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 015 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "015",
+      "location": "hole_13"
+    },
+    {
+      "timestamp_s": 30675,
+      "time_str": "15:31",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_13 (7.0 min)",
+      "runner_id": "runner_1",
+      "order_id": "015",
+      "location": "hole_13"
+    },
+    {
+      "timestamp_s": 31095.66347489304,
+      "time_str": "15:38",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 015",
+      "runner_id": "runner_1",
+      "order_id": "015",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 31095.66347489304,
+      "time_str": "15:38",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 015 (Hole 7)",
+      "runner_id": "runner_1",
+      "order_id": "015",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 31695.66347489304,
+      "time_str": "15:48",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 015",
+      "runner_id": "runner_1",
+      "order_id": "015",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 31695.66347489304,
+      "time_str": "15:48",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 7 (1093m, 6.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "015",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 32103.53814023147,
+      "time_str": "15:55",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 015 (Total: 163.1 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "015",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 32105,
+      "time_str": "15:55",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 016 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "016",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 32105,
+      "time_str": "15:55",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_7 (6.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "016",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 32512.87466533843,
+      "time_str": "16:01",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 016",
+      "runner_id": "runner_1",
+      "order_id": "016",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 32512.87466533843,
+      "time_str": "16:01",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 016 (Hole 9)",
+      "runner_id": "runner_1",
+      "order_id": "016",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 33112.87466533843,
+      "time_str": "16:11",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 016",
+      "runner_id": "runner_1",
+      "order_id": "016",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 33112.87466533843,
+      "time_str": "16:11",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 9 (140m, 0.9 min)",
+      "runner_id": "runner_1",
+      "order_id": "016",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 33120,
+      "time_str": "16:12",
+      "activity_type": "order_received",
+      "description": "New order from Group 41 on Hole 7",
+      "runner_id": null,
+      "order_id": "020",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 33164.985851848185,
+      "time_str": "16:12",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 016 (Total: 96.7 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "016",
+      "location": "hole_9"
+    },
+    {
+      "timestamp_s": 33165,
+      "time_str": "16:12",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 017 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "017",
+      "location": "hole_9"
+    },
+    {
+      "timestamp_s": 33165,
+      "time_str": "16:12",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_9 (0.9 min)",
+      "runner_id": "runner_1",
+      "order_id": "017",
+      "location": "hole_9"
+    },
+    {
+      "timestamp_s": 33217.111186509755,
+      "time_str": "16:13",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 017",
+      "runner_id": "runner_1",
+      "order_id": "017",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 33217.111186509755,
+      "time_str": "16:13",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 017 (Hole 13)",
+      "runner_id": "runner_1",
+      "order_id": "017",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 33817.111186509755,
+      "time_str": "16:23",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 017",
+      "runner_id": "runner_1",
+      "order_id": "017",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 33817.111186509755,
+      "time_str": "16:23",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 13 (1127m, 7.0 min)",
+      "runner_id": "runner_1",
+      "order_id": "017",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 34237.7746614028,
+      "time_str": "16:30",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 017 (Total: 111.6 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "017",
+      "location": "hole_13"
+    },
+    {
+      "timestamp_s": 34240,
+      "time_str": "16:30",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 018 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "018",
+      "location": "hole_13"
+    },
+    {
+      "timestamp_s": 34240,
+      "time_str": "16:30",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_13 (7.0 min)",
+      "runner_id": "runner_1",
+      "order_id": "018",
+      "location": "hole_13"
+    },
+    {
+      "timestamp_s": 34660.663474893045,
+      "time_str": "16:37",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 018",
+      "runner_id": "runner_1",
+      "order_id": "018",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 34660.663474893045,
+      "time_str": "16:37",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 018 (Hole 18)",
+      "runner_id": "runner_1",
+      "order_id": "018",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 35260.663474893045,
+      "time_str": "16:47",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 018",
+      "runner_id": "runner_1",
+      "order_id": "018",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 35260.663474893045,
+      "time_str": "16:47",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 18 (201m, 1.3 min)",
+      "runner_id": "runner_1",
+      "order_id": "018",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 35335.833061374025,
+      "time_str": "16:48",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 018 (Total: 120.9 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "018",
+      "location": "hole_18"
+    },
+    {
+      "timestamp_s": 35340,
+      "time_str": "16:49",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 019 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "019",
+      "location": "hole_18"
+    },
+    {
+      "timestamp_s": 35340,
+      "time_str": "16:49",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_18 (1.3 min)",
+      "runner_id": "runner_1",
+      "order_id": "019",
+      "location": "hole_18"
+    },
+    {
+      "timestamp_s": 35415.16958648098,
+      "time_str": "16:50",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 019",
+      "runner_id": "runner_1",
+      "order_id": "019",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 35415.16958648098,
+      "time_str": "16:50",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 019 (Hole 16)",
+      "runner_id": "runner_1",
+      "order_id": "019",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 36015.16958648098,
+      "time_str": "17:00",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 019",
+      "runner_id": "runner_1",
+      "order_id": "019",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 36015.16958648098,
+      "time_str": "17:00",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 16 (677m, 4.2 min)",
+      "runner_id": "runner_1",
+      "order_id": "019",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 36267.59677265929,
+      "time_str": "17:04",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 019 (Total: 124.5 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "019",
+      "location": "hole_16"
+    },
+    {
+      "timestamp_s": 36270,
+      "time_str": "17:04",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 020 to runner_1",
+      "runner_id": "runner_1",
+      "order_id": "020",
+      "location": "hole_16"
+    },
+    {
+      "timestamp_s": 36270,
+      "time_str": "17:04",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_16 (4.2 min)",
+      "runner_id": "runner_1",
+      "order_id": "020",
+      "location": "hole_16"
+    },
+    {
+      "timestamp_s": 36522.42718617831,
+      "time_str": "17:08",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse to prepare Order 020",
+      "runner_id": "runner_1",
+      "order_id": "020",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 36522.42718617831,
+      "time_str": "17:08",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 020 (Hole 7)",
+      "runner_id": "runner_1",
+      "order_id": "020",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 37122.42718617831,
+      "time_str": "17:18",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 020",
+      "runner_id": "runner_1",
+      "order_id": "020",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 37122.42718617831,
+      "time_str": "17:18",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 7 (1093m, 6.8 min)",
+      "runner_id": "runner_1",
+      "order_id": "020",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 37530.30185151674,
+      "time_str": "17:25",
+      "activity_type": "delivery_failed_late",
+      "description": "runner_1 exceeded 60 minutes for Order 020 (Total: 73.5 min). Marked failed.",
+      "runner_id": "runner_1",
+      "order_id": "020",
+      "location": "hole_7"
+    },
+    {
+      "timestamp_s": 39840,
+      "time_str": "18:04",
+      "activity_type": "order_received",
+      "description": "New order from Group 40 on Hole 18",
+      "runner_id": null,
+      "order_id": "021",
+      "location": "clubhouse"
+    },
+    {
+      "timestamp_s": 39960,
+      "time_str": "18:06",
+      "activity_type": "order_received",
+      "description": "New order from Group 45 on Hole 9",
+      "runner_id": null,
+      "order_id": "022",
+      "location": "clubhouse"
+    }
+  ],
+  "metadata": {
+    "prep_time_min": 10,
+    "runner_speed_mps": 2.68,
+    "num_groups": 45,
+    "num_runners": 1,
+    "course_dir": "courses/pinetree_country_club",
+    "block_up_to_hole": 6
+  }
+}
