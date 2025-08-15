@@ -1,59 +1,64 @@
 """
-Beverage cart metrics calculation for simulation analysis.
+Beverage Cart Metrics Analysis Module
 
-This module provides comprehensive metrics calculation for bev-cart only simulations,
-including revenue, orders, tips, coverage, and golfer interaction metrics.
+This module provides GM-priority metrics calculation for beverage cart simulations,
+specifically designed for executive decision-making on course beverage service.
+
+The executive-priority metrics include:
+1. Revenue per Round - Headline financial impact per tee sheet
+2. Total Revenue - Total financial impact
+3. Orders per Cart Hour - Labor productivity and throughput
+4. Order Penetration Rate - Attach rate; how broadly golfers convert
+5. Average Order Value - Revenue intensity per transaction
+6. Total Tips - Service quality indicator and staff satisfaction
+7. Total Delivery Orders Conversion Count - Cross-selling to delivery service
+8. Total Delivery Orders Conversion Revenue - Revenue from delivery cross-sell
+9. Holes Covered per Hour - Route efficiency and coverage
+10. Minutes per Hole per Cart - Operational efficiency metric
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass
 import math
+import statistics
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class BevCartMetrics:
-    """Comprehensive metrics for beverage cart simulation."""
+    """Executive-priority metrics for beverage cart simulation (GM-ready)."""
     
-    # Revenue metrics
+    # Executive-priority metrics
     revenue_per_round: float
-    average_order_value: float
     total_revenue: float
-    
-    # Order metrics
-    order_penetration_rate: float
     orders_per_cart_hour: float
-    total_orders: int
-    unique_customers: int
-    
-    # Tip metrics
-    tip_rate: float
-    tips_per_order: float
+    order_penetration_rate: float
+    average_order_value: float
     total_tips: float
-    
-    # Coverage metrics
+    total_delivery_orders_conversion_count: int
+    total_delivery_orders_conversion_revenue: float
     holes_covered_per_hour: float
     minutes_per_hole_per_cart: float
-    total_holes_covered: int
     
-    # Customer metrics
+    # Additional metrics for batch processing
+    unique_customers: int
+    tip_rate: float
+    tips_per_order: float
+    total_holes_covered: int
     golfer_repeat_rate: float
     average_orders_per_customer: float
     customers_with_multiple_orders: int
-    
-    # Visibility metrics
     golfer_visibility_interval_minutes: float
     total_visibility_events: int
-    
-    # Service window metrics
     service_hours: float
     rounds_in_service_window: int
     
-    # Metadata
+    # Simulation details and aggregates
+    total_orders: int
     simulation_id: str
     cart_id: str
 
@@ -62,6 +67,7 @@ def calculate_bev_cart_metrics(
     sales_data: List[Dict[str, Any]],
     coordinates: List[Dict[str, Any]],
     golfer_data: Optional[List[Dict[str, Any]]] = None,
+    delivery_conversion_data: Optional[List[Dict[str, Any]]] = None,
     service_start_s: int = 7200,  # 9 AM
     service_end_s: int = 36000,   # 5 PM
     simulation_id: str = "unknown",
@@ -71,22 +77,7 @@ def calculate_bev_cart_metrics(
     proximity_duration_s: int = 30,  # 30 seconds minimum for visibility event
 ) -> BevCartMetrics:
     """
-    Calculate comprehensive metrics for beverage cart simulation.
-    
-    Args:
-        sales_data: List of sales records with timestamp_s, price, group_id, hole_num
-        coordinates: List of GPS coordinates with timestamp, latitude, longitude, current_hole
-        golfer_data: Optional golfer GPS data for visibility calculations
-        service_start_s: Service start time in seconds since 7 AM
-        service_end_s: Service end time in seconds since 7 AM
-        simulation_id: Unique identifier for this simulation
-        cart_id: Cart identifier
-        tip_rate_percentage: Tip rate as percentage of order value
-        proximity_threshold_m: Distance threshold for golfer visibility (meters)
-        proximity_duration_s: Minimum duration for visibility event (seconds)
-        
-    Returns:
-        BevCartMetrics object with all calculated metrics
+    Calculate executive-priority metrics for beverage cart simulation.
     """
     
     # Calculate service window metrics
@@ -99,55 +90,68 @@ def calculate_bev_cart_metrics(
     revenue_per_round = total_revenue / rounds_in_service_window if rounds_in_service_window > 0 else 0.0
     average_order_value = total_revenue / total_orders if total_orders > 0 else 0.0
     
-    # Tip calculations
-    tip_rate = tip_rate_percentage / 100.0
-    total_tips = total_revenue * tip_rate
-    tips_per_order = total_tips / total_orders if total_orders > 0 else 0.0
+    # Orders per cart hour
+    orders_per_cart_hour = total_orders / service_hours if service_hours > 0 else 0.0
     
     # Order penetration rate (unique customers / rounds)
     unique_customers = len(set(sale.get("group_id") for sale in sales_data))
     order_penetration_rate = unique_customers / rounds_in_service_window if rounds_in_service_window > 0 else 0.0
     
-    # Orders per cart hour
-    orders_per_cart_hour = total_orders / service_hours if service_hours > 0 else 0.0
+    # Tip calculations
+    tip_rate = tip_rate_percentage / 100.0
+    total_tips = total_revenue * tip_rate
+    
+    # Delivery conversion metrics
+    delivery_conversion_data = delivery_conversion_data or []
+    total_delivery_orders_conversion_count = len(delivery_conversion_data)
+    total_delivery_orders_conversion_revenue = sum(
+        order.get("price", 0.0) for order in delivery_conversion_data
+    )
     
     # Coverage metrics
     holes_covered = _calculate_holes_covered(coordinates)
     holes_covered_per_hour = holes_covered / service_hours if service_hours > 0 else 0.0
     minutes_per_hole_per_cart = (service_hours * 60) / holes_covered if holes_covered > 0 else 0.0
     
-    # Customer repeat metrics
+    # Additional metrics for batch processing
+    tips_per_order = total_tips / total_orders if total_orders > 0 else 0.0
+    
+    # Customer behavior metrics
     customer_order_counts = _calculate_customer_order_counts(sales_data)
-    customers_with_multiple_orders = sum(1 for count in customer_order_counts.values() if count >= 2)
-    golfer_repeat_rate = customers_with_multiple_orders / unique_customers if unique_customers > 0 else 0.0
+    customers_with_multiple_orders = sum(1 for count in customer_order_counts.values() if count > 1)
     average_orders_per_customer = sum(customer_order_counts.values()) / len(customer_order_counts) if customer_order_counts else 0.0
+    golfer_repeat_rate = customers_with_multiple_orders / len(customer_order_counts) if customer_order_counts else 0.0
     
     # Visibility metrics
-    visibility_interval, visibility_events = _calculate_visibility_metrics(
+    visibility_interval_minutes, total_visibility_events = _calculate_visibility_metrics(
         coordinates, golfer_data, proximity_threshold_m, proximity_duration_s
     )
     
     return BevCartMetrics(
         revenue_per_round=revenue_per_round,
-        average_order_value=average_order_value,
         total_revenue=total_revenue,
-        order_penetration_rate=order_penetration_rate,
         orders_per_cart_hour=orders_per_cart_hour,
-        total_orders=total_orders,
+        order_penetration_rate=order_penetration_rate,
+        average_order_value=average_order_value,
+        total_tips=total_tips,
+        total_delivery_orders_conversion_count=total_delivery_orders_conversion_count,
+        total_delivery_orders_conversion_revenue=total_delivery_orders_conversion_revenue,
+        holes_covered_per_hour=holes_covered_per_hour,
+        minutes_per_hole_per_cart=minutes_per_hole_per_cart,
+        # Additional metrics
         unique_customers=unique_customers,
         tip_rate=tip_rate,
         tips_per_order=tips_per_order,
-        total_tips=total_tips,
-        holes_covered_per_hour=holes_covered_per_hour,
-        minutes_per_hole_per_cart=minutes_per_hole_per_cart,
         total_holes_covered=holes_covered,
         golfer_repeat_rate=golfer_repeat_rate,
         average_orders_per_customer=average_orders_per_customer,
         customers_with_multiple_orders=customers_with_multiple_orders,
-        golfer_visibility_interval_minutes=visibility_interval,
-        total_visibility_events=visibility_events,
+        golfer_visibility_interval_minutes=visibility_interval_minutes,
+        total_visibility_events=total_visibility_events,
         service_hours=service_hours,
         rounds_in_service_window=rounds_in_service_window,
+        # Simulation details
+        total_orders=total_orders,
         simulation_id=simulation_id,
         cart_id=cart_id,
     )
@@ -276,146 +280,83 @@ def _calculate_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) ->
 
 def summarize_bev_cart_metrics(metrics_list: List[BevCartMetrics]) -> Dict[str, Any]:
     """
-    Summarize metrics across multiple simulations.
-    
-    Args:
-        metrics_list: List of BevCartMetrics objects
-        
-    Returns:
-        Dictionary with summary statistics for all metrics
+    Summarize executive-priority metrics across multiple runs.
     """
     if not metrics_list:
         return {}
-    
-    summary = {
-        "total_simulations": len(metrics_list),
-        "metrics": {}
-    }
-    
-    # Get all metric names from the first object
-    metric_names = [field.name for field in BevCartMetrics.__dataclass_fields__.values()]
-    
-    for metric_name in metric_names:
-        values = [getattr(metrics, metric_name) for metrics in metrics_list]
-        
-        # Filter out non-numeric values
-        numeric_values = [v for v in values if isinstance(v, (int, float)) and not math.isnan(v)]
-        
-        if numeric_values:
-            summary["metrics"][metric_name] = {
-                "mean": sum(numeric_values) / len(numeric_values),
-                "min": min(numeric_values),
-                "max": max(numeric_values),
-                "sum": sum(numeric_values),
-                "count": len(numeric_values),
-                "total_simulations": len(metrics_list),
-            }
-        else:
-            summary["metrics"][metric_name] = {
-                "mean": 0.0,
-                "min": 0.0,
-                "max": 0.0,
-                "sum": 0.0,
-                "count": 0,
-                "total_simulations": len(metrics_list)
-            }
-    
-    return summary
+
+    def _mm(arr: List[float]) -> Dict[str, float]:
+        return {"mean": statistics.mean(arr), "min": min(arr), "max": max(arr)} if arr else {"mean": 0.0, "min": 0.0, "max": 0.0}
+
+    summaries: Dict[str, Any] = {}
+
+    # Executive metrics
+    summaries["revenue_per_round"] = _mm([m.revenue_per_round for m in metrics_list])
+    summaries["total_revenue"] = _mm([m.total_revenue for m in metrics_list])
+    summaries["orders_per_cart_hour"] = _mm([m.orders_per_cart_hour for m in metrics_list])
+    summaries["order_penetration_rate"] = _mm([m.order_penetration_rate for m in metrics_list])
+    summaries["average_order_value"] = _mm([m.average_order_value for m in metrics_list])
+    summaries["total_tips"] = _mm([m.total_tips for m in metrics_list])
+    summaries["total_delivery_orders_conversion_count"] = _mm([float(m.total_delivery_orders_conversion_count) for m in metrics_list])
+    summaries["total_delivery_orders_conversion_revenue"] = _mm([m.total_delivery_orders_conversion_revenue for m in metrics_list])
+    summaries["holes_covered_per_hour"] = _mm([m.holes_covered_per_hour for m in metrics_list])
+    summaries["minutes_per_hole_per_cart"] = _mm([m.minutes_per_hole_per_cart for m in metrics_list])
+
+    # Totals
+    summaries["total_orders_sum"] = sum(m.total_orders for m in metrics_list)
+    summaries["total_revenue_sum"] = sum(m.total_revenue for m in metrics_list)
+    summaries["total_delivery_conversion_count_sum"] = sum(m.total_delivery_orders_conversion_count for m in metrics_list)
+    summaries["total_delivery_conversion_revenue_sum"] = sum(m.total_delivery_orders_conversion_revenue for m in metrics_list)
+
+    return summaries
 
 
 def format_metrics_report(metrics: BevCartMetrics) -> str:
-    """Format metrics into a readable report string."""
-    # Top 10 key metrics for quick scanning
-    lines = [
-        f"# Beverage Cart Metrics Report - {metrics.simulation_id}",
-        f"Cart ID: {metrics.cart_id}",
-        "",
-        "## Top 10 Metrics",
-        f"- Revenue per Round (RPR): ${metrics.revenue_per_round:.2f}",
-        f"- Total Revenue: ${metrics.total_revenue:.2f}",
-        f"- Total Orders: {metrics.total_orders}",
-        f"- Average Order Value (AOV): ${metrics.average_order_value:.2f}",
-        f"- Orders per Cart Hour: {metrics.orders_per_cart_hour:.2f}",
-        f"- Order Penetration Rate: {metrics.order_penetration_rate:.2f}",
-        f"- Total Tips: ${metrics.total_tips:.2f}",
-        f"- Holes Covered per Hour: {metrics.holes_covered_per_hour:.2f}",
-        f"- Minutes per Hole per Cart: {metrics.minutes_per_hole_per_cart:.1f}",
-        f"- Total Visibility Events: {metrics.total_visibility_events}",
-        "",
-        "## Revenue Metrics",
-        f"- Revenue per Round (RPR): ${metrics.revenue_per_round:.2f}",
-        f"- Average Order Value (AOV): ${metrics.average_order_value:.2f}",
-        f"- Total Revenue: ${metrics.total_revenue:.2f}",
-        f"- Total Tips: ${metrics.total_tips:.2f}",
-        f"- Tip Rate: {metrics.tip_rate:.1%}",
-        f"- Tips per Order: ${metrics.tips_per_order:.2f}",
-        "",
-        "## Order Metrics",
-        f"- Total Orders: {metrics.total_orders}",
-        f"- Unique Customers: {metrics.unique_customers}",
-        f"- Order Penetration Rate: {metrics.order_penetration_rate:.2f}",
-        f"- Orders per Cart Hour: {metrics.orders_per_cart_hour:.2f}",
-        "",
-        "## Coverage Metrics",
-        f"- Total Holes Covered: {metrics.total_holes_covered}",
-        f"- Holes Covered per Hour: {metrics.holes_covered_per_hour:.2f}",
-        f"- Minutes per Hole per Cart: {metrics.minutes_per_hole_per_cart:.1f}",
-        "",
-        "## Customer Metrics",
-        f"- Customers with Multiple Orders: {metrics.customers_with_multiple_orders}",
-        f"- Golfer Repeat Rate: {metrics.golfer_repeat_rate:.1%}",
-        f"- Average Orders per Customer: {metrics.average_orders_per_customer:.2f}",
-        "",
-        "## Visibility Metrics",
-        f"- Total Visibility Events: {metrics.total_visibility_events}",
-        f"- Average Visibility Interval: {metrics.golfer_visibility_interval_minutes:.1f} minutes",
-        "",
-        "## Service Window",
-        f"- Service Hours: {metrics.service_hours:.1f}",
-        f"- Rounds in Service Window: {metrics.rounds_in_service_window}",
-    ]
-    
-    return "\n".join(lines)
+    """Format executive-priority beverage cart metrics as a GM-ready markdown report."""
+    report = f"""# Beverage Cart Executive Metrics
+
+## Executive Priority Ranking (Most Persuasive First)
+1. **Revenue per Round**: ${metrics.revenue_per_round:.2f}
+2. **Total Revenue**: ${metrics.total_revenue:.2f}
+3. **Orders per Cart Hour**: {metrics.orders_per_cart_hour:.2f}
+4. **Order Penetration Rate**: {metrics.order_penetration_rate:.2f}
+5. **Average Order Value**: ${metrics.average_order_value:.2f}
+6. **Total Tips**: ${metrics.total_tips:.2f}
+7. **Total Delivery Orders Conversion Count**: {metrics.total_delivery_orders_conversion_count}
+8. **Total Delivery Orders Conversion Revenue**: ${metrics.total_delivery_orders_conversion_revenue:.2f}
+9. **Holes Covered per Hour**: {metrics.holes_covered_per_hour:.2f}
+10. **Minutes per Hole per Cart**: {metrics.minutes_per_hole_per_cart:.1f}
+
+## Simulation Details
+- Simulation ID: {metrics.simulation_id}
+- Cart ID: {metrics.cart_id}
+- Total Orders: {metrics.total_orders}
+
+> Tip: Lead with 1–5 to show revenue and efficiency, use 6–8 to prove service quality and cross-selling, and close with 9–10 as the operational story.
+"""
+    return report
 
 
-def format_summary_report(summary: Dict[str, Any]) -> str:
-    """Format summary statistics into a readable report string."""
-    lines = [
-        f"# Beverage Cart Metrics Summary",
-        f"Total Simulations: {summary.get('total_simulations', 0)}",
-        "",
-    ]
-    
-    metrics = summary.get("metrics", {})
-    
-    # Group metrics by category
-    categories = {
-        "Revenue": ["revenue_per_round", "average_order_value", "total_revenue", "total_tips", "tip_rate", "tips_per_order"],
-        "Orders": ["total_orders", "unique_customers", "order_penetration_rate", "orders_per_cart_hour"],
-        "Coverage": ["total_holes_covered", "holes_covered_per_hour", "minutes_per_hole_per_cart"],
-        "Customers": ["customers_with_multiple_orders", "golfer_repeat_rate", "average_orders_per_customer"],
-        "Visibility": ["total_visibility_events", "golfer_visibility_interval_minutes"],
-        "Service": ["service_hours", "rounds_in_service_window"]
-    }
-    
-    for category, metric_names in categories.items():
-        lines.append(f"## {category} Metrics")
-        for metric_name in metric_names:
-            if metric_name in metrics:
-                metric_data = metrics[metric_name]
-                if metric_name in ["tip_rate", "golfer_repeat_rate", "order_penetration_rate"]:
-                    # Format as percentage
-                    lines.append(f"- {metric_name.replace('_', ' ').title()}: {metric_data['mean']:.1%} (min: {metric_data['min']:.1%}, max: {metric_data['max']:.1%})")
-                elif metric_name in ["total_orders", "unique_customers", "total_holes_covered", "customers_with_multiple_orders", "total_visibility_events", "rounds_in_service_window"]:
-                    # Format as integers
-                    lines.append(f"- {metric_name.replace('_', ' ').title()}: mean={metric_data['mean']:.0f}, sum={metric_data['sum']:.0f} (min: {metric_data['min']:.0f}, max: {metric_data['max']:.0f})")
-                else:
-                    # Format as decimals
-                    # For monetary or rate per hour metrics, include sum as well
-                    if metric_name in ["total_revenue", "total_tips"]:
-                        lines.append(f"- {metric_name.replace('_', ' ').title()}: mean=${metric_data['mean']:.2f}, sum=${metric_data['sum']:.2f} (min: ${metric_data['min']:.2f}, max: ${metric_data['max']:.2f})")
-                    else:
-                        lines.append(f"- {metric_name.replace('_', ' ').title()}: mean={metric_data['mean']:.2f}, sum={metric_data['sum']:.2f} (min: {metric_data['min']:.2f}, max: {metric_data['max']:.2f})")
-        lines.append("")
-    
-    return "\n".join(lines)
+def format_summary_report(summaries: Dict[str, Any], num_runs: int) -> str:
+    """Format executive-priority metrics summary as a markdown report."""
+    report = f"""# Beverage Cart Metrics Summary
+
+## Summary Statistics (Across {num_runs} Runs)
+- Revenue per Round — Mean: ${summaries.get('revenue_per_round', {}).get('mean', 0):.2f} (Range: ${summaries.get('revenue_per_round', {}).get('min', 0):.2f}–${summaries.get('revenue_per_round', {}).get('max', 0):.2f})
+- Total Revenue — Mean: ${summaries.get('total_revenue', {}).get('mean', 0):.2f}
+- Orders per Cart Hour — Mean: {summaries.get('orders_per_cart_hour', {}).get('mean', 0):.2f}
+- Order Penetration Rate — Mean: {summaries.get('order_penetration_rate', {}).get('mean', 0):.2f}
+- Average Order Value — Mean: ${summaries.get('average_order_value', {}).get('mean', 0):.2f}
+- Total Tips — Mean: ${summaries.get('total_tips', {}).get('mean', 0):.2f}
+- Delivery Orders Conversion Count — Mean: {summaries.get('total_delivery_orders_conversion_count', {}).get('mean', 0):.0f}
+- Delivery Orders Conversion Revenue — Mean: ${summaries.get('total_delivery_orders_conversion_revenue', {}).get('mean', 0):.2f}
+- Holes Covered per Hour — Mean: {summaries.get('holes_covered_per_hour', {}).get('mean', 0):.2f}
+- Minutes per Hole per Cart — Mean: {summaries.get('minutes_per_hole_per_cart', {}).get('mean', 0):.1f} min
+
+## Aggregate Totals
+- Total Revenue: ${summaries.get('total_revenue_sum', 0):.2f}
+- Total Orders: {summaries.get('total_orders_sum', 0)}
+- Total Delivery Conversion Count: {summaries.get('total_delivery_conversion_count_sum', 0)}
+- Total Delivery Conversion Revenue: ${summaries.get('total_delivery_conversion_revenue_sum', 0):.2f}
+"""
+    return report

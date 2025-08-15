@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 
 from golfsim.simulation.engine import run_golf_delivery_simulation
+from golfsim.config.loaders import load_simulation_config
 from golfsim.io.results import save_results_bundle, write_unified_coordinates_csv
 from golfsim.viz.matplotlib_viz import render_delivery_plot, load_course_geospatial_data, create_folium_delivery_map
 from golfsim.logging import init_logging, get_logger
@@ -27,163 +28,11 @@ from utils.simulation_reporting import (
     log_simulation_results,
     handle_simulation_error,
     create_argparse_epilog,
+    create_delivery_log,
 )
 
 logger = get_logger(__name__)
 
-
-def format_time_from_seconds(seconds: float) -> str:
-    """Convert seconds to HH:MM:SS format."""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
-
-def format_time_from_round_start(seconds: float) -> str:
-    """Format time as minutes into the round."""
-    minutes = seconds / 60.0
-    return f"{minutes:.1f} min into round"
-
-
-def create_delivery_log(results: Dict, save_path: Path) -> None:
-    """
-    Create a detailed delivery person log with timestamps for all key events.
-    
-    Args:
-        results: Simulation results dictionary
-        save_path: Path where to save the delivery log
-    """
-    # Extract key timestamps
-    order_time_s = results.get('order_time_s', 0)
-    order_created_s = results.get('order_created_s', order_time_s)
-    prep_completed_s = results.get('prep_completed_s', 0)
-    delivered_s = results.get('delivered_s', 0)
-    runner_returned_s = results.get('runner_returned_s', 0)
-    runner_busy_delay_s = results.get('runner_busy_delay_s', 0.0)
-    
-    # Calculate actual departure time (prep complete + delay)
-    runner_departed_s = prep_completed_s + runner_busy_delay_s
-    
-    # Calculate derived times
-    prep_duration = prep_completed_s - order_created_s
-    delay_duration = runner_busy_delay_s
-    delivery_duration = delivered_s - runner_departed_s  # Time from departure to delivery
-    return_duration = runner_returned_s - delivered_s
-    total_service_time = results.get('total_service_time_s', 0)
-    
-    # Get delivery details
-    order_hole = results.get('order_hole', 'Unknown')
-    delivery_distance = results.get('delivery_distance_m', 0)
-    prediction_method = results.get('prediction_method', 'Unknown')
-    
-    # Create the log content
-    lines = [
-        "# Delivery Log",
-        "",
-        f"**Order Details:**",
-        f"- Hole: {order_hole}",
-        f"- Prediction Method: {prediction_method}",
-        f"- Total Service Time: {format_time_from_seconds(total_service_time)}",
-        f"- Delivery Distance: {delivery_distance:.0f} meters",
-        "",
-        "## Timeline",
-        "",
-    ]
-    
-    # Add timeline events
-    events = [
-        ("Order Placed", order_created_s, "Customer places order"),
-        ("Food Preparation Started", order_created_s, "Kitchen begins preparing order"),
-        ("Food Ready", prep_completed_s, "Order prepared and ready for pickup"),
-    ]
-    
-    # Add delay event if there was a delay
-    if runner_busy_delay_s > 0:
-        events.append(("Runner Available", runner_departed_s, f"Runner becomes available after {delay_duration/60:.0f} minute delay"))
-        events.append(("Delivery Started", runner_departed_s, "Runner departs from clubhouse"))
-    else:
-        events.append(("Delivery Started", prep_completed_s, "Runner departs from clubhouse"))
-    
-    events.extend([
-        ("Order Delivered", delivered_s, "Customer receives their order"),
-        ("Runner Returned", runner_returned_s, "Runner arrives back at clubhouse"),
-    ])
-    
-    for event_name, timestamp, description in events:
-        if timestamp > 0:
-            time_str = format_time_from_seconds(timestamp)
-            round_time = format_time_from_round_start(timestamp)
-            lines.append(f"**{time_str}** ({round_time}) - {event_name}")
-            lines.append(f"  {description}")
-            lines.append("")
-    
-    # Add duration breakdown
-    duration_lines = [
-        "## Duration Breakdown",
-        "",
-        f"- **Food Preparation**: {format_time_from_seconds(prep_duration)}",
-    ]
-    
-    # Add delay information if there was a delay
-    if runner_busy_delay_s > 0:
-        duration_lines.append(f"- **Runner Delay**: {format_time_from_seconds(delay_duration)} (runner was busy)")
-    
-    duration_lines.extend([
-        f"- **Delivery Time**: {format_time_from_seconds(delivery_duration)} (travel time only)",
-        f"- **Return Time**: {format_time_from_seconds(return_duration)}",
-        f"- **Total Service**: {format_time_from_seconds(total_service_time)}",
-        "",
-    ])
-    
-    lines.extend(duration_lines)
-    
-    # Add delivery location details if available
-    predicted_location = results.get('predicted_delivery_location')
-    if predicted_location:
-        lines.extend([
-            "## Delivery Location",
-            "",
-            f"- **Predicted**: {predicted_location[1]:.6f}, {predicted_location[0]:.6f}",
-        ])
-    # Append actual delivery location if coordinates were tracked
-    from golfsim.io.results import find_actual_delivery_location
-    actual_loc = find_actual_delivery_location(results)
-    if actual_loc:
-        hole = actual_loc.get('hole')
-        coord_line = f"- **Actual**: {actual_loc['latitude']:.6f}, {actual_loc['longitude']:.6f}"
-        if hole:
-            coord_line += f" (Hole {hole})"
-        lines.extend([
-            coord_line,
-            "",
-        ])
-    
-    # Add efficiency metrics if available
-    trip_to_golfer = results.get('trip_to_golfer', {})
-    if 'efficiency' in trip_to_golfer and trip_to_golfer['efficiency'] is not None:
-        lines.extend([
-            "## Route Efficiency",
-            "",
-            f"- **Efficiency**: {trip_to_golfer['efficiency']:.1f}% vs straight line",
-            "",
-        ])
-    
-    # Add prediction debug info if available
-    prediction_debug = results.get('prediction_debug', {})
-    if prediction_debug:
-        lines.extend([
-            "## Prediction Details",
-            "",
-        ])
-        for key, value in prediction_debug.items():
-            if key != 'prediction_coordinates':  # Skip coordinates to keep it readable
-                lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
-        lines.append("")
-    
-    # Write the log file
-    save_path.write_text("\n".join(lines), encoding="utf-8")
-    logger.info("Created delivery log: %s", save_path)
 
 
 def main() -> int:
@@ -209,8 +58,8 @@ def main() -> int:
                        help="Specific hole to place order (1-18), or random if not specified")
     parser.add_argument("--prep-time", type=int, default=10,
                        help="Food preparation time in minutes (default: 10)")
-    parser.add_argument("--runner-speed", type=float, default=6.0,
-                       help="Runner speed in m/s (default: 6.0)")
+    parser.add_argument("--runner-speed", type=float, default=None,
+                        help="Runner speed in m/s (default: from course config 'delivery_runner_speed_mph')")
     parser.add_argument("--placement", choices=["tee", "mid", "green"], default="mid",
                         help="Where on the specified --hole to place the order: tee, mid, or green (default: mid)")
     parser.add_argument("--runner-delay", type=float, default=0.0, metavar="MIN",
@@ -272,7 +121,17 @@ def main() -> int:
     logger.info(f"Course: {args.course_dir}")
     logger.info(f"Order hole: {args.hole if args.hole else 'Random'}")
     logger.info(f"Prep time: {args.prep_time} minutes")
-    logger.info(f"Runner speed: {args.runner_speed} m/s")
+    # Determine effective speed for logging (config mph → m/s if CLI not provided)
+    try:
+        sim_cfg_preview = load_simulation_config(args.course_dir)
+        cfg_mps = float(getattr(sim_cfg_preview, "delivery_runner_speed_mps", 6.0))
+        cfg_mph = cfg_mps / 0.44704
+    except Exception:
+        cfg_mps, cfg_mph = 6.0, 6.0
+    if args.runner_speed is None:
+        logger.info(f"Runner speed: {cfg_mph:.1f} mph ({cfg_mps:.2f} m/s) [from config]")
+    else:
+        logger.info(f"Runner speed (override): {args.runner_speed:.2f} m/s")
     logger.info(f"Enhanced routing: {'No' if args.no_enhanced else 'Yes'}")
     logger.info(f"Hole placement on hole: {args.placement}")
     if args.runner_delay and args.runner_delay > 0:

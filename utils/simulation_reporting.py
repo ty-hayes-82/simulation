@@ -17,6 +17,159 @@ from golfsim.io.results import find_actual_delivery_location
 logger = get_logger(__name__)
 
 
+def _format_time_from_seconds(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS format."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _format_time_from_round_start(seconds: float) -> str:
+    """Format time as minutes into the round."""
+    minutes = seconds / 60.0
+    return f"{minutes:.1f} min into round"
+
+
+def create_delivery_log(results: Dict, save_path: Path) -> None:
+    """
+    Create a detailed delivery person log with timestamps for all key events.
+
+    Args:
+        results: Simulation results dictionary
+        save_path: Path where to save the delivery log
+    """
+    # Extract key timestamps
+    order_time_s = results.get('order_time_s', 0)
+    order_created_s = results.get('order_created_s', order_time_s)
+    prep_completed_s = results.get('prep_completed_s', 0)
+    delivered_s = results.get('delivered_s', 0)
+    runner_returned_s = results.get('runner_returned_s', 0)
+    runner_busy_delay_s = results.get('runner_busy_delay_s', 0.0)
+
+    # Calculate actual departure time (prep complete + delay)
+    runner_departed_s = prep_completed_s + runner_busy_delay_s
+
+    # Calculate derived times
+    prep_duration = prep_completed_s - order_created_s
+    delay_duration = runner_busy_delay_s
+    delivery_duration = delivered_s - runner_departed_s  # Time from departure to delivery
+    return_duration = runner_returned_s - delivered_s
+    total_service_time = results.get('total_service_time_s', 0)
+
+    # Get delivery details
+    order_hole = results.get('order_hole', 'Unknown')
+    delivery_distance = results.get('delivery_distance_m', 0)
+    prediction_method = results.get('prediction_method', 'Unknown')
+
+    # Create the log content
+    lines = [
+        "# Delivery Log",
+        "",
+        f"**Order Details:**",
+        f"- Hole: {order_hole}",
+        f"- Prediction Method: {prediction_method}",
+        f"- Total Service Time: {_format_time_from_seconds(total_service_time)}",
+        f"- Delivery Distance: {delivery_distance:.0f} meters",
+        "",
+        "## Timeline",
+        "",
+    ]
+
+    # Add timeline events
+    events = [
+        ("Order Placed", order_created_s, "Customer places order"),
+        ("Food Preparation Started", order_created_s, "Kitchen begins preparing order"),
+        ("Food Ready", prep_completed_s, "Order prepared and ready for pickup"),
+    ]
+
+    # Add delay event if there was a delay
+    if runner_busy_delay_s > 0:
+        events.append(("Runner Available", runner_departed_s, f"Runner becomes available after {delay_duration/60:.0f} minute delay"))
+        events.append(("Delivery Started", runner_departed_s, "Runner departs from clubhouse"))
+    else:
+        events.append(("Delivery Started", prep_completed_s, "Runner departs from clubhouse"))
+
+    events.extend([
+        ("Order Delivered", delivered_s, "Customer receives their order"),
+        ("Runner Returned", runner_returned_s, "Runner arrives back at clubhouse"),
+    ])
+
+    for event_name, timestamp, description in events:
+        if timestamp > 0:
+            time_str = _format_time_from_seconds(timestamp)
+            round_time = _format_time_from_round_start(timestamp)
+            lines.append(f"**{time_str}** ({round_time}) - {event_name}")
+            lines.append(f"  {description}")
+            lines.append("")
+
+    # Add duration breakdown
+    duration_lines = [
+        "## Duration Breakdown",
+        "",
+        f"- **Food Preparation**: {_format_time_from_seconds(prep_duration)}",
+    ]
+
+    # Add delay information if there was a delay
+    if runner_busy_delay_s > 0:
+        duration_lines.append(f"- **Runner Delay**: {_format_time_from_seconds(delay_duration)} (runner was busy)")
+
+    duration_lines.extend([
+        f"- **Delivery Time**: {_format_time_from_seconds(delivery_duration)} (travel time only)",
+        f"- **Return Time**: {_format_time_from_seconds(return_duration)}",
+        f"- **Total Service**: {_format_time_from_seconds(total_service_time)}",
+        "",
+    ])
+
+    lines.extend(duration_lines)
+
+    # Add delivery location details if available
+    predicted_location = results.get('predicted_delivery_location')
+    if predicted_location:
+        lines.extend([
+            "## Delivery Location",
+            "",
+            f"- **Predicted**: {predicted_location[1]:.6f}, {predicted_location[0]:.6f}",
+        ])
+    # Append actual delivery location if coordinates were tracked
+    actual_loc = find_actual_delivery_location(results)
+    if actual_loc:
+        hole = actual_loc.get('hole')
+        coord_line = f"- **Actual**: {actual_loc['latitude']:.6f}, {actual_loc['longitude']:.6f}"
+        if hole:
+            coord_line += f" (Hole {hole})"
+        lines.extend([
+            coord_line,
+            "",
+        ])
+
+    # Add efficiency metrics if available
+    trip_to_golfer = results.get('trip_to_golfer', {})
+    if 'efficiency' in trip_to_golfer and trip_to_golfer['efficiency'] is not None:
+        lines.extend([
+            "## Route Efficiency",
+            "",
+            f"- **Efficiency**: {trip_to_golfer['efficiency']:.1f}% vs straight line",
+            "",
+        ])
+
+    # Add prediction debug info if available
+    prediction_debug = results.get('prediction_debug', {})
+    if prediction_debug:
+        lines.extend([
+            "## Prediction Details",
+            "",
+        ])
+        for key, value in prediction_debug.items():
+            if key != 'prediction_coordinates':  # Skip coordinates to keep it readable
+                lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
+        lines.append("")
+
+    # Write the log file
+    save_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info("Created delivery log: %s", save_path)
+
+
 def log_simulation_results(results: Dict, run_idx: Optional[int] = None, track_coords: bool = False) -> None:
     """
     Log comprehensive simulation results in a consistent format.
@@ -33,7 +186,17 @@ def log_simulation_results(results: Dict, run_idx: Optional[int] = None, track_c
     logger.info("   Service time: %.1f minutes", results['total_service_time_s']/60)
     logger.info("   Delivery distance: %.0f meters", results['delivery_distance_m'])
     logger.info("   Preparation time: %.1f minutes", results['prep_time_s']/60)
-    logger.info("   Travel time (out+back): %.1f minutes", results['delivery_travel_time_s']/60)
+    # Prefer reporting outbound travel time to golfer explicitly; include return if available
+    trip_to_golfer = results.get('trip_to_golfer', {})
+    trip_back = results.get('trip_back', {})
+    to_time = float(trip_to_golfer.get('time_s', 0.0)) / 60.0 if isinstance(trip_to_golfer, dict) else None
+    back_time = float(trip_back.get('time_s', 0.0)) / 60.0 if isinstance(trip_back, dict) else None
+    if to_time is not None and to_time > 0:
+        logger.info("   Travel time (to golfer): %.1f minutes", to_time)
+        if back_time is not None and back_time > 0:
+            logger.info("   Return time: %.1f minutes", back_time)
+    else:
+        logger.info("   Travel time (out+back): %.1f minutes", results['delivery_travel_time_s']/60)
     
     # Show route efficiency if available
     trip_to_golfer = results.get('trip_to_golfer', {})
@@ -68,7 +231,11 @@ def write_simulation_stats(results: Dict, save_path: Path, title: str = "Simulat
     order_time_min = float(results.get("order_time_s", 0.0)) / 60.0
     service_time_min = float(results.get("total_service_time_s", 0.0)) / 60.0
     delivery_distance_m = float(results.get("delivery_distance_m", 0.0))
-    travel_time_min = float(results.get("delivery_travel_time_s", 0.0)) / 60.0
+    # Prefer to show outbound travel time to the golfer, and optionally return
+    trip_to_golfer = results.get("trip_to_golfer", {})
+    trip_back = results.get("trip_back", {})
+    travel_time_min_to = float(trip_to_golfer.get("time_s", 0.0)) / 60.0 if isinstance(trip_to_golfer, dict) else 0.0
+    travel_time_min_back = float(trip_back.get("time_s", 0.0)) / 60.0 if isinstance(trip_back, dict) else 0.0
     prep_time_min = float(results.get("prep_time_s", 0.0)) / 60.0
 
     lines = [
@@ -77,7 +244,8 @@ def write_simulation_stats(results: Dict, save_path: Path, title: str = "Simulat
         f"Order placed: {order_time_min:.1f} min into round",
         f"Service time (order→delivery): {service_time_min:.1f} min",
         f"Prep time: {prep_time_min:.1f} min",
-        f"Travel time (out+back): {travel_time_min:.1f} min",
+        f"Travel time (to golfer): {travel_time_min_to:.1f} min",
+        f"Return time: {travel_time_min_back:.1f} min",
         f"Delivery distance (out+back): {delivery_distance_m:.0f} m",
     ]
 

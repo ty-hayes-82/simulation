@@ -180,13 +180,7 @@ class SingleRunnerDeliveryService:
 
             if self.order_queue and not self.runner_busy:
                 order = self.order_queue.pop(0)
-                placed_time = order.order_placed_time if order.order_placed_time is not None else self.env.now
-                if (self.env.now - placed_time) > 3600:
-                    order.status = "failed"
-                    order.failure_reason = "Exceeded 1-hour queue time before processing"
-                    self.failed_orders.append(order)
-                    self.log_activity("order_failed", f"Order {order.order_id} failed. Waited over 1 hour in queue.", order.order_id)
-                    continue
+                # Process order regardless of wait time - no SLA timeout during processing
                 yield self.env.process(self._process_single_order(order))
             else:
                 yield self.env.timeout(30)
@@ -225,25 +219,31 @@ class SingleRunnerDeliveryService:
         order.total_completion_time_s = order.delivered_time - placed_time
         return_time_s = self._calculate_return_time()
         total_drive_time_s = delivery_time_s + return_time_s
-        self.log_activity("delivery_complete", f"Delivered Order {order.order_id} to Group {order.golfer_group_id} at Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", order.order_id, f"hole_{order.hole_num}")
-
-        order.status = "processed"
-        self.delivery_stats.append(
-            {
-                "order_id": order.order_id,
-                "golfer_group_id": order.golfer_group_id,
-                "hole_num": order.hole_num,
-                "order_time_s": order.order_time_s,
-                "queue_delay_s": order.queue_delay_s,
-                "prep_time_s": self.prep_time_s,
-                "delivery_time_s": delivery_time_s,
-                "return_time_s": return_time_s,
-                "total_drive_time_s": total_drive_time_s,
-                "delivery_distance_m": delivery_distance_m,
-                "total_completion_time_s": order.total_completion_time_s,
-                "delivered_at_time_s": order.delivered_time,
-            }
-        )
+        # Hard failure rule: if total completion exceeds 60 minutes, treat as failed
+        if order.total_completion_time_s > 3600:
+            order.status = "failed"
+            order.failure_reason = "Exceeded 1-hour SLA after processing"
+            self.failed_orders.append(order)
+            self.log_activity("delivery_failed_late", f"Order {order.order_id} exceeded 60 minutes (Total: {order.total_completion_time_s/60:.1f} min). Marked failed.", order.order_id, f"hole_{order.hole_num}")
+        else:
+            self.log_activity("delivery_complete", f"Delivered Order {order.order_id} to Group {order.golfer_group_id} at Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", order.order_id, f"hole_{order.hole_num}")
+            order.status = "processed"
+            self.delivery_stats.append(
+                {
+                    "order_id": order.order_id,
+                    "golfer_group_id": order.golfer_group_id,
+                    "hole_num": order.hole_num,
+                    "order_time_s": order.order_time_s,
+                    "queue_delay_s": order.queue_delay_s,
+                    "prep_time_s": self.prep_time_s,
+                    "delivery_time_s": delivery_time_s,
+                    "return_time_s": return_time_s,
+                    "total_drive_time_s": total_drive_time_s,
+                    "delivery_distance_m": delivery_distance_m,
+                    "total_completion_time_s": order.total_completion_time_s,
+                    "delivered_at_time_s": order.delivered_time,
+                }
+            )
 
         if self.order_queue:
             next_order = self.order_queue[0]
@@ -298,8 +298,10 @@ class MultiRunnerDeliveryService:
     delivery_stats: List[Dict] = field(default_factory=list)
     failed_orders: List[DeliveryOrder] = field(default_factory=list)
 
-    # Shared queue implemented using a SimPy Store for concurrency
+    # Shared queue implemented using a SimPy Store for incoming orders
     order_store: Optional[simpy.Store] = None
+    # Dedicated per-runner queues to enable deterministic assignment
+    runner_stores: List[simpy.Store] = field(default_factory=list)
 
     # Derived/config fields
     clubhouse_coords: Tuple[float, float] | None = None
@@ -309,6 +311,7 @@ class MultiRunnerDeliveryService:
 
     # Internal per-runner state
     runner_locations: List[str] = field(default_factory=list)
+    runner_busy: List[bool] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.prep_time_s = int(self.prep_time_min) * 60
@@ -316,9 +319,56 @@ class MultiRunnerDeliveryService:
         self.order_store = simpy.Store(self.env)
         # Initialize runner locations to clubhouse
         self.runner_locations = ["clubhouse" for _ in range(int(self.num_runners))]
+        # Initialize busy flags and per-runner queues
+        self.runner_busy = [False for _ in range(int(self.num_runners))]
+        self.runner_stores = [simpy.Store(self.env) for _ in range(int(self.num_runners))]
         # Start runner processes
         for idx in range(int(self.num_runners)):
             self.env.process(self._runner_loop(idx))
+        # Start dispatcher process to assign orders to runners with priority by index
+        self.env.process(self._dispatch_loop())
+
+    def _dispatch_loop(self):  # simpy process
+        """Assign incoming orders to available runners with deterministic tie-breaking.
+
+        Rule: Among available runners, choose the lowest index first
+        (e.g., if runner_2 and runner_3 are both available, pick runner_2).
+        """
+        while True:
+            # Stop condition: after close and no pending orders and all runners idle
+            if (
+                self.env.now > self.service_close_s
+                and len(self.order_store.items) == 0
+                and all(not self.runner_stores[i].items for i in range(int(self.num_runners)))
+            ):
+                break
+
+            # Wait briefly if no orders or no runner available
+            if len(self.order_store.items) == 0 or not any(not b for b in self.runner_busy):
+                yield self.env.timeout(5)
+                continue
+
+            # Pop next order and assign to the lowest-index available runner
+            order: DeliveryOrder = yield self.order_store.get()
+            try:
+                runner_index = next(i for i, busy in enumerate(self.runner_busy) if not busy)
+            except StopIteration:
+                # No runner available after get (race). Requeue order and wait a bit
+                self.order_store.items.insert(0, order)  # place back at front
+                yield self.env.timeout(5)
+                continue
+
+            self.runner_busy[runner_index] = True
+            runner_label = f"runner_{runner_index + 1}"
+            self.log_activity(
+                "order_assigned",
+                f"Assigned Order {order.order_id} to {runner_label}",
+                runner_id=runner_label,
+                order_id=order.order_id,
+                location=self.runner_locations[runner_index],
+            )
+            # Place order into the selected runner's personal queue
+            self.runner_stores[runner_index].put(order)
 
     def _load_course_config(self) -> None:
         sim_cfg = load_simulation_config(self.course_dir)
@@ -411,27 +461,15 @@ class MultiRunnerDeliveryService:
             self.log_activity("service_opened", f"{runner_label} started shift", runner_id=runner_label, location="clubhouse")
 
         while True:
-            # Stop condition: after close and queue empty
-            if self.env.now > self.service_close_s and len(self.order_store.items) == 0:
+            # Stop condition: after close and personal queue empty
+            if self.env.now > self.service_close_s and len(self.runner_stores[runner_index].items) == 0:
                 self.log_activity("service_closed", f"{runner_label} shift ended", runner_id=runner_label, location=self.runner_locations[runner_index])
                 break
 
-            # Fetch next order or wait briefly
-            evt = self.order_store.get()
-            timeout_evt = self.env.timeout(30)
-            res = yield evt | timeout_evt
-            if timeout_evt in res:
-                continue
-            order: DeliveryOrder = res[evt]
+            # Wait for an order assigned to this runner
+            order: DeliveryOrder = yield self.runner_stores[runner_index].get()
 
-            # Discard orders that waited too long in the queue
-            placed_time = order.order_placed_time if order.order_placed_time is not None else self.env.now
-            if (self.env.now - placed_time) > 3600:
-                order.status = "failed"
-                order.failure_reason = "Exceeded 1-hour queue time before processing"
-                self.failed_orders.append(order)
-                self.log_activity("order_failed", f"{runner_label} dropping Order {order.order_id} after >1h wait", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
-                continue
+            # Process order regardless of wait time - no SLA timeout during processing
 
             # Process the order
             yield self.env.process(self._process_single_order(order, runner_index, runner_label))
@@ -463,26 +501,34 @@ class MultiRunnerDeliveryService:
         order.total_completion_time_s = order.delivered_time - placed_time
         return_time_s = self._calculate_return_time(self.runner_locations[runner_index])
         total_drive_time_s = delivery_time_s + return_time_s
-        self.log_activity("delivery_complete", f"{runner_label} delivered Order {order.order_id} to Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
-
-        order.status = "processed"
-        self.delivery_stats.append(
-            {
-                "order_id": order.order_id,
-                "golfer_group_id": order.golfer_group_id,
-                "hole_num": order.hole_num,
-                "order_time_s": order.order_time_s,
-                "queue_delay_s": order.queue_delay_s,
-                "prep_time_s": self.prep_time_s,
-                "delivery_time_s": delivery_time_s,
-                "return_time_s": return_time_s,
-                "total_drive_time_s": total_drive_time_s,
-                "delivery_distance_m": delivery_distance_m,
-                "total_completion_time_s": order.total_completion_time_s,
-                "delivered_at_time_s": order.delivered_time,
-                "runner_id": runner_label,
-            }
-        )
+        # Hard failure rule: if total completion exceeds 60 minutes, treat as failed
+        if order.total_completion_time_s > 3600:
+            order.status = "failed"
+            order.failure_reason = "Exceeded 1-hour SLA after processing"
+            self.failed_orders.append(order)
+            self.log_activity("delivery_failed_late", f"{runner_label} exceeded 60 minutes for Order {order.order_id} (Total: {order.total_completion_time_s/60:.1f} min). Marked failed.", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
+        else:
+            self.log_activity("delivery_complete", f"{runner_label} delivered Order {order.order_id} to Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
+            order.status = "processed"
+            self.delivery_stats.append(
+                {
+                    "order_id": order.order_id,
+                    "golfer_group_id": order.golfer_group_id,
+                    "hole_num": order.hole_num,
+                    "order_time_s": order.order_time_s,
+                    "queue_delay_s": order.queue_delay_s,
+                    "prep_time_s": self.prep_time_s,
+                    "delivery_time_s": delivery_time_s,
+                    "return_time_s": return_time_s,
+                    "total_drive_time_s": total_drive_time_s,
+                    "delivery_distance_m": delivery_distance_m,
+                    "total_completion_time_s": order.total_completion_time_s,
+                    "delivered_at_time_s": order.delivered_time,
+                    "runner_id": runner_label,
+                }
+            )
+        # Mark runner available for next assignment
+        self.runner_busy[runner_index] = False
 
     def _calculate_return_time(self, runner_location: str) -> float:
         if runner_location == "clubhouse":
@@ -512,7 +558,7 @@ class MultiRunnerDeliveryService:
         travel_time_s = distance_m / max(self.runner_speed_mps, 0.1)
         return distance_m, travel_time_s
 
-def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: float) -> List[DeliveryOrder]:
+def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: float, rng_seed: Optional[int] = None) -> List[DeliveryOrder]:
     """Generate delivery orders on a per-group, per-9-holes basis.
 
     Semantics:
@@ -521,8 +567,15 @@ def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: fl
     - The probability for each nine is `order_probability_per_9_holes`.
     - Order times are aligned to a random hole within the corresponding nine using ~12 min/hole pacing.
     - Number of golfers in a group is ignored for order generation.
+    
+    Parameters:
+    - rng_seed: Optional random seed for deterministic order generation (for exact replay)
     """
     import random
+    
+    # Seed the random number generator if provided
+    if rng_seed is not None:
+        random.seed(rng_seed)
 
     orders: List[DeliveryOrder] = []
     minutes_per_hole = 12
@@ -908,6 +961,7 @@ def run_multi_golfer_simulation(
     env: Optional[simpy.Environment] = None,
     output_dir: Optional[str] = None,
     create_visualization: bool = True,
+    rng_seed: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Run a simple multi-golfer simulation using a single runner queue.
@@ -946,7 +1000,7 @@ def run_multi_golfer_simulation(
     )
 
     # Generate synthetic orders based on groups and probabilities
-    orders = simulate_golfer_orders(groups, order_probability_per_9_holes)
+    orders = simulate_golfer_orders(groups, order_probability_per_9_holes, rng_seed=rng_seed)
 
     def order_arrival_process():  # simpy process
         last_time = simulation_env.now
@@ -1055,20 +1109,21 @@ def run_multi_golfer_simulation(
             logger.info("Created delivery visualization: %s", viz_path)
             results["visualization_path"] = str(viz_path)
             
-            # Create individual delivery visualizations
-            individual_paths = render_individual_delivery_plots(
-                results=results,
-                course_data=course_data,
-                clubhouse_coords=clubhouse_coords,
-                cart_graph=cart_graph,
-                output_dir=output_path,
-                filename_prefix="delivery_order",
-                style="detailed"
-            )
-            
-            if individual_paths:
-                logger.info("Created %d individual delivery visualizations", len(individual_paths))
-                results["individual_visualization_paths"] = [str(p) for p in individual_paths]
+            # Create individual delivery visualizations unless disabled
+            if not bool(getattr(results, "no_individual_plots", False)):
+                individual_paths = render_individual_delivery_plots(
+                    results=results,
+                    course_data=course_data,
+                    clubhouse_coords=clubhouse_coords,
+                    cart_graph=cart_graph,
+                    output_dir=output_path,
+                    filename_prefix="delivery_order",
+                    style="detailed"
+                )
+                
+                if individual_paths:
+                    logger.info("Created %d individual delivery visualizations", len(individual_paths))
+                    results["individual_visualization_paths"] = [str(p) for p in individual_paths]
             
         except Exception as e:
             logger.warning("Failed to create visualization: %s", e)

@@ -7,18 +7,26 @@ golf course features (holes, tees, greens), cart paths, and optionally nearby
 roads that can be used for delivery shortcuts.
 
 Usage:
-    Basic extraction:
+    Basic extraction (includes automatic geofenced hole generation):
         python scripts/extract_course_data.py --course "Pinetree Country Club" --clubhouse-lat 34.0379 --clubhouse-lon -84.5928
     
     With street data for delivery shortcuts:
         python scripts/extract_course_data.py --course "Pinetree Country Club" --clubhouse-lat 34.0379 --clubhouse-lon -84.5928 --include-streets --street-buffer 750 --course-buffer 100
+    
+    Skip automatic geofencing:
+        python scripts/extract_course_data.py --course "Pinetree Country Club" --clubhouse-lat 34.0379 --clubhouse-lon -84.5928 --skip-geofencing
+    
+    Custom geofencing parameters:
+        python scripts/extract_course_data.py --course "Pinetree Country Club" --clubhouse-lat 34.0379 --clubhouse-lon -84.5928 --geofence-step 15.0 --geofence-smooth 2.0
 
 Features:
     - Golf course polygon, holes, tees, greens from OpenStreetMap
     - Cart path network for on-course navigation
+    - Automatic geofenced hole polygon generation using Voronoi tessellation
     - Optional street network extraction for delivery shortcuts
     - Combined routing network that connects cart paths to nearby roads
     - Configurable buffer distance for street extraction
+    - Configurable geofencing parameters (step size, smoothing, point density)
 """
 import argparse
 import os
@@ -438,6 +446,12 @@ def main():
     parser.add_argument("--street-buffer", type=int, default=500, help="Search buffer distance in meters for street extraction (default: 500m)")
     parser.add_argument("--course-buffer", type=int, default=100, help="Filter buffer distance in meters - only keep streets within this distance of course boundary (default: 100m)")
     parser.add_argument("--no-combined-network", action="store_true", help="Skip creating combined cart path + street routing network")
+    
+    # Geofencing options
+    parser.add_argument("--skip-geofencing", action="store_true", help="Skip automatic generation of geofenced hole polygons")
+    parser.add_argument("--geofence-step", type=float, default=20.0, help="Densify step in meters along hole centerlines for geofencing (default: 20.0)")
+    parser.add_argument("--geofence-smooth", type=float, default=1.0, help="Boundary smoothing distance in meters for geofenced holes (default: 1.0)")
+    parser.add_argument("--geofence-max-points", type=int, default=300, help="Maximum seed points per hole for geofencing tessellation (default: 300)")
 
     parser.add_argument("--output-dir", default="courses/pinetree_country_club", help="Output directory for saved data")
     
@@ -496,29 +510,37 @@ def main():
         # Step 3: Save all data
         print(f"\n💾 Saving data to {args.output_dir}/...")
         save_course_data(data, args.output_dir)
-        # Auto-generate geofenced holes if both boundary and holes were saved
-        try:
-            geojson_dir = os.path.join(args.output_dir, "geojson")
-            boundary_path = os.path.join(geojson_dir, "course_polygon.geojson")
-            holes_path = os.path.join(geojson_dir, "holes.geojson")
-            if os.path.exists(boundary_path) and os.path.exists(holes_path):
-                generated_dir = os.path.join(geojson_dir, "generated")
-                os.makedirs(generated_dir, exist_ok=True)
-                out_path = os.path.join(generated_dir, "holes_geofenced.geojson")
-                logger.info("Generating geofenced holes...")
-                split_course_into_holes(
-                    course_polygon_path=boundary_path,
-                    hole_lines_path=holes_path,
-                    output_path=out_path,
-                    step_m=20.0,
-                    smooth_m=1.0,
-                    max_points_per_hole=300,
-                )
-                logger.info(f"Saved geofenced holes to {out_path}")
-            else:
-                logger.warning("Skipping geofenced holes: boundary or holes GeoJSON not found")
-        except Exception as ge:
-            logger.warning(f"Failed to create geofenced holes automatically: {ge}")
+        
+        # Auto-generate geofenced holes if enabled and both boundary and holes were saved
+        if not args.skip_geofencing:
+            try:
+                geojson_dir = os.path.join(args.output_dir, "geojson")
+                boundary_path = os.path.join(geojson_dir, "course_polygon.geojson")
+                holes_path = os.path.join(geojson_dir, "holes.geojson")
+                if os.path.exists(boundary_path) and os.path.exists(holes_path):
+                    print("\n⛳ Generating geofenced hole polygons...")
+                    generated_dir = os.path.join(geojson_dir, "generated")
+                    os.makedirs(generated_dir, exist_ok=True)
+                    out_path = os.path.join(generated_dir, "holes_geofenced.geojson")
+                    
+                    split_course_into_holes(
+                        course_polygon_path=boundary_path,
+                        hole_lines_path=holes_path,
+                        output_path=out_path,
+                        step_m=args.geofence_step,
+                        smooth_m=args.geofence_smooth,
+                        max_points_per_hole=args.geofence_max_points,
+                    )
+                    print(f"✓ Saved geofenced holes to {out_path}")
+                    logger.info(f"Generated geofenced holes with {args.geofence_step}m step, {args.geofence_smooth}m smoothing")
+                else:
+                    print("⊘ Skipping geofenced holes: boundary or holes GeoJSON not found")
+                    logger.warning("Skipping geofenced holes: boundary or holes GeoJSON not found")
+            except Exception as ge:
+                print(f"⚠ Failed to create geofenced holes automatically: {ge}")
+                logger.warning(f"Failed to create geofenced holes automatically: {ge}")
+        else:
+            print("⊘ Skipping geofenced holes generation (disabled via --skip-geofencing)")
         cart_paths_saved = save_cart_paths(cart_graph, args.output_dir)
         
         # Handle street data if included
@@ -540,11 +562,18 @@ def main():
         save_route_data(route_data, args.output_dir, save_hole_lines=False)
         save_simulation_config(args, args.output_dir)
         
-        print(f"\nData extraction complete!")
+        print(f"\n✅ Data extraction complete!")
         print(f"All files saved to: {os.path.abspath(args.output_dir)}")
         
+        # Check if geofenced holes were generated
+        geofenced_path = os.path.join(args.output_dir, "geojson", "generated", "holes_geofenced.geojson")
+        if not args.skip_geofencing and os.path.exists(geofenced_path):
+            print(f"📐 Geofenced hole polygons: {geofenced_path}")
+        elif args.skip_geofencing:
+            print("📐 Geofenced holes skipped (use --geofence-* options to customize)")
+        
         if not cart_paths_saved:
-            print("\n WARNING: No cart paths found. You may need to:")
+            print("\n⚠️ WARNING: No cart paths found. You may need to:")
             print("   - Use --broaden flag to include more path types")
             print("   - Provide a custom cart path GeoJSON file")
             print("   - Check if the course area has sufficient OSM data")

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import {useState, useEffect} from 'react';
+import {useState, useEffect, useRef} from 'react';
 import {Map, Source, Layer} from 'react-map-gl/mapbox';
 import type {LayerProps} from 'react-map-gl/mapbox';
 import Papa from 'papaparse';
@@ -25,6 +25,14 @@ interface EntityData {
   type: string;
 }
 
+type SmoothingData = {
+  times: number[];
+  lat: number[];
+  lng: number[];
+  dLat: number[];
+  dLng: number[];
+};
+
 // Removed unused CartPath interface
 
 interface MapStyle {
@@ -48,8 +56,7 @@ interface SimulationInfo {
 }
 
 interface SimulationManifest {
-  simulationGroups: { [groupName: string]: SimulationInfo[] };
-  defaultGroup: string;
+  simulations: SimulationInfo[];
   defaultSimulation: string;
 }
 
@@ -63,6 +70,11 @@ interface AppConfig {
     speedMultiplier: number;
     defaultMapStyle: string;
     startingHour?: number;
+    smoothing?: {
+      enabled: boolean;
+      easing: 'linear' | 'cubic' | 'quart' | 'sine' | 'adaptive';
+      frameRate?: number; // Target FPS for interpolation
+    };
   };
   mapStyles: { [key: string]: MapStyle };
   entityTypes: { [key: string]: EntityType };
@@ -109,14 +121,46 @@ const createPointLayer = (id: string, color: string, config?: AppConfig): LayerP
 
 // Removed unused layer functions since we're not showing paths or cart paths
 
+// Easing functions for smooth animation
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function easeOutQuart(t: number): number {
+  return 1 - Math.pow(1 - t, 4);
+}
+
+function easeInOutSine(t: number): number {
+  return -(Math.cos(Math.PI * t) - 1) / 2;
+}
+
 // Function to interpolate between two points for smooth animation
-function interpolatePoint(point1: Coordinate, point2: Coordinate, t: number): Coordinate {
+function interpolatePoint(point1: Coordinate, point2: Coordinate, t: number, easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic'): Coordinate {
+  // Apply easing function to smooth the movement
+  let easedT = t;
+  switch (easing) {
+    case 'cubic':
+      easedT = easeInOutCubic(t);
+      break;
+    case 'quart':
+      easedT = easeOutQuart(t);
+      break;
+    case 'sine':
+      easedT = easeInOutSine(t);
+      break;
+    case 'linear':
+    default:
+      easedT = t;
+      break;
+  }
+
   return {
     golfer_id: point1.golfer_id,
-    latitude: point1.latitude + (point2.latitude - point1.latitude) * t,
-    longitude: point1.longitude + (point2.longitude - point1.longitude) * t,
-    timestamp: point1.timestamp + (point2.timestamp - point1.timestamp) * t,
-    type: point1.type
+    latitude: point1.latitude + (point2.latitude - point1.latitude) * easedT,
+    longitude: point1.longitude + (point2.longitude - point1.longitude) * easedT,
+    timestamp: point1.timestamp + (point2.timestamp - point1.timestamp) * t, // Keep timestamp linear for accurate timing
+    type: point1.type,
+    current_hole: point1.current_hole // Preserve hole information
   };
 }
 
@@ -136,8 +180,8 @@ function timestampToTimeOfDay(timestamp: number, startingHour: number = 0): stri
   return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
-// Function to get current position along the path based on elapsed time
-function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number): Coordinate | null {
+// Function to get current position along the path based on elapsed time with smooth interpolation
+function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic'): Coordinate | null {
   if (coordinates.length === 0) {
     return null;
   }
@@ -152,10 +196,10 @@ function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number): Coor
     const next = coordinates[i + 1];
     
     if (elapsedTime >= current.timestamp && elapsedTime <= next.timestamp) {
-      // Interpolate between current and next point
+      // Interpolate between current and next point with easing
       const segmentDuration = next.timestamp - current.timestamp;
       const segmentProgress = segmentDuration > 0 ? (elapsedTime - current.timestamp) / segmentDuration : 0;
-      return interpolatePoint(current, next, segmentProgress);
+      return interpolatePoint(current, next, segmentProgress, easing);
     }
   }
   
@@ -166,6 +210,94 @@ function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number): Coor
   
   // If we're before the first timestamp, return null (golfer hasn't started)
   return null;
+}
+
+// Function to calculate velocity between two points for adaptive smoothing
+function calculateVelocity(point1: Coordinate, point2: Coordinate): number {
+  const timeDiff = point2.timestamp - point1.timestamp;
+  if (timeDiff <= 0) return 0;
+  
+  // Calculate distance using Haversine formula for more accurate distance
+  const lat1 = point1.latitude * Math.PI / 180;
+  const lat2 = point2.latitude * Math.PI / 180;
+  const deltaLat = (point2.latitude - point1.latitude) * Math.PI / 180;
+  const deltaLng = (point2.longitude - point1.longitude) * Math.PI / 180;
+  
+  const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+            Math.cos(lat1) * Math.cos(lat2) *
+            Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const distance = 6371000 * c; // Earth's radius in meters
+  
+  return distance / timeDiff; // meters per second
+}
+
+// Function to get adaptive easing based on velocity
+function getAdaptiveEasing(velocity: number): 'linear' | 'cubic' | 'quart' | 'sine' {
+  // Use different easing based on velocity
+  if (velocity > 10) return 'linear'; // Fast movement - linear for accuracy
+  if (velocity > 5) return 'cubic';   // Medium movement - smooth cubic
+  if (velocity > 1) return 'quart';   // Slow movement - gentle quart
+  return 'sine';                      // Very slow movement - smooth sine
+}
+
+// Compute monotone piecewise cubic Hermite (PCHIP-like) tangents
+function computePchipTangents(values: number[], times: number[]): number[] {
+  const n = values.length;
+  if (n <= 2) {
+    const s = n === 2 ? (values[1] - values[0]) / Math.max(1e-9, (times[1] - times[0])) : 0;
+    return n === 2 ? [s, s] : [0];
+  }
+  const h: number[] = new Array(n - 1);
+  const slopes: number[] = new Array(n - 1);
+  for (let i = 0; i < n - 1; i++) {
+    h[i] = Math.max(1e-9, times[i + 1] - times[i]);
+    slopes[i] = (values[i + 1] - values[i]) / h[i];
+  }
+  const m: number[] = new Array(n);
+  m[0] = slopes[0];
+  m[n - 1] = slopes[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    if (slopes[i - 1] * slopes[i] <= 0) {
+      m[i] = 0;
+    } else {
+      const w1 = 2 * h[i] + h[i - 1];
+      const w2 = h[i] + 2 * h[i - 1];
+      m[i] = (w1 + w2) / (w1 / slopes[i - 1] + w2 / slopes[i]);
+    }
+  }
+  return m;
+}
+
+function hermiteInterpolate(v0: number, v1: number, m0: number, m1: number, h: number, s: number): number {
+  const s2 = s * s;
+  const s3 = s2 * s;
+  const h00 = 2 * s3 - 3 * s2 + 1;
+  const h10 = s3 - 2 * s2 + s;
+  const h01 = -2 * s3 + 3 * s2;
+  const h11 = s3 - s2;
+  return h00 * v0 + h10 * h * m0 + h01 * v1 + h11 * h * m1;
+}
+
+function getPchipPosition(data: SmoothingData, time: number): { lat: number; lng: number } | null {
+  const times = data.times;
+  const n = times.length;
+  if (n === 0) return null;
+  if (n === 1) return { lat: data.lat[0], lng: data.lng[0] };
+  if (time <= times[0]) return { lat: data.lat[0], lng: data.lng[0] };
+  if (time >= times[n - 1]) return { lat: data.lat[n - 1], lng: data.lng[n - 1] };
+  // Find segment index
+  let i = 0;
+  for (; i < n - 1; i++) {
+    if (time <= times[i + 1]) break;
+  }
+  const t0 = times[i];
+  const t1 = times[i + 1];
+  const h = Math.max(1e-9, t1 - t0);
+  const s = (time - t0) / h;
+  const lat = hermiteInterpolate(data.lat[i], data.lat[i + 1], data.dLat[i], data.dLat[i + 1], h, s);
+  const lng = hermiteInterpolate(data.lng[i], data.lng[i + 1], data.dLng[i], data.dLng[i + 1], h, s);
+  return { lat, lng };
 }
 
 // Function to calculate bounding box and appropriate zoom from coordinates
@@ -218,13 +350,11 @@ function ControlPanel({
   config,
   currentMapStyle,
   onMapStyleChange,
-  simulationGroups,
-  currentGroup,
-  onGroupChange,
   simulations,
   currentSimulation,
   onSimulationChange,
-  isLoadingSimulations
+  isLoadingSimulations,
+  onSmoothingChange
 }: {
   trackersData: EntityData[];
   isLoading: boolean;
@@ -236,13 +366,11 @@ function ControlPanel({
   config: AppConfig;
   currentMapStyle: string;
   onMapStyleChange: (style: string) => void;
-  simulationGroups: { [groupName: string]: SimulationInfo[] };
-  currentGroup: string;
-  onGroupChange: (groupName: string) => void;
   simulations: SimulationInfo[];
   currentSimulation: string;
   onSimulationChange: (simulationId: string) => void;
   isLoadingSimulations: boolean;
+  onSmoothingChange?: (smoothing: { enabled: boolean; easing: 'linear' | 'cubic' | 'quart' | 'sine' | 'adaptive' }) => void;
 }) {
   const totalWaypoints = trackersData.reduce((sum, tracker) => sum + tracker.coordinates.length, 0);
   
@@ -282,31 +410,7 @@ function ControlPanel({
 
           <div style={{ marginBottom: 12 }}>
             <label style={{ fontSize: 12, fontWeight: 'bold', display: 'block', marginBottom: 4 }}>
-              Simulation Group:
-            </label>
-            <select 
-              value={currentGroup} 
-              onChange={(e) => onGroupChange(e.target.value)}
-              disabled={isLoadingSimulations}
-              style={{ 
-                fontSize: 11, 
-                padding: '2px 4px', 
-                width: '100%',
-                border: '1px solid #ccc',
-                borderRadius: 2,
-                backgroundColor: isLoadingSimulations ? '#f5f5f5' : 'white',
-                marginBottom: 8
-              }}
-            >
-              {Object.keys(simulationGroups).map((groupName) => (
-                <option key={groupName} value={groupName}>
-                  {groupName} ({simulationGroups[groupName].length} sims)
-                </option>
-              ))}
-            </select>
-            
-            <label style={{ fontSize: 12, fontWeight: 'bold', display: 'block', marginBottom: 4 }}>
-              Specific Simulation:
+              Simulation:
             </label>
             <select 
               value={currentSimulation} 
@@ -370,6 +474,60 @@ function ControlPanel({
               {config.mapStyles[currentMapStyle]?.description}
             </div>
           </div>
+
+          {onSmoothingChange && (
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 'bold', display: 'block', marginBottom: 4 }}>
+                Movement Smoothing:
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={config.animation.smoothing?.enabled ?? true}
+                  onChange={(e) => onSmoothingChange({
+                    enabled: e.target.checked,
+                    easing: config.animation.smoothing?.easing ?? 'adaptive'
+                  })}
+                  style={{ margin: 0 }}
+                />
+                <span style={{ fontSize: 11 }}>Enable Smoothing</span>
+              </div>
+              {config.animation.smoothing?.enabled && (
+                <select 
+                  value={config.animation.smoothing?.easing ?? 'adaptive'}
+                  onChange={(e) => onSmoothingChange({
+                    enabled: true,
+                    easing: e.target.value as 'linear' | 'cubic' | 'quart' | 'sine' | 'adaptive'
+                  })}
+                  style={{ 
+                    fontSize: 11, 
+                    padding: '2px 4px', 
+                    width: '100%',
+                    border: '1px solid #ccc',
+                    borderRadius: 2
+                  }}
+                >
+                  <option value="adaptive">Adaptive (Recommended)</option>
+                  <option value="cubic">Cubic (Smooth)</option>
+                  <option value="sine">Sine (Gentle)</option>
+                  <option value="quart">Quart (Moderate)</option>
+                  <option value="linear">Linear (Precise)</option>
+                </select>
+              )}
+              <div style={{ fontSize: 10, color: '#666', marginTop: 4, fontStyle: 'italic' }}>
+                {config.animation.smoothing?.easing === 'adaptive' 
+                  ? 'Automatically adjusts based on movement speed'
+                  : config.animation.smoothing?.easing === 'cubic'
+                  ? 'Smooth acceleration and deceleration'
+                  : config.animation.smoothing?.easing === 'sine'
+                  ? 'Very gentle, natural movement'
+                  : config.animation.smoothing?.easing === 'quart'
+                  ? 'Moderate smoothing with slight easing'
+                  : 'Precise linear movement between points'
+                }
+              </div>
+            </div>
+          )}
           
           {trackersData.map((tracker) => {
             const position = trackerPositions[tracker.name];
@@ -440,7 +598,12 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   animation: {
     speedMultiplier: 250,
-    defaultMapStyle: 'satellite-streets'
+    defaultMapStyle: 'satellite-streets',
+    smoothing: {
+      enabled: true,
+      easing: 'adaptive',
+      frameRate: 60
+    }
   },
   mapStyles: {
     'satellite-streets': {
@@ -474,9 +637,14 @@ export default function App() {
   const [originalMinTimestamp, setOriginalMinTimestamp] = useState<number>(0);
   const [animationStartTime, setAnimationStartTime] = useState<number | null>(null);
   
+  // Map and animation refs (to avoid per-frame React re-renders)
+  const mapRef = useRef<any>(null);
+  const sourcesCacheRef = useRef<{ [sourceId: string]: any }>({});
+  const lastUiUpdateRef = useRef<number>(0);
+  const uiUpdateIntervalMs = 200; // throttle UI updates to 5 fps
+  const smoothingCacheRef = useRef<{ [name: string]: SmoothingData }>({});
+  
   // Simulation-related state
-  const [simulationGroups, setSimulationGroups] = useState<{ [groupName: string]: SimulationInfo[] }>({});
-  const [currentGroup, setCurrentGroup] = useState<string>('');
   const [simulations, setSimulations] = useState<SimulationInfo[]>([]);
   const [currentSimulation, setCurrentSimulation] = useState<string>('');
   const [isLoadingSimulations, setIsLoadingSimulations] = useState(true);
@@ -509,58 +677,43 @@ export default function App() {
         const response = await fetch(`${config.data.coordinatesDir}/manifest.json${cacheBuster}`);
         if (response.ok) {
           const manifest: SimulationManifest = await response.json();
-          setSimulationGroups(manifest.simulationGroups);
-          
-          // Find first valid group (skip "Local" if it has non-existent files)
-          const availableGroups = Object.keys(manifest.simulationGroups);
-          let defaultGroup = manifest.defaultGroup;
-          
-          // If the default group is "Local", prefer the first non-Local group
-          if (defaultGroup === 'Local' && availableGroups.length > 1) {
-            defaultGroup = availableGroups.find(group => group !== 'Local') || defaultGroup;
-          }
-          
-          setCurrentGroup(defaultGroup);
-          
-          // Set current simulations based on chosen default group
-          if (manifest.simulationGroups[defaultGroup]) {
-            setSimulations(manifest.simulationGroups[defaultGroup]);
-            // Set first simulation in the group as current
-            const firstSim = manifest.simulationGroups[defaultGroup][0];
-            if (firstSim) {
-              setCurrentSimulation(firstSim.id);
-            }
+
+          setSimulations(manifest.simulations);
+
+          // Prefer defaultSimulation if provided and present; otherwise first simulation
+          const defaultId = manifest.defaultSimulation;
+          const hasDefault = defaultId && manifest.simulations.some(s => s.id === defaultId);
+          if (hasDefault) {
+            setCurrentSimulation(defaultId);
+          } else if (manifest.simulations.length > 0) {
+            setCurrentSimulation(manifest.simulations[0].id);
           } else {
-            setCurrentSimulation(manifest.defaultSimulation);
+            setCurrentSimulation('');
           }
-          console.log(`Hierarchical simulation manifest loaded successfully. Using group: ${defaultGroup}`);
+          console.log(`Simulation manifest loaded successfully. Found ${manifest.simulations.length} simulations.`);
         } else {
           // Fallback to single file mode
           console.log('No simulation manifest found, using single file mode');
-          const fallbackGroup = { 'Local': [{
+          const fallbackSimulations = [{
             id: 'default',
             name: 'Default Simulation',
             filename: 'golfer_coordinates.csv',
             description: 'Single simulation file'
-          }] };
-          setSimulationGroups(fallbackGroup);
-          setCurrentGroup('Local');
-          setSimulations(fallbackGroup['Local']);
+          }];
+          setSimulations(fallbackSimulations);
           setCurrentSimulation('default');
         }
         setIsLoadingSimulations(false);
       } catch (error) {
         console.error('Error loading simulations, using fallback:', error);
         // Fallback to single file mode
-        const fallbackGroup = { 'Local': [{
+        const fallbackSimulations = [{
           id: 'default',
           name: 'Default Simulation',
           filename: 'golfer_coordinates.csv',
           description: 'Single simulation file'
-        }] };
-        setSimulationGroups(fallbackGroup);
-        setCurrentGroup('Local');
-        setSimulations(fallbackGroup['Local']);
+        }];
+        setSimulations(fallbackSimulations);
         setCurrentSimulation('default');
         setIsLoadingSimulations(false);
       }
@@ -673,6 +826,18 @@ export default function App() {
             });
             
             setTrackersData(trackersArray);
+
+            // Precompute PCHIP smoothing data per tracker for perfectly smooth motion
+            const newSmoothingCache: { [name: string]: SmoothingData } = {};
+            for (const tracker of trackersArray) {
+              const times = tracker.coordinates.map(c => c.timestamp);
+              const lat = tracker.coordinates.map(c => c.latitude);
+              const lng = tracker.coordinates.map(c => c.longitude);
+              const dLat = computePchipTangents(lat, times);
+              const dLng = computePchipTangents(lng, times);
+              newSmoothingCache[tracker.name] = { times, lat, lng, dLat, dLng };
+            }
+            smoothingCacheRef.current = newSmoothingCache;
             
             // Calculate bounds from all coordinates
             const bounds = calculateBounds(trackersArray);
@@ -712,21 +877,78 @@ export default function App() {
       const currentTime = Date.now();
       const realElapsed = (currentTime - animationStartTime) / 1000; // Real seconds elapsed
       const simulatedElapsed = realElapsed * config.animation.speedMultiplier;
-      setElapsedTime(Math.floor(simulatedElapsed));
       
-      // Calculate current time of day based on original timestamps
-      const currentTimestamp = originalMinTimestamp + simulatedElapsed;
-      setCurrentTimeOfDay(timestampToTimeOfDay(currentTimestamp, config.animation.startingHour || 0));
-      
-      // Calculate positions for all trackers
+      // Imperatively update map sources for per-frame smoothness
+      const map = mapRef.current?.getMap?.();
       const newPositions: { [key: string]: Coordinate | null } = {};
       
       trackersData.forEach((tracker) => {
-        const position = getPositionOnPath(tracker.coordinates, simulatedElapsed);
+        // Determine easing type based on configuration
+        let easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic';
+        
+        if (config.animation.smoothing?.enabled) {
+          if (config.animation.smoothing.easing === 'adaptive') {
+            // Find current segment for velocity calculation
+            for (let i = 0; i < tracker.coordinates.length - 1; i++) {
+              const current = tracker.coordinates[i];
+              const next = tracker.coordinates[i + 1];
+              
+              if (simulatedElapsed >= current.timestamp && simulatedElapsed <= next.timestamp) {
+                const velocity = calculateVelocity(current, next);
+                easing = getAdaptiveEasing(velocity);
+                break;
+              }
+            }
+          } else {
+            easing = config.animation.smoothing.easing;
+          }
+        }
+        
+        let position = getPositionOnPath(tracker.coordinates, simulatedElapsed, easing);
+        
+        // If smoothing is enabled, override with PCHIP-interpolated position for perfectly smooth motion
+        if (config.animation.smoothing?.enabled) {
+          const data = smoothingCacheRef.current[tracker.name];
+          if (data) {
+            const p = getPchipPosition(data, simulatedElapsed);
+            if (p) {
+              position = {
+                golfer_id: tracker.name,
+                latitude: p.lat,
+                longitude: p.lng,
+                timestamp: simulatedElapsed,
+                type: tracker.type,
+                current_hole: undefined
+              };
+            }
+          }
+        }
         newPositions[tracker.name] = position;
+        
+        // Update underlying Mapbox source directly
+        if (map && position) {
+          const sourceId = `tracker-${tracker.name}`;
+          const src: any = map.getSource(sourceId);
+          if (src && typeof src.setData === 'function') {
+            src.setData({
+              type: 'Feature',
+              geometry: {
+                type: 'Point',
+                coordinates: [position.longitude, position.latitude]
+              }
+            });
+          }
+        }
       });
       
-      setTrackerPositions(newPositions);
+      // Throttle UI state updates to reduce React re-render frequency
+      if (!lastUiUpdateRef.current || (currentTime - lastUiUpdateRef.current) >= uiUpdateIntervalMs) {
+        lastUiUpdateRef.current = currentTime;
+        setTrackerPositions(newPositions);
+        setElapsedTime(Math.floor(simulatedElapsed));
+        const currentTimestamp = originalMinTimestamp + simulatedElapsed;
+        setCurrentTimeOfDay(timestampToTimeOfDay(currentTimestamp, config.animation.startingHour || 0));
+      }
       
       // Continue the animation loop
       requestAnimationFrame(animate);
@@ -736,23 +958,27 @@ export default function App() {
     return () => cancelAnimationFrame(animationId);
   }, [isLoading, trackersData, animationStartTime, config, originalMinTimestamp]);
 
-  // Handle group change
-  const handleGroupChange = (groupName: string) => {
-    setCurrentGroup(groupName);
-    const groupSimulations = simulationGroups[groupName] || [];
-    setSimulations(groupSimulations);
-    
-    // Set first simulation in the group as current
-    if (groupSimulations.length > 0) {
-      setCurrentSimulation(groupSimulations[0].id);
-    }
-    console.log(`Switching to group: ${groupName}`);
-  };
+  // Handle group change - removed since we no longer have groups
 
   // Handle simulation change
   const handleSimulationChange = (simulationId: string) => {
     setCurrentSimulation(simulationId);
     console.log(`Switching to simulation: ${simulationId}`);
+  };
+
+  // Handle smoothing change
+  const handleSmoothingChange = (smoothing: { enabled: boolean; easing: 'linear' | 'cubic' | 'quart' | 'sine' | 'adaptive' }) => {
+    setConfig(prevConfig => ({
+      ...prevConfig,
+      animation: {
+        ...prevConfig.animation,
+        smoothing: {
+          ...prevConfig.animation.smoothing,
+          ...smoothing
+        }
+      }
+    }));
+    console.log(`Smoothing updated:`, smoothing);
   };
 
   // Calculate initial viewport based on the path bounds
@@ -810,6 +1036,7 @@ export default function App() {
   return (
     <div style={{ width: '100vw', height: '100vh' }}>
       <Map
+        ref={mapRef}
         initialViewState={getInitialViewState()}
         mapStyle={(config.mapStyles[currentMapStyle]?.url) || (config.mapStyles[config.animation.defaultMapStyle]?.url)}
         mapboxAccessToken={MAPBOX_TOKEN}
@@ -821,13 +1048,17 @@ export default function App() {
         
         {/* Animated points for each tracker */}
         {trackersData.map((tracker) => {
-          const position = trackerPositions[tracker.name];
-          if (!position) return null;
-          
+          // Initialize each source once; data will be updated imperatively per frame
+          const initial = tracker.coordinates[0] || null;
+          if (!initial) return null;
           return (
-            <Source key={`tracker-${tracker.name}`} type="geojson" data={{
-              type: 'Point',
-              coordinates: [position.longitude, position.latitude]
+            <Source key={`tracker-${tracker.name}`} id={`tracker-${tracker.name}`} type="geojson" data={{
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'Point',
+                coordinates: [initial.longitude, initial.latitude]
+              }
             }}>
               <Layer {...createPointLayer(`tracker-${tracker.name}`, tracker.color, config)} />
             </Source>
@@ -846,13 +1077,11 @@ export default function App() {
         config={config}
         currentMapStyle={currentMapStyle}
         onMapStyleChange={setCurrentMapStyle}
-        simulationGroups={simulationGroups}
-        currentGroup={currentGroup}
-        onGroupChange={handleGroupChange}
         simulations={simulations}
         currentSimulation={currentSimulation}
         onSimulationChange={handleSimulationChange}
         isLoadingSimulations={isLoadingSimulations}
+        onSmoothingChange={handleSmoothingChange}
       />
     </div>
   );

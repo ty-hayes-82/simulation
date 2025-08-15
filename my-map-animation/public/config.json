@@ -7,7 +7,12 @@
   "animation": {
     "speedMultiplier": 250,
     "defaultMapStyle": "outdoors",
-    "startingHour": 9
+    "startingHour": 9,
+    "smoothing": {
+      "enabled": true,
+      "easing": "adaptive",
+      "frameRate": 60
+    }
   },
   "mapStyles": {
     "satellite-streets": {

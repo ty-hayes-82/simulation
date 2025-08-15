@@ -732,9 +732,28 @@ def setup_plot_styling(ax, results: Dict, course_name: str, clubhouse_coords: Tu
 
     # Handle single delivery simulation results
     if results.get("simulation_type") == "improved_single":
-        service_time_min = results.get('total_service_time_s', 0) / 60
-        distance_m = results.get('delivery_distance_m', 0)
-        title += f'\n1 Order Delivered | Service Time: {service_time_min:.1f} min | Distance: {distance_m:.0f}m'
+        service_time_min = float(results.get('total_service_time_s', 0) or 0) / 60.0
+        distance_m = float(results.get('delivery_distance_m', 0) or 0)
+        # Break out time components for the header
+        prep_min = float(results.get('prep_time_s', 0) or 0) / 60.0
+        delay_min = float(results.get('runner_busy_delay_s', 0.0) or 0.0) / 60.0
+        # Show drive time to golfer only (not out+back)
+        drive_time_s = 0.0
+        if isinstance(results.get('trip_to_golfer'), dict):
+            drive_time_s = float(results['trip_to_golfer'].get('time_s', 0) or 0)
+        elif isinstance(results.get('delivery_travel_time_s'), (int, float)):
+            # Fallback: if only aggregate is present, show half as an approximation
+            drive_time_s = float(results.get('delivery_travel_time_s', 0.0)) / 2.0
+        drive_min = float(drive_time_s) / 60.0
+
+        title += (
+            "\n1 Order Delivered | "
+            f"Prep: {prep_min:.1f} min | "
+            f"Delay: {delay_min:.1f} min | "
+            f"Drive: {drive_min:.1f} min | "
+            f"Total: {service_time_min:.1f} min | "
+            f"Distance: {distance_m:.0f}m"
+        )
     # Handle multi-order simulation results from run_unified_simulation
     elif 'orders' in results and 'delivery_stats' in results:
         orders = results.get('orders', [])

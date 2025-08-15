@@ -98,9 +98,11 @@ def test_calculate_runner_utilization():
     
     utilization = _calculate_runner_utilization(activity_log, service_hours)
     
-    # Check that percentages sum to approximately 100%
-    total_pct = sum(utilization.values())
-    assert abs(total_pct - 100.0) < 1.0  # Allow small rounding differences
+    # Check that percentages are valid (may not sum to 100% since we only track driving and waiting)
+    assert utilization['driving'] >= 0
+    assert utilization['waiting'] >= 0
+    assert 'handoff' not in utilization
+    assert 'deadhead' not in utilization
     
     # Check that driving time is calculated correctly
     expected_driving_pct = (1800 / service_seconds) * 100
@@ -267,18 +269,21 @@ def test_calculate_delivery_runner_metrics_basic():
     assert metrics.total_rounds == 2
     assert metrics.total_revenue == 50.0  # 2 orders * $25
     assert metrics.revenue_per_round == 25.0  # $50 / 2 rounds
-    assert metrics.order_penetration_rate == 1.0  # 2 orders / 2 rounds
-    assert metrics.average_order_value == 25.0  # $50 / 2 orders
+    # order_penetration_rate removed - calculate manually if needed
+    order_penetration_rate = metrics.total_orders / max(metrics.total_rounds, 1)
+    assert order_penetration_rate == 1.0  # 2 orders / 2 rounds
+    # average_order_value removed - calculate manually if needed
+    average_order_value = metrics.total_revenue / max(metrics.successful_orders, 1)
+    assert average_order_value == 25.0  # $50 / 2 orders
     assert metrics.orders_per_runner_hour == 0.2  # 2 orders / 10 hours
     assert metrics.failed_rate == 0.0  # 0 failed / 2 total
     
     # Check service quality metrics
     # Note: The test data has completion times of 45 and 50 minutes, which exceed the 30-minute SLA
     assert metrics.on_time_rate == 0.0  # Both orders exceed 30 min SLA
-    assert abs(metrics.delivery_cycle_time_p50 - 47.5) < 0.1  # Median of 45 and 50 min
+    # delivery_cycle_time_p50, dispatch_delay_avg, travel_time_avg removed
     assert abs(metrics.delivery_cycle_time_p90 - 50.0) < 0.1  # 90th percentile (max of 45 and 50)
-    assert abs(metrics.dispatch_delay_avg - 2.5) < 0.1  # Average of 5 and 0 min
-    assert abs(metrics.travel_time_avg - 17.5) < 0.1  # Average of 15 and 20 min
+    assert abs(metrics.delivery_cycle_time_avg - 47.5) < 0.1  # Average of 45 and 50 min
     
     # Check distance metrics
     assert abs(metrics.distance_per_delivery_avg - 1000) < 0.1  # Average of 800 and 1200m
@@ -309,8 +314,12 @@ def test_calculate_delivery_runner_metrics_no_orders():
     assert metrics.failed_orders == 0
     assert metrics.total_revenue == 0.0
     assert metrics.revenue_per_round == 0.0
-    assert metrics.order_penetration_rate == 0.0
-    assert metrics.average_order_value == 0.0
+    # order_penetration_rate removed - calculate manually if needed
+    order_penetration_rate = metrics.total_orders / max(metrics.total_rounds, 1)
+    assert order_penetration_rate == 0.0
+    # average_order_value removed - calculate manually if needed
+    average_order_value = metrics.total_revenue / max(metrics.successful_orders, 1) if metrics.successful_orders > 0 else 0.0
+    assert average_order_value == 0.0
     assert metrics.orders_per_runner_hour == 0.0
     assert metrics.failed_rate == 0.0
     assert metrics.on_time_rate == 0.0
@@ -321,24 +330,16 @@ def test_summarize_delivery_runner_metrics():
     # Create sample metrics
     metrics1 = DeliveryRunnerMetrics(
         revenue_per_round=20.0,
-        order_penetration_rate=0.8,
-        average_order_value=25.0,
         orders_per_runner_hour=0.3,
         on_time_rate=0.9,
-        delivery_cycle_time_p50=20.0,
         delivery_cycle_time_p90=30.0,
-        dispatch_delay_avg=2.0,
-        travel_time_avg=15.0,
+        delivery_cycle_time_avg=25.0,
         failed_rate=0.1,
+        second_runner_break_even_orders=5.0,
+        queue_wait_avg=15.0,
         runner_utilization_driving_pct=40.0,
         runner_utilization_waiting_pct=30.0,
-        runner_utilization_handoff_pct=20.0,
-        runner_utilization_deadhead_pct=10.0,
         distance_per_delivery_avg=1000.0,
-        queue_depth_avg=2.0,
-        queue_wait_avg=15.0,
-        capacity_15min_window=3,
-        second_runner_break_even_orders=5.0,
         zone_service_times={'hole_5': 22.0, 'hole_8': 28.0},
         total_revenue=100.0,
         total_orders=4,
@@ -352,24 +353,16 @@ def test_summarize_delivery_runner_metrics():
     
     metrics2 = DeliveryRunnerMetrics(
         revenue_per_round=30.0,
-        order_penetration_rate=1.2,
-        average_order_value=30.0,
         orders_per_runner_hour=0.4,
         on_time_rate=0.8,
-        delivery_cycle_time_p50=25.0,
         delivery_cycle_time_p90=35.0,
-        dispatch_delay_avg=3.0,
-        travel_time_avg=18.0,
+        delivery_cycle_time_avg=30.0,
         failed_rate=0.2,
+        second_runner_break_even_orders=6.0,
+        queue_wait_avg=20.0,
         runner_utilization_driving_pct=45.0,
         runner_utilization_waiting_pct=25.0,
-        runner_utilization_handoff_pct=25.0,
-        runner_utilization_deadhead_pct=5.0,
         distance_per_delivery_avg=1200.0,
-        queue_depth_avg=3.0,
-        queue_wait_avg=20.0,
-        capacity_15min_window=4,
-        second_runner_break_even_orders=6.0,
         zone_service_times={'hole_5': 25.0, 'hole_12': 32.0},
         total_revenue=150.0,
         total_orders=5,
@@ -388,9 +381,7 @@ def test_summarize_delivery_runner_metrics():
     assert summaries['revenue_per_round']['min'] == 20.0
     assert summaries['revenue_per_round']['max'] == 30.0
     
-    assert summaries['order_penetration_rate']['mean'] == 1.0  # (0.8+1.2)/2
-    assert summaries['order_penetration_rate']['min'] == 0.8
-    assert summaries['order_penetration_rate']['max'] == 1.2
+    # order_penetration_rate removed from summaries
     
     assert summaries['total_revenue'] == 250.0  # 100+150
     assert summaries['total_orders'] == 9  # 4+5

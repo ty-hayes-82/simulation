@@ -1,5 +1,11 @@
 {
-  "simulationGroups": {},
-  "defaultGroup": null,
-  "defaultSimulation": null
+  "simulations": [
+    {
+      "id": "test_config_update_sim_01_coordinates",
+      "name": "Other Simulations: test_config_update | SIM_01 | GPS Coordinates",
+      "filename": "test_config_update_sim_01_coordinates.csv",
+      "description": "8,731 coordinate points"
+    }
+  ],
+  "defaultSimulation": "test_config_update_sim_01_coordinates"
 }

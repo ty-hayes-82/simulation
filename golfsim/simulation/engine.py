@@ -43,6 +43,115 @@ def _interpolate_along_linestring(line: LineString, fraction: float) -> Tuple[fl
     return (pt.x, pt.y)
 
 
+def _interpolate_between_points(point1: Tuple[float, float], point2: Tuple[float, float], fraction: float) -> Tuple[float, float]:
+    """Interpolate between two (lon, lat) points."""
+    if fraction <= 0:
+        return point1
+    if fraction >= 1:
+        return point2
+    
+    lon1, lat1 = point1
+    lon2, lat2 = point2
+    
+    interpolated_lon = lon1 + (lon2 - lon1) * fraction
+    interpolated_lat = lat1 + (lat2 - lat1) * fraction
+    
+    return (interpolated_lon, interpolated_lat)
+
+
+def _generate_smooth_runner_coordinates(
+    start_coord: Tuple[float, float],
+    end_coord: Tuple[float, float], 
+    start_time: int,
+    travel_time_s: float,
+    runner_coordinates: List[Dict],
+    runner_id: str = 'runner_1',
+    coordinate_interval_s: int = 1
+) -> None:
+    """
+    Generate smooth GPS coordinates for runner movement between two points.
+    
+    Args:
+        start_coord: Starting (lon, lat) coordinates
+        end_coord: Ending (lon, lat) coordinates  
+        start_time: Simulation time when movement starts
+        travel_time_s: Total travel time in seconds
+        runner_coordinates: List to append coordinates to
+        runner_id: Runner identifier
+        coordinate_interval_s: Interval between GPS points (default 1 second for smooth animation)
+    """
+    if travel_time_s <= 0:
+        return
+    
+    # Generate coordinates at regular intervals
+    num_intervals = max(1, int(travel_time_s / coordinate_interval_s))
+    
+    for i in range(num_intervals + 1):  # +1 to include end point
+        fraction = i / num_intervals if num_intervals > 0 else 0
+        lon, lat = _interpolate_between_points(start_coord, end_coord, fraction)
+        
+        timestamp = start_time + int(i * coordinate_interval_s)
+        
+        runner_coordinates.append({
+            'golfer_id': runner_id,
+            'latitude': lat,
+            'longitude': lon,
+            'timestamp': timestamp,
+            'type': 'delivery-runner',
+        })
+
+
+def _generate_smooth_runner_path_coordinates(
+    nodes: List[int],
+    cart_graph: nx.Graph,
+    start_time: int,
+    total_travel_time_s: float,
+    runner_coordinates: List[Dict],
+    runner_id: str = 'runner_1',
+    coordinate_interval_s: int = 1
+) -> None:
+    """
+    Generate smooth GPS coordinates for runner movement along a path of nodes.
+    
+    Args:
+        nodes: List of node IDs in the path
+        cart_graph: NetworkX graph with node coordinates
+        start_time: Simulation time when movement starts
+        total_travel_time_s: Total travel time in seconds
+        runner_coordinates: List to append coordinates to
+        runner_id: Runner identifier
+        coordinate_interval_s: Interval between GPS points (default 1 second for smooth animation)
+    """
+    if len(nodes) < 2:
+        return
+    
+    # Calculate time per segment
+    num_segments = len(nodes) - 1
+    time_per_segment = total_travel_time_s / num_segments
+    
+    current_time = start_time
+    
+    for i in range(num_segments):
+        start_node = nodes[i]
+        end_node = nodes[i + 1]
+        
+        start_coord = (cart_graph.nodes[start_node]['x'], cart_graph.nodes[start_node]['y'])
+        end_coord = (cart_graph.nodes[end_node]['x'], cart_graph.nodes[end_node]['y'])
+        
+        # Generate smooth coordinates for this segment
+        _generate_smooth_runner_coordinates(
+            start_coord=start_coord,
+            end_coord=end_coord,
+            start_time=current_time,
+            travel_time_s=time_per_segment,
+            runner_coordinates=runner_coordinates,
+            runner_id=runner_id,
+            coordinate_interval_s=coordinate_interval_s
+        )
+        
+        current_time += int(time_per_segment)
+
+
 def _gcd_list(values: List[int]) -> int:
     """Return the GCD of a list of positive integers, defaulting to 1."""
     vals = [abs(int(v)) for v in values if int(v) != 0]
@@ -867,6 +976,11 @@ def predict_optimal_delivery_location(
     runner_speed_mps: float = 6.0,
     order_time_s: float = 0,
     clubhouse_lonlat: Tuple[float, float] = None,
+    minutes_per_hole: float = 12.0,
+    minutes_between_holes: float = 2.0,
+    per_hole_minutes_list: Optional[List[int]] = None,
+    per_transfer_minutes_list: Optional[List[int]] = None,
+    time_quantum_s: int = 60,
 ) -> Tuple[float, float]:
     """
     IMPROVED: Iterative convergence method for accurate delivery prediction.
@@ -896,6 +1010,11 @@ def predict_optimal_delivery_location(
         hole_lines=hole_lines,
         clubhouse_lonlat=clubhouse_lonlat,
         course_dir=course_dir,
+        minutes_per_hole=minutes_per_hole,
+        minutes_between_holes=minutes_between_holes,
+        per_hole_minutes_list=per_hole_minutes_list,
+        per_transfer_minutes_list=per_transfer_minutes_list,
+        time_quantum_s=time_quantum_s,
     )
 
 
@@ -913,6 +1032,8 @@ def iterative_convergence_prediction(
     minutes_per_hole: float = 12.0,
     minutes_between_holes: float = 2.0,
     time_quantum_s: int = 60,
+    per_hole_minutes_list: Optional[List[int]] = None,
+    per_transfer_minutes_list: Optional[List[int]] = None,
 ) -> Tuple[float, float]:
     """
     Iterative convergence method for optimal delivery location prediction.
@@ -937,7 +1058,13 @@ def iterative_convergence_prediction(
 
     # Build golfer route for position calculations
     segments = _build_minute_level_segments(
-        hole_lines, clubhouse_lonlat, minutes_per_hole, minutes_between_holes, time_quantum_s=time_quantum_s
+        hole_lines,
+        clubhouse_lonlat,
+        minutes_per_hole,
+        minutes_between_holes,
+        per_hole_minutes_list=per_hole_minutes_list,
+        per_transfer_minutes_list=per_transfer_minutes_list,
+        time_quantum_s=time_quantum_s,
     )
 
     # Build minute-by-minute golfer position list
@@ -1208,6 +1335,12 @@ def run_improved_single_golfer_simulation(
 
     # Simulation results
     order_data = {}
+    # Record runner speed in results for clarity
+    try:
+        order_data['runner_speed_mps'] = float(runner_speed_mps)
+        order_data['runner_speed_mph'] = float(runner_speed_mps) / 0.44704
+    except Exception:
+        pass
 
     # Coordinate tracking for CSV output
     # Tracking structures (only if coordinate tracking is enabled)
@@ -1239,32 +1372,68 @@ def run_improved_single_golfer_simulation(
                 while len(minute_points) < target_len:
                     minute_points.append(minute_points[-1])
 
-        # Emit positions each tick
-        for idx, (lon, lat) in enumerate(minute_points):
-            if current_time_s <= order_time_s < current_time_s + max(1, int(time_quantum_s)):
-                # If specific hole order, get position on that hole
-                if order_hole is not None and hole_lines and order_hole in hole_lines:
-                    hole_line = hole_lines[order_hole]
-                    # Place order at midpoint of the hole
-                    mid_lon, mid_lat = _interpolate_along_linestring(hole_line, 0.5)
-                    order_data['golfer_position'] = (mid_lon, mid_lat)
-                    order_data['order_hole'] = order_hole
-                else:
+        # Generate smooth golfer coordinates at higher frequency for better animation
+        if track_coordinates and golfer_coordinates is not None:
+            # Generate coordinates at 10-second intervals for smooth animation
+            coordinate_interval_s = 10  # 10-second intervals for golfer movement
+            
+            for idx, (lon, lat) in enumerate(minute_points):
+                if current_time_s <= order_time_s < current_time_s + max(1, int(time_quantum_s)):
+                    # Set order location to the golfer's actual position at order time,
+                    # using configured per-hole pacing (not a static hole midpoint)
                     order_data['golfer_position'] = (lon, lat)
-                order_data['order_time_s'] = order_time_s
-            # Only track coordinates if requested
-            if track_coordinates and golfer_coordinates is not None:
-                golfer_coordinates.append(
-                    {
+                    if order_hole is not None:
+                        order_data['order_hole'] = order_hole
+                    order_data['order_time_s'] = order_time_s
+                
+                # Generate multiple coordinates within this minute for smooth movement
+                minute_start_time = current_time_s
+                minute_end_time = current_time_s + max(1, int(time_quantum_s))
+                
+                # If this is not the last point, interpolate to the next point
+                if idx < len(minute_points) - 1:
+                    next_lon, next_lat = minute_points[idx + 1]
+                    
+                    # Generate coordinates at regular intervals within this minute
+                    num_intervals = max(1, int(max(1, int(time_quantum_s)) / coordinate_interval_s))
+                    for i in range(num_intervals + 1):  # +1 to include end point
+                        fraction = i / num_intervals if num_intervals > 0 else 0
+                        interp_lon, interp_lat = _interpolate_between_points(
+                            (lon, lat), (next_lon, next_lat), fraction
+                        )
+                        
+                        timestamp = minute_start_time + int(i * coordinate_interval_s)
+                        golfer_coordinates.append({
+                            'golfer_id': 'golfer_1',
+                            'latitude': interp_lat,
+                            'longitude': interp_lon,
+                            'timestamp': timestamp,
+                            'type': 'golfer',
+                        })
+                else:
+                    # Last point - just add the final position
+                    golfer_coordinates.append({
                         'golfer_id': 'golfer_1',
                         'latitude': lat,
                         'longitude': lon,
                         'timestamp': int(current_time_s),
                         'type': 'golfer',
-                    }
-                )
-            yield env.timeout(max(1, int(time_quantum_s)))
-            current_time_s += max(1, int(time_quantum_s))
+                    })
+                
+                yield env.timeout(max(1, int(time_quantum_s)))
+                current_time_s += max(1, int(time_quantum_s))
+        else:
+            # Original behavior for non-coordinate tracking
+            for idx, (lon, lat) in enumerate(minute_points):
+                if current_time_s <= order_time_s < current_time_s + max(1, int(time_quantum_s)):
+                    # Set order location to the golfer's actual position at order time,
+                    # using configured per-hole pacing (not a static hole midpoint)
+                    order_data['golfer_position'] = (lon, lat)
+                    if order_hole is not None:
+                        order_data['order_hole'] = order_hole
+                    order_data['order_time_s'] = order_time_s
+                yield env.timeout(max(1, int(time_quantum_s)))
+                current_time_s += max(1, int(time_quantum_s))
 
         order_data['round_completion_time_s'] = current_time_s
 
@@ -1275,19 +1444,25 @@ def run_improved_single_golfer_simulation(
 
         order_data['order_created_s'] = env.now
 
-        # Set golfer position if using specific hole
-        if order_hole is not None and hole_lines and order_hole in hole_lines:
-            hole_line = hole_lines[order_hole]
-            placement_fraction = 0.5
-            placement_key = (hole_placement or "mid").lower()
-            if placement_key == "tee":
-                placement_fraction = 0.0
-            elif placement_key == "green":
-                placement_fraction = 1.0
-            lon_p, lat_p = _interpolate_along_linestring(hole_line, placement_fraction)
-            order_data['golfer_position'] = (lon_p, lat_p)
-            order_data['order_hole'] = order_hole
-            order_data['hole_placement'] = placement_key
+        # Ensure golfer position at order time is set based on actual paced position
+        # (Do not override with static hole midpoint; keep previously recorded value)
+        if 'golfer_position' not in order_data:
+            if order_hole is not None and hole_lines and order_hole in hole_lines:
+                # Fallback: if for some reason the golfer process did not set it, use midpoint
+                hole_line = hole_lines[order_hole]
+                placement_fraction = 0.5
+                placement_key = (hole_placement or "mid").lower()
+                if placement_key == "tee":
+                    placement_fraction = 0.0
+                elif placement_key == "green":
+                    placement_fraction = 1.0
+                lon_p, lat_p = _interpolate_along_linestring(hole_line, placement_fraction)
+                order_data['golfer_position'] = (lon_p, lat_p)
+                order_data['order_hole'] = order_hole
+                order_data['hole_placement'] = placement_key
+            else:
+                # Absolute fallback to clubhouse if nothing else available
+                order_data['golfer_position'] = clubhouse_lonlat
 
         order_location = order_data['golfer_position']  # Where order was placed
 
@@ -1338,6 +1513,11 @@ def run_improved_single_golfer_simulation(
                 runner_speed_mps=runner_speed_mps,
                 order_time_s=order_time_s,
                 clubhouse_lonlat=clubhouse_lonlat,
+                minutes_per_hole=minutes_per_hole,
+                minutes_between_holes=minutes_between_holes,
+                per_hole_minutes_list=per_hole_minutes_list,
+                per_transfer_minutes_list=per_transfer_minutes_list,
+                time_quantum_s=time_quantum_s,
             )
 
             # Add prediction method info for analysis
@@ -1397,22 +1577,25 @@ def run_improved_single_golfer_simulation(
             cart_graph, start_coord, end_coord, runner_speed_mps
         )
 
-        # Track runner movement strictly along nodes
+        # Track runner movement with smooth GPS coordinates
         if len(trip_to_golfer["nodes"]) > 1:
-            travel_time_per_leg = trip_to_golfer["time_s"] / max(len(trip_to_golfer["nodes"]) - 1, 1)
-            for i, node in enumerate(trip_to_golfer["nodes"][1:], 1):
-                yield env.timeout(travel_time_per_leg)
-                node_data = cart_graph.nodes[node]
-                if track_coordinates and runner_coordinates is not None:
-                    runner_coordinates.append(
-                        {
-                            'golfer_id': 'runner_1',
-                            'latitude': node_data['y'],
-                            'longitude': node_data['x'],
-                            'timestamp': int(env.now),
-                            'type': 'delivery-runner',
-                        }
-                    )
+            if track_coordinates and runner_coordinates is not None:
+                # Generate smooth coordinates for the entire trip
+                _generate_smooth_runner_path_coordinates(
+                    nodes=trip_to_golfer["nodes"],
+                    cart_graph=cart_graph,
+                    start_time=int(env.now),
+                    total_travel_time_s=trip_to_golfer["time_s"],
+                    runner_coordinates=runner_coordinates,
+                    runner_id='runner_1',
+                    coordinate_interval_s=1  # 1-second intervals for smooth animation
+                )
+            
+            # Simulate the actual travel time
+            yield env.timeout(trip_to_golfer["time_s"])
+        else:
+            # Single node or no movement
+            yield env.timeout(trip_to_golfer["time_s"])
 
         order_data['delivered_s'] = env.now
 
@@ -1426,20 +1609,23 @@ def run_improved_single_golfer_simulation(
         )
 
         if len(trip_back["nodes"]) > 1:
-            travel_time_per_leg = trip_back["time_s"] / max(len(trip_back["nodes"]) - 1, 1)
-            for i, node in enumerate(trip_back["nodes"][1:], 1):
-                yield env.timeout(travel_time_per_leg)
-                node_data = cart_graph.nodes[node]
-                if track_coordinates and runner_coordinates is not None:
-                    runner_coordinates.append(
-                        {
-                            'golfer_id': 'runner_1',
-                            'latitude': node_data['y'],
-                            'longitude': node_data['x'],
-                            'timestamp': int(env.now),
-                            'type': 'delivery-runner',
-                        }
-                    )
+            if track_coordinates and runner_coordinates is not None:
+                # Generate smooth coordinates for the return trip
+                _generate_smooth_runner_path_coordinates(
+                    nodes=trip_back["nodes"],
+                    cart_graph=cart_graph,
+                    start_time=int(env.now),
+                    total_travel_time_s=trip_back["time_s"],
+                    runner_coordinates=runner_coordinates,
+                    runner_id='runner_1',
+                    coordinate_interval_s=1  # 1-second intervals for smooth animation
+                )
+            
+            # Simulate the actual travel time
+            yield env.timeout(trip_back["time_s"])
+        else:
+            # Single node or no movement
+            yield env.timeout(trip_back["time_s"])
 
         order_data['runner_returned_s'] = env.now
 
@@ -1506,7 +1692,7 @@ def run_golf_delivery_simulation(
     course_dir: str = "geojson/pinetree_country_club",
     order_hole: Optional[int] = None,
     prep_time_min: int = 10,
-    runner_speed_mps: float = 6.0,
+    runner_speed_mps: Optional[float] = None,
     use_enhanced_network: bool = True,
     track_coordinates: bool = False,
     time_quantum_s: Optional[int] = None,
@@ -1565,6 +1751,11 @@ def run_golf_delivery_simulation(
             except (TypeError, ValueError):
                 continue
 
+    # Resolve runner speed: prefer explicit argument, otherwise use config (mph → m/s handled in loader)
+    effective_runner_speed_mps = (
+        float(runner_speed_mps) if runner_speed_mps is not None else float(getattr(sim_cfg, "delivery_runner_speed_mps", 6.0))
+    )
+
     logger.info("Running golf delivery simulation")
     logger.info("Course: %s", sim_cfg.course_name)
     logger.info("Holes available: %s", sorted(hole_lines.keys()))
@@ -1573,45 +1764,37 @@ def run_golf_delivery_simulation(
     else:
         logger.info("Order placement: Random during round")
 
-    # Compute minute-based pacing using config with LCM-like distribution
-    # Minutes are required; hour fields are deprecated
+    # Compute minute-based pacing using config with fixed 2-minute transfers per hole
     total_round_minutes = int(getattr(sim_cfg, "golfer_18_holes_minutes", 240))
-    # Use a base pattern of 12 play + 2 transfer per hole (14 per hole) and scale to fit total minutes exactly
-    base_hole = 12
-    base_transfer = 2
-    base_total = 18 * (base_hole + base_transfer)
-    scale = max(total_round_minutes, 1) / float(base_total)
-    scaled_holes = [max(0, int(round(base_hole * scale))) for _ in range(18)]
-    scaled_transfers = [max(0, int(round(base_transfer * scale))) for _ in range(18)]
-    # Adjust to match exact sum by distributing remainder
-    current_sum = sum(scaled_holes) + sum(scaled_transfers)
-    remainder = total_round_minutes - current_sum
-    i = 0
-    while remainder != 0 and i < 18 * 4:
-        idx = i % 18
-        if remainder > 0:
-            # Alternate between hole and transfer to distribute
-            if (i // 18) % 2 == 0:
-                scaled_holes[idx] += 1
-            else:
-                scaled_transfers[idx] += 1
+    transfer_minutes_per_hole = 2
+    total_transfer_minutes = transfer_minutes_per_hole * 18
+    if total_round_minutes >= total_transfer_minutes:
+        hole_minutes_total = total_round_minutes - total_transfer_minutes
+        base_hole_min = hole_minutes_total // 18
+        hole_remainder = hole_minutes_total % 18
+        per_hole_minutes_list = [int(base_hole_min) for _ in range(18)]
+        for i in range(int(hole_remainder)):
+            per_hole_minutes_list[i] += 1
+        per_transfer_minutes_list = [transfer_minutes_per_hole for _ in range(18)]
+    else:
+        # Fallback: proportionally distribute limited minutes across holes and transfers
+        # Ensures non-negative values
+        per_hole_minutes_list = [0 for _ in range(18)]
+        per_transfer_minutes_list = [max(0, total_round_minutes // 18) for _ in range(18)]
+        remainder = total_round_minutes - sum(per_transfer_minutes_list)
+        idx = 0
+        while remainder > 0 and idx < 18:
+            per_hole_minutes_list[idx] += 1
             remainder -= 1
-        else:
-            if (i // 18) % 2 == 0 and scaled_holes[idx] > 0:
-                scaled_holes[idx] -= 1
-                remainder += 1
-            elif scaled_transfers[idx] > 0:
-                scaled_transfers[idx] -= 1
-                remainder += 1
-        i += 1
+            idx += 1
 
     # Derive nominal parameters for engine defaults (used if per-hole lists are ignored)
-    minutes_per_hole = max(1, int(round(sum(scaled_holes) / 18)))
-    minutes_between_holes = max(0, int(round(sum(scaled_transfers) / 18)))
+    minutes_per_hole = max(1, int(round(sum(per_hole_minutes_list) / 18)))
+    minutes_between_holes = transfer_minutes_per_hole if total_round_minutes >= total_transfer_minutes else max(0, int(round(sum(per_transfer_minutes_list) / 18)))
 
     # Determine dynamic time quantum (GCD of durations in seconds) if not provided
     if time_quantum_s is None:
-        durations_s: List[int] = [m * 60 for m in (scaled_holes + scaled_transfers) if isinstance(m, int)]
+        durations_s: List[int] = [m * 60 for m in (per_hole_minutes_list + per_transfer_minutes_list) if isinstance(m, int)]
         computed_quantum = _gcd_list(durations_s) if durations_s else 60
         # Avoid overly tiny tick; floor to at least 10s for performance
         time_quantum_s = max(10, computed_quantum)
@@ -1623,14 +1806,14 @@ def run_golf_delivery_simulation(
         hole_lines=hole_lines,
         order_hole=order_hole,
         prep_time_min=prep_time_min,
-        runner_speed_mps=runner_speed_mps,
+        runner_speed_mps=effective_runner_speed_mps,
         use_enhanced_network=use_enhanced_network,
         course_dir=course_dir,
         track_coordinates=track_coordinates,
         minutes_per_hole=minutes_per_hole,
         minutes_between_holes=minutes_between_holes,
-        per_hole_minutes_list=scaled_holes,
-        per_transfer_minutes_list=scaled_transfers,
+        per_hole_minutes_list=per_hole_minutes_list,
+        per_transfer_minutes_list=per_transfer_minutes_list,
         time_quantum_s=time_quantum_s,
         hole_placement=hole_placement,
         runner_delay_min=runner_delay_min,

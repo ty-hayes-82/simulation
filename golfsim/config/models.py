@@ -42,8 +42,8 @@ class SimulationConfig:
     delivery_prep_time_sec: int = 600
     bev_cart_avg_order_usd: float = 12.5
     delivery_avg_order_usd: float = 30.0
-    bev_cart_order_probability: float = 0.4
-    delivery_order_probability_per_9_holes: float = 0.2
+    bev_cart_order_probability_per_9_holes: float = 0.35
+    delivery_total_orders: int = 10
 
     @staticmethod
     def from_dict(data: Dict) -> "SimulationConfig":
@@ -115,8 +115,8 @@ class SimulationConfig:
             delivery_prep_time_sec=int(data.get("delivery_prep_time_sec", 600)),
             bev_cart_avg_order_usd=float(data.get("bev_cart_avg_order_usd", 12.5)),
             delivery_avg_order_usd=float(data.get("delivery_avg_order_usd", 30.0)),
-            bev_cart_order_probability=float(data.get("bev_cart_order_probability", 0.4)),
-            delivery_order_probability_per_9_holes=float(data.get("delivery_order_probability_per_9_holes", 0.2)),
+            bev_cart_order_probability_per_9_holes=float(data.get("bev_cart_order_probability_per_9_holes", 0.35)),
+            delivery_total_orders=int(data.get("delivery_total_orders", 10)),
         )
         return cfg
 
