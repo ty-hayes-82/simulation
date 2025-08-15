@@ -11,19 +11,19 @@
 - **P90 delivery time**: 58.1 min (avg. worst 10% experience)
 - **Avg order time**: 39.4 min (avg. customer wait)
 - **Orders**: 43 (delivered 27, failed 16)
-- **Revenue per round**: $231.42 (avg. total F&B)
-- **Primary bottleneck**: Single runner capacity, leading to high failure rates and long wait times.
+- **Revenue per round**: $18.42 (avg. for runner service)
+- **Primary bottleneck**: Single runner capacity
 - **Runner utilization**: 19.3% (avg. time actively driving)
 - **Second-runner break-even**: 12.5 orders (demand consistently exceeds this)
 
 ### Time-of-day patterns (2–3 bullets)
-- Delivery service opens at 11:00 AM, missing over three hours of potential morning demand from golfers who tee off starting at 7:00 AM.
-- Order demand concentrates and peaks mid-day, immediately overwhelming the single runner and causing service delays and failures.
+- Delivery service starts at 11:00 AM, missing four hours of potential demand from golfers who tee off starting at 7:00 AM.
+- Order demand concentrates after opening, immediately overwhelming the single runner, which causes cascading delays and a high order failure rate.
 
 ### Recommendations — next actions (3–5 bullets)
-- Add a second runner during peak hours (e.g., 11 AM–3 PM) — reduce wait times and failed orders as demand exceeds the 12.5 order break-even point.
+- Add a second runner during peak hours (e.g., 11 AM–3 PM) — reduce wait times and failed orders as demand exceeds the 12.5 order break-even threshold.
 - Start runner service earlier, at 9:00 AM — capture unmet morning demand and better distribute the order load across the day.
-- Review the order failure SLA/timeout — the average failure rate of 37.2% is unsustainably high, suggesting the current service promise is misaligned with capacity.
+- Review the order failure SLA/timeout — the average failure rate of 37.2% is unsustainably high and indicates a misalignment between service promise and capacity.
 
 ### KPIs with context (table, ≤6 rows)
 | Metric | Value | Target | What it means |
