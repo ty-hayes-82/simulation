@@ -304,11 +304,12 @@ The runner speed is configured in `courses/pinetree_country_club/config/simulati
 ```json
 {
   "delivery_runner_speed_mph": 6.0,
+  "delivery_runner_speed_mps": 2.68,
   ...
 }
 ```
 
-**Recent Update:** Runner speed was updated from 10 m/s to 6.0 m/s for more realistic delivery scenarios.
+Note: Scripts accept runner speed in m/s. The config stores `delivery_runner_speed_mph` for readability and is automatically converted to `delivery_runner_speed_mps` when loaded.
 
 ### Tee Time Scenarios
 
