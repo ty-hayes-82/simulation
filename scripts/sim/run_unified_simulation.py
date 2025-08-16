@@ -650,6 +650,125 @@ def _generate_delivery_orders_with_pass_boost(
 
     return orders
 
+
+def _distribute_counts_by_fraction(total: int, fractions: List[float]) -> List[int]:
+    """Turn fractional shares into integer counts that sum to total.
+
+    Uses largest-remainder method for stable rounding.
+    """
+    total = int(total)
+    if total <= 0 or not fractions:
+        return [0 for _ in fractions]
+    # Normalize if user provided percentages that don't sum to 1
+    s = sum(max(0.0, float(x)) for x in fractions)
+    if s <= 0:
+        return [0 for _ in fractions]
+    shares = [max(0.0, float(x)) / s for x in fractions]
+    raw = [total * x for x in shares]
+    floors = [int(x) for x in raw]
+    remainder = total - sum(floors)
+    # Assign remaining by largest fractional parts
+    frac_parts = sorted(((i, raw[i] - floors[i]) for i in range(len(raw))), key=lambda t: t[1], reverse=True)
+    for i in range(remainder):
+        floors[frac_parts[i % len(floors)][0]] += 1
+    return floors
+
+
+def _generate_delivery_orders_by_hour_distribution(
+    *,
+    groups: List[Dict[str, Any]],
+    hourly_distribution: Dict[str, float],
+    total_orders: int,
+    service_open_hhmm: str,
+    service_close_hhmm: str,
+    minutes_per_hole: float,
+    rng_seed: Optional[int] = None,
+) -> List[DeliveryOrder]:
+    """Generate delivery orders by hourly percentage distribution.
+
+    - Picks order counts per hour using the provided hourly distribution (values need not sum to 1; normalization applied).
+    - For each hour bucket, draws random order times uniformly within that hour.
+    - Assigns each order to any group on-course at that time and infers a hole by simple pacing.
+    - Returns a chronologically sorted list with sequential order_ids.
+    """
+    import random
+
+    if rng_seed is not None:
+        random.seed(int(rng_seed))
+
+    # Build ordered hour buckets within service window
+    open_s = _parse_hhmm_to_seconds_since_7am(service_open_hhmm)
+    close_s = _parse_hhmm_to_seconds_since_7am(service_close_hhmm)
+    if close_s <= open_s:
+        close_s = open_s + 10 * 3600  # fallback 10h service if misconfigured
+
+    # Normalize and order the provided hour keys
+    def hhmm_to_s(hhmm: str) -> int:
+        try:
+            hh, mm = hhmm.split(":")
+            return (int(hh) - 7) * 3600 + int(mm) * 60
+        except Exception:
+            return 0
+
+    hour_items = sorted(((k, float(v)) for k, v in (hourly_distribution or {}).items()), key=lambda kv: hhmm_to_s(kv[0]))
+    # Restrict to service window
+    hour_items = [(hh, pct) for (hh, pct) in hour_items if open_s <= hhmm_to_s(hh) < close_s]
+    if not hour_items:
+        return []
+
+    # Compute counts per provided hour bucket
+    hour_labels = [hh for hh, _ in hour_items]
+    fractions = [pct for _, pct in hour_items]
+    counts = _distribute_counts_by_fraction(total_orders, fractions)
+
+    def group_active_at(ts_s: int) -> List[Dict[str, Any]]:
+        active: List[Dict[str, Any]] = []
+        play_seconds = max(1, int(minutes_per_hole * 18 * 60))
+        for g in groups or []:
+            start = int(g.get("tee_time_s", 0))
+            end = start + play_seconds
+            if start <= ts_s <= end:
+                active.append(g)
+        return active
+
+    def infer_hole_for_group_at_time(g: Dict[str, Any], ts_s: int) -> int:
+        start = int(g.get("tee_time_s", 0))
+        delta = max(0, ts_s - start)
+        hole = 1 + int(delta // int(max(1, minutes_per_hole * 60)))
+        return max(1, min(18, hole))
+
+    orders: List[DeliveryOrder] = []
+    for idx, (hh, cnt) in enumerate(zip(hour_labels, counts)):
+        # Hour window
+        start_s = hhmm_to_s(hh)
+        end_s = min(start_s + 3600, close_s)
+        if end_s <= start_s or cnt <= 0:
+            continue
+        for _ in range(int(cnt)):
+            t = int(random.uniform(start_s, end_s - 1))
+            elig = group_active_at(t)
+            if elig:
+                g = random.choice(elig)
+            else:
+                # Fallback to any group; hole will clamp to 18/1 accordingly
+                g = random.choice(groups) if groups else {"group_id": 1, "tee_time_s": open_s}
+            hole = infer_hole_for_group_at_time(g, t)
+            orders.append(
+                DeliveryOrder(
+                    order_id=None,
+                    golfer_group_id=int(g.get("group_id", 1)),
+                    golfer_id=f"G{int(g.get('group_id', 1))}",
+                    order_time_s=int(t),
+                    hole_num=int(hole),
+                )
+            )
+
+    # Sort and assign sequential IDs
+    orders.sort(key=lambda o: int(getattr(o, "order_time_s", 0)))
+    for i, o in enumerate(orders, start=1):
+        o.order_id = f"{i:03d}"
+    return orders
+
 def _build_groups_interval(count: int, first_tee_s: int, interval_min: float) -> List[Dict]:
     groups: List[Dict] = []
     for i in range(count):
@@ -1433,7 +1552,7 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
 
     first_tee_s = _first_tee_to_seconds(args.first_tee)
     
-    # Load simulation config to get total orders
+    # Load simulation config to get total orders and optional hourly distribution
     from golfsim.config.loaders import load_simulation_config  # local import to avoid scoping issues
     sim_config = load_simulation_config(args.course_dir)
 
@@ -1445,7 +1564,10 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
         else:
             groups = _build_groups_interval(int(args.groups_count), first_tee_s, float(args.groups_interval_min)) if args.groups_count > 0 else []
 
-        # Calculate base probability from total orders and number of groups
+        # Decide order generation mode
+        hourly_dist = getattr(sim_config, "delivery_hourly_distribution", None)
+        use_hourly = isinstance(hourly_dist, dict) and len(hourly_dist) > 0
+        # Calculate base probability from total orders and number of groups (fallback mode)
         delivery_order_probability = _calculate_delivery_order_probability_per_9_holes(sim_config.delivery_total_orders, len(groups))
 
         # Compute crossings to detect bev-cart passes for boost
@@ -1486,15 +1608,28 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
             prep_time_min=int(args.prep_time),
         )
 
-        # Generate orders with bev-cart pass boost and feed into shared queue
+        # Generate orders according to configured mode and feed into shared queue
         orders: List[DeliveryOrder] = []
         if groups:
-            orders_all = _generate_delivery_orders_with_pass_boost(
-                groups=groups,
-                base_prob_per_9=float(delivery_order_probability),
-                crossings_data=crossings,
-                rng_seed=args.random_seed,
-            )
+            if use_hourly:
+                # Use hourly distribution: draw total orders directly from config and randomize within hour windows
+                orders_all = _generate_delivery_orders_by_hour_distribution(
+                    groups=groups,
+                    hourly_distribution=hourly_dist,
+                    total_orders=int(getattr(sim_config, "delivery_total_orders", 0)),
+                    service_open_hhmm=str(sim_config.delivery_service_hours.get("open_time", "10:00")),
+                    service_close_hhmm=str(sim_config.delivery_service_hours.get("close_time", "19:00")),
+                    minutes_per_hole=float(getattr(sim_config, "minutes_per_hole", 12.0)),
+                    rng_seed=args.random_seed,
+                )
+            else:
+                # Legacy per-nine probability with bev-cart pass boost
+                orders_all = _generate_delivery_orders_with_pass_boost(
+                    groups=groups,
+                    base_prob_per_9=float(delivery_order_probability),
+                    crossings_data=crossings,
+                    rng_seed=args.random_seed,
+                )
             # Restrict order placement to service open window
             orders = [
                 o for o in orders_all

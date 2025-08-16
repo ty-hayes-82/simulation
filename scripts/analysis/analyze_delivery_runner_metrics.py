@@ -20,6 +20,7 @@ from golfsim.analysis.delivery_runner_metrics import (
     summarize_delivery_runner_metrics,
     format_delivery_runner_metrics_report,
     format_delivery_runner_summary_report,
+    format_delivery_runner_executive_summary_across_runs,
     DeliveryRunnerMetrics,
 )
 
@@ -379,26 +380,18 @@ def analyze_multiple_simulations(
             with open(report_file, 'w', encoding='utf-8') as f:
                 f.write(report)
             
-            # Also save as JSON
+            # Also save as JSON (executive fields only present on DeliveryRunnerMetrics)
             metrics_dict = {
                 'revenue_per_round': metrics.revenue_per_round,
-                'order_penetration_rate': metrics.order_penetration_rate,
-                'average_order_value': metrics.average_order_value,
                 'orders_per_runner_hour': metrics.orders_per_runner_hour,
                 'on_time_rate': metrics.on_time_rate,
-                'delivery_cycle_time_p50': metrics.delivery_cycle_time_p50,
                 'delivery_cycle_time_p90': metrics.delivery_cycle_time_p90,
-                'dispatch_delay_avg': metrics.dispatch_delay_avg,
-                'travel_time_avg': metrics.travel_time_avg,
+                'delivery_cycle_time_avg': metrics.delivery_cycle_time_avg,
                 'failed_rate': metrics.failed_rate,
                 'runner_utilization_driving_pct': metrics.runner_utilization_driving_pct,
                 'runner_utilization_waiting_pct': metrics.runner_utilization_waiting_pct,
-                'runner_utilization_handoff_pct': metrics.runner_utilization_handoff_pct,
-                'runner_utilization_deadhead_pct': metrics.runner_utilization_deadhead_pct,
                 'distance_per_delivery_avg': metrics.distance_per_delivery_avg,
-                'queue_depth_avg': metrics.queue_depth_avg,
                 'queue_wait_avg': metrics.queue_wait_avg,
-                'capacity_15min_window': metrics.capacity_15min_window,
                 'second_runner_break_even_orders': metrics.second_runner_break_even_orders,
                 'zone_service_times': metrics.zone_service_times,
                 'total_revenue': metrics.total_revenue,
@@ -414,6 +407,16 @@ def analyze_multiple_simulations(
             json_file = output_dir / f"delivery_metrics_{i+1:02d}_{metrics.simulation_id}.json"
             with open(json_file, 'w', encoding='utf-8') as f:
                 json.dump(metrics_dict, f, indent=2, ensure_ascii=False)
+
+        # Also save an executive-style summary across runs in the same folder
+        try:
+            exec_md = format_delivery_runner_executive_summary_across_runs(metrics_list)
+            exec_path = output_dir / "delivery_runner_metrics_summary_executive.md"
+            with open(exec_path, 'w', encoding='utf-8') as f:
+                f.write(exec_md)
+            logger.info("Saved executive-style summary across runs: %s", exec_path)
+        except Exception as e:
+            logger.warning("Failed to write executive-style summary: %s", e)
     
     logger.info("Completed analysis of %d simulations", len(metrics_list))
     return metrics_list

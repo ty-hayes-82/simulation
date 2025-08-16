@@ -42,7 +42,8 @@ class DeliveryRunnerMetrics:
     second_runner_break_even_orders: float
     queue_wait_avg: float
     runner_utilization_driving_pct: float
-    runner_utilization_waiting_pct: float
+    runner_utilization_prep_pct: float
+    runner_utilization_idle_pct: float
     distance_per_delivery_avg: float
     zone_service_times: Dict[str, float]
     
@@ -75,14 +76,17 @@ def calculate_delivery_runner_metrics(
     total_orders = len(orders)
     successful_orders = len(delivery_stats)
     failed_orders_count = len(failed_orders)
-    total_rounds = _extract_total_rounds(orders, activity_log)
+    total_ordering_groups = _extract_total_ordering_groups(orders, activity_log)
+    
+    # Calculate actual active hours
+    actual_active_hours = _calculate_actual_active_hours(activity_log, service_hours)
     
     # Revenue
     total_revenue = successful_orders * revenue_per_order
-    revenue_per_round = total_revenue / max(total_rounds, 1)
+    revenue_per_round = total_revenue / max(total_ordering_groups, 1)
     
     # Throughput
-    orders_per_runner_hour = successful_orders / max(service_hours, 0.1)
+    orders_per_runner_hour = successful_orders / max(actual_active_hours, 0.1)
     
     # Service quality
     on_time_rate = _calculate_on_time_rate(delivery_stats, sla_minutes)
@@ -98,19 +102,19 @@ def calculate_delivery_runner_metrics(
     failed_rate = failed_orders_count / max(total_orders, 1)
     
     # Utilization
-    utilization_mix = _calculate_runner_utilization(activity_log, service_hours)
+    utilization_mix = _calculate_runner_utilization(activity_log, actual_active_hours)
     
     # Distance
     distances_m = [d.get("delivery_distance_m", 0) for d in delivery_stats]
     distance_per_delivery_avg = statistics.mean(distances_m) if distances_m else 0.0
     
     # Queue (keep function but only use wait)
-    queue_metrics = _calculate_queue_metrics(activity_log)
+    queue_metrics = _calculate_queue_metrics(delivery_stats, activity_log)
     queue_wait_avg = float(queue_metrics.get("avg_wait", 0.0))
     
     # Break-even
     second_runner_break_even_orders = _calculate_second_runner_break_even(
-        total_revenue, successful_orders, service_hours
+        total_revenue, successful_orders, actual_active_hours
     )
     
     # Zones
@@ -126,22 +130,51 @@ def calculate_delivery_runner_metrics(
         second_runner_break_even_orders=second_runner_break_even_orders,
         queue_wait_avg=queue_wait_avg,
         runner_utilization_driving_pct=utilization_mix["driving"],
-        runner_utilization_waiting_pct=utilization_mix["waiting"],
+        runner_utilization_prep_pct=utilization_mix["prep"],
+        runner_utilization_idle_pct=utilization_mix["idle"],
         distance_per_delivery_avg=distance_per_delivery_avg,
         zone_service_times=zone_service_times,
         total_revenue=total_revenue,
         total_orders=total_orders,
         successful_orders=successful_orders,
         failed_orders=failed_orders_count,
-        total_rounds=total_rounds,
-        active_runner_hours=service_hours,
+        total_rounds=total_ordering_groups,
+        active_runner_hours=actual_active_hours,
         simulation_id=simulation_id,
         runner_id=runner_id,
     )
 
 
-def _extract_total_rounds(orders: List[Dict[str, Any]], activity_log: List[Dict[str, Any]]) -> int:
-    """Extract total number of rounds from orders and activity log."""
+def _calculate_actual_active_hours(activity_log: List[Dict[str, Any]], max_service_hours: float) -> float:
+    """Calculate actual active hours from service_opened to last activity."""
+    if not activity_log:
+        return max_service_hours
+    
+    # Find service_opened timestamp
+    service_start = None
+    service_end = None
+    
+    for activity in activity_log:
+        activity_type = activity.get('activity_type', '')
+        timestamp = activity.get('timestamp_s', 0)
+        
+        if activity_type == 'service_opened':
+            service_start = timestamp
+        
+        # Track the last activity timestamp
+        if timestamp > (service_end or 0):
+            service_end = timestamp
+    
+    if service_start is None or service_end is None:
+        return max_service_hours
+    
+    # Calculate actual hours, but cap at max_service_hours
+    actual_hours = (service_end - service_start) / 3600.0
+    return min(actual_hours, max_service_hours)
+
+
+def _extract_total_ordering_groups(orders: List[Dict[str, Any]], activity_log: List[Dict[str, Any]]) -> int:
+    """Extract total number of groups that placed orders."""
     # Count unique golfer groups
     golfer_groups = set()
     for order in orders:
@@ -180,12 +213,12 @@ def _calculate_on_time_rate(delivery_stats: List[Dict[str, Any]], sla_minutes: i
 
 
 def _calculate_runner_utilization(activity_log: List[Dict[str, Any]], service_hours: float) -> Dict[str, float]:
-    """Calculate runner utilization mix (driving, waiting)."""
+    """Calculate runner utilization mix (driving, prep, idle)."""
     service_seconds = service_hours * 3600
     
     # Initialize time tracking
     driving_time = 0
-    waiting_time = 0
+    prep_time = 0
     
     # Analyze activity log for time spent in different activities
     for i, activity in enumerate(activity_log):
@@ -199,43 +232,59 @@ def _calculate_runner_utilization(activity_log: List[Dict[str, Any]], service_ho
         
         duration = next_timestamp - timestamp
         
-        # Categorize activity - only driving and waiting
+        # Categorize activity
         if 'delivery_start' in activity_type or 'returning' in activity_type:
             driving_time += duration
         elif 'prep_start' in activity_type or 'prep_complete' in activity_type:
-            waiting_time += duration
-        # All other activities (delivery_complete, idle, queue_status) are ignored
+            prep_time += duration
+        # All other activities (delivery_complete, order_assigned, order_received, arrived_clubhouse, etc.) are counted as idle
     
     # Calculate percentages
     total_time = max(service_seconds, 1)
+    driving_pct = (driving_time / total_time) * 100
+    prep_pct = (prep_time / total_time) * 100
+    idle_pct = 100 - driving_pct - prep_pct
     
     return {
-        'driving': (driving_time / total_time) * 100,
-        'waiting': (waiting_time / total_time) * 100,
+        'driving': driving_pct,
+        'prep': prep_pct,
+        'idle': idle_pct,
     }
 
 
-def _calculate_queue_metrics(activity_log: List[Dict[str, Any]]) -> Dict[str, float]:
-    """Calculate queue depth and wait time metrics."""
-    queue_depths = []
+def _calculate_queue_metrics(delivery_stats: List[Dict[str, Any]], activity_log: List[Dict[str, Any]]) -> Dict[str, float]:
+    """Calculate queue depth and wait time metrics from actual queue delays."""
+    # First try to get actual queue delays from delivery stats
+    queue_delays_min = []
+    for stat in delivery_stats:
+        queue_delay_s = stat.get('queue_delay_s', 0)
+        if queue_delay_s > 0:
+            queue_delays_min.append(queue_delay_s / 60)  # Convert to minutes
     
-    for activity in activity_log:
-        if 'queue_status' in activity.get('activity_type', ''):
-            description = activity.get('description', '')
-            # Extract queue depth from description like "3 orders waiting"
-            if 'orders waiting' in description:
-                try:
-                    depth = int(description.split()[0])
-                    queue_depths.append(depth)
-                except (ValueError, IndexError):
-                    continue
-    
-    # Calculate average queue depth
-    avg_depth = statistics.mean(queue_depths) if queue_depths else 0
-    
-    # Estimate wait times based on queue position and processing time
-    # This is a simplified calculation
-    avg_wait = avg_depth * 15  # Assume 15 minutes per order in queue
+    # If we have actual queue delays, use them
+    if queue_delays_min:
+        avg_wait = statistics.mean(queue_delays_min)
+        avg_depth = len(queue_delays_min) / max(len(delivery_stats), 1)  # Approximation
+    else:
+        # Fallback to activity log analysis (legacy method)
+        queue_depths = []
+        
+        for activity in activity_log:
+            if 'queue_status' in activity.get('activity_type', ''):
+                description = activity.get('description', '')
+                # Extract queue depth from description like "3 orders waiting"
+                if 'orders waiting' in description:
+                    try:
+                        depth = int(description.split()[0])
+                        queue_depths.append(depth)
+                    except (ValueError, IndexError):
+                        continue
+        
+        # Calculate average queue depth
+        avg_depth = statistics.mean(queue_depths) if queue_depths else 0
+        
+        # Estimate wait times based on queue position and processing time
+        avg_wait = avg_depth * 15  # Assume 15 minutes per order in queue
     
     return {
         'avg_depth': avg_depth,
@@ -354,14 +403,14 @@ def format_delivery_runner_metrics_report(metrics: DeliveryRunnerMetrics) -> str
     report = f"""# Delivery Runner Executive Metrics
 
 ## Executive Priority Ranking (Most Persuasive First)
-1. **Revenue per Round**: ${metrics.revenue_per_round:.2f}
+1. **Revenue per Ordering Group**: ${metrics.revenue_per_round:.2f}
 2. **Orders per Runner‑Hour**: {metrics.orders_per_runner_hour:.2f}
 3. **On‑Time Rate**: {metrics.on_time_rate:.1%}
 4. **Delivery Cycle Time (P90)**: {metrics.delivery_cycle_time_p90:.1f} minutes
 5. **Failed Rate**: {metrics.failed_rate:.1%}
-6. **Second‑Runner Break‑Even**: {metrics.second_runner_break_even_orders:.1f} orders
+6. **Second‑Runner Break‑Even**: {metrics.second_runner_break_even_orders:.1f} orders (assumes $25/hr wage, $5 variable cost)
 7. **Queue Wait (Avg)**: {metrics.queue_wait_avg:.1f} minutes
-8. **Runner Utilization Mix**: Driving {metrics.runner_utilization_driving_pct:.1f}%, Waiting {metrics.runner_utilization_waiting_pct:.1f}%
+8. **Runner Utilization**: Driving {metrics.runner_utilization_driving_pct:.1f}%, Prep {metrics.runner_utilization_prep_pct:.1f}%, Idle {metrics.runner_utilization_idle_pct:.1f}%
 9. **Avg Order Time**: {metrics.delivery_cycle_time_avg:.1f} minutes
 10. **Distance per Delivery (Avg)**: {metrics.distance_per_delivery_avg:.0f} meters
 
@@ -379,7 +428,7 @@ def format_delivery_runner_metrics_report(metrics: DeliveryRunnerMetrics) -> str
 - Total Orders: {metrics.total_orders}
 - Successful Orders: {metrics.successful_orders}
 - Failed Orders: {metrics.failed_orders}
-- Total Rounds: {metrics.total_rounds}
+- Total Ordering Groups: {metrics.total_rounds}
 - Active Runner Hours: {metrics.active_runner_hours:.1f}
 
 > Tip: Lead with 1–3 to show revenue and efficiency, use 4–6 to prove reliability, and close with 7–8 as the scaling/ROI story.
@@ -392,7 +441,7 @@ def format_delivery_runner_summary_report(summaries: Dict[str, Any], num_runs: i
     report = f"""# Delivery Runner Metrics Summary
 
 ## Summary Statistics (Across {num_runs} Runs)
-- Revenue per Round — Mean: ${summaries.get('revenue_per_round', {}).get('mean', 0):.2f} (Range: ${summaries.get('revenue_per_round', {}).get('min', 0):.2f}–${summaries.get('revenue_per_round', {}).get('max', 0):.2f})
+- Revenue per Ordering Group — Mean: ${summaries.get('revenue_per_round', {}).get('mean', 0):.2f} (Range: ${summaries.get('revenue_per_round', {}).get('min', 0):.2f}–${summaries.get('revenue_per_round', {}).get('max', 0):.2f})
 - Orders per Runner‑Hour — Mean: {summaries.get('orders_per_runner_hour', {}).get('mean', 0):.2f}
 - On‑Time Rate — Mean: {summaries.get('on_time_rate', {}).get('mean', 0):.1%}
 - Delivery Cycle Time (P90) — Mean: {summaries.get('delivery_cycle_time_p90', {}).get('mean', 0):.1f} min
@@ -405,6 +454,70 @@ def format_delivery_runner_summary_report(summaries: Dict[str, Any], num_runs: i
 - Total Orders: {summaries.get('total_orders', 0)}
 - Successful Orders: {summaries.get('successful_orders', 0)}
 - Failed Orders: {summaries.get('failed_orders', 0)}
-- Total Rounds: {summaries.get('total_rounds', 0)}
+- Total Ordering Groups: {summaries.get('total_rounds', 0)}
 """
+    return report
+
+
+def format_delivery_runner_executive_summary_across_runs(metrics_list: List[DeliveryRunnerMetrics]) -> str:
+    """Format an executive-style summary across multiple runs with mean and median values.
+
+    Presents the same GM-priority list but aggregates across runs.
+    """
+    import statistics as _stats
+
+    n = len(metrics_list)
+    if n == 0:
+        return "# Delivery Runner Executive Metrics — Summary\n\nNo runs.\n"
+
+    def mean(arr: List[float]) -> float:
+        return _stats.mean(arr) if arr else 0.0
+
+    def median(arr: List[float]) -> float:
+        return _stats.median(arr) if arr else 0.0
+
+    vals = {
+        "revenue_per_round": [m.revenue_per_round for m in metrics_list],
+        "orders_per_runner_hour": [m.orders_per_runner_hour for m in metrics_list],
+        "on_time_rate": [m.on_time_rate for m in metrics_list],
+        "delivery_cycle_time_p90": [m.delivery_cycle_time_p90 for m in metrics_list],
+        "delivery_cycle_time_avg": [m.delivery_cycle_time_avg for m in metrics_list],
+        "failed_rate": [m.failed_rate for m in metrics_list],
+        "second_runner_break_even_orders": [m.second_runner_break_even_orders for m in metrics_list],
+        "queue_wait_avg": [m.queue_wait_avg for m in metrics_list],
+        "runner_utilization_driving_pct": [m.runner_utilization_driving_pct for m in metrics_list],
+        "runner_utilization_prep_pct": [m.runner_utilization_prep_pct for m in metrics_list],
+        "runner_utilization_idle_pct": [m.runner_utilization_idle_pct for m in metrics_list],
+        "distance_per_delivery_avg": [m.distance_per_delivery_avg for m in metrics_list],
+    }
+
+    total_revenue = sum(m.total_revenue for m in metrics_list)
+    total_orders = sum(m.total_orders for m in metrics_list)
+    successful_orders = sum(m.successful_orders for m in metrics_list)
+    failed_orders = sum(m.failed_orders for m in metrics_list)
+    total_rounds = sum(m.total_rounds for m in metrics_list)
+    service_hours = metrics_list[0].active_runner_hours if metrics_list else 10.0
+
+    report = f"""# Delivery Runner Executive Metrics — Summary
+
+## Summary Across {n} Runs (Mean / Median)
+1. **Revenue per Ordering Group**: ${mean(vals['revenue_per_round']):.2f} / ${median(vals['revenue_per_round']):.2f}
+2. **Orders per Runner‑Hour**: {mean(vals['orders_per_runner_hour']):.2f} / {median(vals['orders_per_runner_hour']):.2f}
+3. **On‑Time Rate**: {mean(vals['on_time_rate']):.1%} / {median(vals['on_time_rate']):.1%}
+4. **Delivery Cycle Time (P90)**: {mean(vals['delivery_cycle_time_p90']):.1f} / {median(vals['delivery_cycle_time_p90']):.1f} minutes
+5. **Failed Rate**: {mean(vals['failed_rate']):.1%} / {median(vals['failed_rate']):.1%}
+6. **Second‑Runner Break‑Even**: {mean(vals['second_runner_break_even_orders']):.1f} / {median(vals['second_runner_break_even_orders']):.1f} orders (assumes $25/hr wage, $5 variable cost)
+7. **Queue Wait (Avg)**: {mean(vals['queue_wait_avg']):.1f} / {median(vals['queue_wait_avg']):.1f} minutes
+8. **Runner Utilization**: Driving {mean(vals['runner_utilization_driving_pct']):.1f}% / {median(vals['runner_utilization_driving_pct']):.1f}%, Prep {mean(vals['runner_utilization_prep_pct']):.1f}% / {median(vals['runner_utilization_prep_pct']):.1f}%, Idle {mean(vals['runner_utilization_idle_pct']):.1f}% / {median(vals['runner_utilization_idle_pct']):.1f}%
+9. **Avg Order Time**: {mean(vals['delivery_cycle_time_avg']):.1f} / {median(vals['delivery_cycle_time_avg']):.1f} minutes
+10. **Distance per Delivery (Avg)**: {mean(vals['distance_per_delivery_avg']):.0f} / {median(vals['distance_per_delivery_avg']):.0f} meters
+
+## Aggregate Totals
+- Total Revenue: ${total_revenue:.2f}
+- Total Orders: {total_orders}
+- Successful Orders: {successful_orders}
+- Failed Orders: {failed_orders}
+- Total Ordering Groups: {total_rounds}
+"""
+
     return report

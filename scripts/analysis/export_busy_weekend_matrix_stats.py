@@ -212,6 +212,156 @@ def write_csv(records: List[RunRecord], output_csv: Path) -> None:
     logger.info("Wrote %d rows to %s", len(rows), output_csv)
 
 
+def _is_number(value) -> bool:
+    try:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    except Exception:
+        return False
+
+
+def group_by_config(records: List[RunRecord]) -> Dict[str, List[RunRecord]]:
+    groups: Dict[str, List[RunRecord]] = {}
+    for r in records:
+        groups.setdefault(r.config_dir, []).append(r)
+    return groups
+
+
+def compute_group_averages(config: str, rows: List[RunRecord]) -> Dict[str, Optional[float]]:
+    # Stable identifiers (assumed constant within a config directory)
+    head = {
+        "config_dir": config,
+        "scenario": rows[0].scenario,
+        "with_bev": rows[0].with_bev,
+        "runner_count": rows[0].runner_count,
+        "delivery_orders": rows[0].delivery_orders,
+        "num_runs": len(rows),
+    }
+
+    # Numeric fields to average (None ignored)
+    numeric_fields = [
+        "revenue_per_round",
+        "orders_per_runner_hour",
+        "on_time_rate",
+        "delivery_cycle_time_p90",
+        "delivery_cycle_time_avg",
+        "failed_rate",
+        "second_runner_break_even_orders",
+        "queue_wait_avg",
+        "runner_utilization_driving_pct",
+        "runner_utilization_waiting_pct",
+        "distance_per_delivery_avg",
+        "total_revenue",
+        "total_orders",
+        "successful_orders",
+        "failed_orders",
+        "total_rounds",
+        "active_runner_hours",
+    ]
+
+    averages: Dict[str, Optional[float]] = {}
+    for field in numeric_fields:
+        values: List[float] = []
+        for r in rows:
+            v = getattr(r, field)
+            if v is None:
+                continue
+            if _is_number(v):
+                values.append(float(v))
+        if values:
+            averages[field] = sum(values) / len(values)
+        else:
+            averages[field] = None
+
+    return {**head, **averages}
+
+
+def write_aggregated_csv(records: List[RunRecord], output_csv: Path) -> None:
+    logger = logging.getLogger(__name__)
+    by_config = group_by_config(records)
+    aggregate_rows: List[Dict[str, Optional[float]]] = []
+    for config, rows in sorted(by_config.items()):
+        aggregate_rows.append(compute_group_averages(config, rows))
+
+    # Column order
+    fieldnames = [
+        "config_dir",
+        "scenario",
+        "with_bev",
+        "runner_count",
+        "delivery_orders",
+        "num_runs",
+        "revenue_per_round",
+        "orders_per_runner_hour",
+        "on_time_rate",
+        "delivery_cycle_time_p90",
+        "delivery_cycle_time_avg",
+        "failed_rate",
+        "second_runner_break_even_orders",
+        "queue_wait_avg",
+        "runner_utilization_driving_pct",
+        "runner_utilization_waiting_pct",
+        "distance_per_delivery_avg",
+        "total_revenue",
+        "total_orders",
+        "successful_orders",
+        "failed_orders",
+        "total_rounds",
+        "active_runner_hours",
+    ]
+
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    with output_csv.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in aggregate_rows:
+            writer.writerow(row)
+    logger.info("Wrote %d grouped rows to %s", len(aggregate_rows), output_csv)
+
+
+def write_per_config_csv(records: List[RunRecord], matrix_dir: Path) -> None:
+    logger = logging.getLogger(__name__)
+    by_config = group_by_config(records)
+    for config, rows in sorted(by_config.items()):
+        config_dir = matrix_dir / config
+        if not config_dir.exists():
+            continue
+        summary_path = config_dir / "summary_stats.csv"
+        aggregated = compute_group_averages(config, rows)
+
+        # Keep identical columns as aggregated CSV for consistency
+        fieldnames = [
+            "config_dir",
+            "scenario",
+            "with_bev",
+            "runner_count",
+            "delivery_orders",
+            "num_runs",
+            "revenue_per_round",
+            "orders_per_runner_hour",
+            "on_time_rate",
+            "delivery_cycle_time_p90",
+            "delivery_cycle_time_avg",
+            "failed_rate",
+            "second_runner_break_even_orders",
+            "queue_wait_avg",
+            "runner_utilization_driving_pct",
+            "runner_utilization_waiting_pct",
+            "distance_per_delivery_avg",
+            "total_revenue",
+            "total_orders",
+            "successful_orders",
+            "failed_orders",
+            "total_rounds",
+            "active_runner_hours",
+        ]
+
+        with summary_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerow(aggregated)
+        logger.info("Wrote per-config averages to %s", summary_path)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export busy_weekend_matrix stats to CSV")
     parser.add_argument(
@@ -226,6 +376,17 @@ def parse_args() -> argparse.Namespace:
         default=Path("outputs/busy_weekend_matrix/matrix_stats.csv"),
         help="Output CSV file path",
     )
+    parser.add_argument(
+        "--output-aggregated-csv",
+        type=Path,
+        default=Path("outputs/busy_weekend_matrix/matrix_stats_aggregated.csv"),
+        help="Output CSV with one row per configuration (averages across runs)",
+    )
+    parser.add_argument(
+        "--write-per-config",
+        action="store_true",
+        help="Also write a summary_stats.csv inside each configuration directory",
+    )
     return parser.parse_args()
 
 
@@ -235,6 +396,11 @@ def main() -> int:
     records = collect_records(args.matrix_dir)
     logging.getLogger(__name__).info("Collected %d run records", len(records))
     write_csv(records, args.output_csv)
+    # Aggregated outputs
+    if records:
+        write_aggregated_csv(records, args.output_aggregated_csv)
+        if args.write_per_config:
+            write_per_config_csv(records, args.matrix_dir)
     return 0
 
 

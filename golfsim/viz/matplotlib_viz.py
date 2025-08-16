@@ -269,14 +269,14 @@ def plot_golfer_path(ax, golfer_df: pd.DataFrame, results: Dict):
             color='black',
         )
 
-    # Mark start position with green circle
+    # Mark start position with blue circle
     ax.plot(
         lons[0], lats[0],
         'o',
         markersize=12,
-        color='green',
+        color='blue',
         label='Golfer Start (Tee 1)',
-        markeredgecolor='darkgreen',
+        markeredgecolor='darkblue',
         markeredgewidth=2,
         zorder=10,
     )
@@ -523,7 +523,7 @@ def render_beverage_cart_plot(
             )
 
             # Start and end markers
-            ax.plot(lons[0], lats[0], 'o', color='green', markersize=8, label='Start', zorder=7)
+            ax.plot(lons[0], lats[0], 'o', color='blue', markersize=8, label='Start', zorder=7)
             ax.plot(lons[-1], lats[-1], 'X', color='red', markersize=8, label='End', zorder=7)
 
     # Bounds
@@ -700,9 +700,9 @@ def plot_key_locations(ax, results: Dict, clubhouse_coords: Tuple[float, float],
             predicted_delivery[0], predicted_delivery[1],
             'D',  # Diamond shape for delivery
             markersize=12,
-            color='green',
+            color='blue',
             label='Delivery Location',
-            markeredgecolor='darkgreen',
+            markeredgecolor='darkblue',
             markeredgewidth=2,
             zorder=10,
         )
@@ -716,9 +716,9 @@ def plot_key_locations(ax, results: Dict, clubhouse_coords: Tuple[float, float],
                     delivery_location[0], delivery_location[1],
                     'D',  # Diamond shape for delivery
                     markersize=10,
-                    color='green',
+                    color='blue',
                     label='Delivery Location' if i == 0 else "",
-                    markeredgecolor='darkgreen',
+                    markeredgecolor='darkblue',
                     markeredgewidth=2,
                     zorder=10,
                 )
@@ -874,7 +874,7 @@ def render_single_delivery_plot(order: Dict, order_index: int, results: Dict, co
     course_bounds = calculate_course_bounds(course_data)
     setup_plot_styling(ax, single_order_results, course_name, clubhouse_coords, course_bounds)
 
-    # Update title to reflect single order
+    # Update title to reflect single order with timing information
     order_id = order.get('order_id', order_index + 1)
     hole_num = order.get('hole_num', 'Unknown')
     
@@ -884,7 +884,36 @@ def render_single_delivery_plot(order: Dict, order_index: int, results: Dict, co
     except (ValueError, TypeError):
         order_id_display = order_index + 1
     
-    ax.set_title(f'{course_name} - Delivery Order #{order_id_display} (Hole {hole_num})')
+    # Build title with timing information if available
+    title = f'{course_name} - Delivery Order #{order_id_display} (Hole {hole_num})'
+    
+    # Add timing information if delivery stats are available
+    if single_order_results.get('delivery_stats'):
+        delivery_stat = single_order_results['delivery_stats'][0]
+        
+        # Extract timing components
+        total_time_s = delivery_stat.get('total_completion_time_s', 0)
+        prep_time_s = delivery_stat.get('prep_time_s', 0)
+        delivery_time_s = delivery_stat.get('delivery_time_s', 0)
+        queue_wait_s = delivery_stat.get('queue_wait_time_s', 0)
+        distance_m = delivery_stat.get('delivery_distance_m', 0)
+        
+        # Convert to minutes
+        total_time_min = total_time_s / 60.0
+        prep_time_min = prep_time_s / 60.0
+        delivery_time_min = delivery_time_s / 60.0
+        queue_wait_min = queue_wait_s / 60.0
+        
+        # Add timing details to title
+        title += (
+            f"\nPrep: {prep_time_min:.1f} min | "
+            f"Queue: {queue_wait_min:.1f} min | "
+            f"Drive: {delivery_time_min:.1f} min | "
+            f"Total: {total_time_min:.1f} min | "
+            f"Distance: {distance_m:.0f}m"
+        )
+    
+    ax.set_title(title)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
@@ -1074,7 +1103,7 @@ def create_timeline_visualization(results: Dict, save_path: str | Path = "timeli
     # Convert to minutes for readability
     times = [t / 60 for t in [order_time, prep_completed, delivered, returned] if t > 0]
     events = ['Order\nPlaced', 'Prep\nComplete', 'Delivery\nMade', 'Runner\nReturned'][:len(times)]
-    colors = ['red', 'orange', 'green', 'blue'][:len(times)]
+    colors = ['red', 'orange', 'blue', 'lightblue'][:len(times)]
 
     # Plot timeline
     ax.scatter(times, [1] * len(times), c=colors, s=200, alpha=0.8)

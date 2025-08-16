@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -38,9 +39,9 @@ def _load_metrics_row(batch_dir: Path, simulation_id: str) -> Optional[Dict[str,
 
 def _build_replay_output_root(output_dir: Optional[str], simulation_id: str) -> Path:
     base = Path(output_dir) if output_dir else Path("outputs")
-    out = base / f"replay_{simulation_id}"
-    out.mkdir(parents=True, exist_ok=True)
-    return out
+    # Save directly in the output directory, not in a subfolder
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 
 def _run_cmd(cmd: list[str]) -> int:
@@ -50,6 +51,56 @@ def _run_cmd(cmd: list[str]) -> int:
         return proc.returncode
     except subprocess.CalledProcessError as e:
         return e.returncode
+
+
+def _flatten_and_rename_outputs(replay_root: Path, simulation_id: str) -> None:
+    """Move files from subfolders to parent directory with descriptive names"""
+    output_coords_dir = Path("output") / "coordinates"
+    output_coords_dir.mkdir(parents=True, exist_ok=True)
+    
+    # The target directory is the parent of replay_root (the main output directory)
+    target_dir = replay_root.parent
+    
+    # Find the run subfolder (usually run_01)
+    run_folders = list(replay_root.glob("run_*"))
+    if not run_folders:
+        print(f"No run folders found in {replay_root}")
+        return
+    
+    run_folder = run_folders[0]  # Use the first run folder
+    print(f"Flattening outputs from: {run_folder} to: {target_dir}")
+    
+    # Move and rename all files from run folder to target directory
+    for file_path in run_folder.iterdir():
+        if file_path.is_file():
+            # Create descriptive filename
+            new_name = f"{simulation_id}_{file_path.name}"
+            dest_path = target_dir / new_name
+            
+            # Move the file
+            shutil.move(str(file_path), str(dest_path))
+            print(f"Moved: {file_path.name} -> {dest_path}")
+            
+            # Copy coordinate files to output/coordinates/
+            if "coordinates" in file_path.name.lower() and file_path.suffix == '.csv':
+                coord_dest = output_coords_dir / new_name
+                shutil.copy2(str(dest_path), str(coord_dest))
+                print(f"Copied coordinates: {dest_path} -> {coord_dest}")
+    
+    # Handle metadata files in the replay_root directory
+    for meta_file in replay_root.glob("*.md"):
+        if meta_file.name in ["summary.md", "executive_summary_gemini.md"]:
+            new_meta_name = f"{simulation_id}_{meta_file.name}"
+            dest_meta = target_dir / new_meta_name
+            shutil.move(str(meta_file), str(dest_meta))
+            print(f"Moved: {meta_file.name} -> {dest_meta}")
+    
+    # Remove the entire replay_root directory since we've moved everything out
+    try:
+        shutil.rmtree(replay_root)
+        print(f"Removed temporary folder: {replay_root}")
+    except OSError as e:
+        print(f"Could not remove folder: {replay_root} - {e}")
 
 
 def replay_simulation(batch_dir: str, simulation_id: str, output_dir: Optional[str], course_dir: str, log_level: str) -> int:
@@ -65,7 +116,10 @@ def replay_simulation(batch_dir: str, simulation_id: str, output_dir: Optional[s
     num_carts = int(row.get("num_carts", "0") or 0)
     num_runners = int(row.get("num_runners", "0") or 0)
 
-    replay_root = _build_replay_output_root(output_dir, simulation_id)
+    # Create a temporary subdirectory for this replay that will be flattened later
+    base_output = Path(output_dir) if output_dir else Path("outputs")
+    replay_root = base_output / f"replay_{simulation_id}"
+    replay_root.mkdir(parents=True, exist_ok=True)
 
     run_script = str(Path("scripts") / "sim" / "run_unified_simulation.py")
 
@@ -89,6 +143,7 @@ def replay_simulation(batch_dir: str, simulation_id: str, output_dir: Optional[s
                 "--avg-order-usd", f"{float(avg_price) if avg_price else 12.0}",
                 "--random-seed", f"{int(seed)}" if seed else "0",
             ]
+            # Ensure coordinates are generated (don't add --no-coordinates flag)
         else:
             cmd = [
                 sys.executable,
@@ -100,8 +155,12 @@ def replay_simulation(batch_dir: str, simulation_id: str, output_dir: Optional[s
                 "--output-dir", str(replay_root),
                 "--log-level", log_level,
             ]
+            # Ensure coordinates are generated (don't add --no-coordinates flag)
         print("Replaying bev-cart simulation via:", " ".join(cmd))
-        return _run_cmd(cmd)
+        result = _run_cmd(cmd)
+        if result == 0:
+            _flatten_and_rename_outputs(replay_root, simulation_id)
+        return result
 
     if mode == "runner":
         order_prob9 = row.get("delivery_order_prob")
@@ -124,8 +183,12 @@ def replay_simulation(batch_dir: str, simulation_id: str, output_dir: Optional[s
             "--first-tee", "09:00",
             "--random-seed", f"{int(seed)}" if seed else "0",
         ]
+        # Ensure coordinates are generated (don't add --no-coordinates flag)
         print("Replaying runner simulation via:", " ".join(cmd))
-        return _run_cmd(cmd)
+        result = _run_cmd(cmd)
+        if result == 0:
+            _flatten_and_rename_outputs(replay_root, simulation_id)
+        return result
 
     print(f"Unknown or unsupported mode in metrics row: {mode}")
     return 2

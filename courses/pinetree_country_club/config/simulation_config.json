@@ -27,14 +27,26 @@
   "delivery_avg_order_usd": 30.0,
   "bev_cart_order_probability_per_9_holes": 0.35,
   "delivery_total_orders": 20,
+  "minutes_per_hole": 12,
+  "delivery_hourly_distribution": {
+    "10:00": 0.05,
+    "11:00": 0.12,
+    "12:00": 0.22,
+    "13:00": 0.18,
+    "14:00": 0.10,
+    "15:00": 0.12,
+    "16:00": 0.13,
+    "17:00": 0.06,
+    "18:00": 0.02
+  },
   "delivery_service_hours": {
-    "open_time": "11:00",
-    "close_time": "18:00",
-    "description": "Delivery service operates 11:00 AM to 6:00 PM"
+    "open_time": "10:00",
+    "close_time": "19:00",
+    "description": "Delivery service operates 10:00 AM to 7:00 PM"
   },
   "bev_cart_service_hours": {
     "start_time": "09:00",
-    "end_time": "17:00",
-    "description": "Beverage cart operates 9:00 AM to 5:00 PM"
+    "end_time": "18:00",
+    "description": "Beverage cart operates 9:00 AM to 6:00 PM"
   }
 }

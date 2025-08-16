@@ -186,7 +186,7 @@ def create_course_heatmap(results: Dict,
                          save_path: str | Path,
                          title: str = "Golf Course Order Drive Time Heatmap",
                          grid_resolution: int = 100,
-                         colormap: str = 'RdYlGn_r') -> Path:
+                         colormap: str = 'RdYlBu_r') -> Path:
     """Create a heatmap visualization of order drive times across the golf course.
     
     Args:
@@ -221,7 +221,7 @@ def create_course_heatmap(results: Dict,
         fig, ax = plt.subplots(figsize=(12, 10))
         if 'course_polygon' in course_data:
             course_poly = course_data['course_polygon']
-            course_poly.plot(ax=ax, color='lightgreen', alpha=0.3, edgecolor='darkgreen')
+            course_poly.plot(ax=ax, color='lightgray', alpha=0.3, edgecolor='gray')
         ax.set_title(f"{title}\n(No order data available)")
         ax.set_xlabel('Longitude')
         ax.set_ylabel('Latitude')
