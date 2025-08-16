@@ -304,7 +304,7 @@ Examples:
     parser.add_argument("--prep-time", type=int, default=10,
                        help="Food preparation time in minutes (default: 10)")
     parser.add_argument("--runner-speed", type=float, default=6.0,
-                       help="Runner speed in m/s (default: 6.0)")
+                       help="Runner speed in m/s (default: 6.0; config stores mph but is converted)")
     parser.add_argument("--no-enhanced", action="store_true",
                        help="Don't use enhanced cart network (use original)")
     parser.add_argument("--save-coordinates", action="store_true",
@@ -355,7 +355,7 @@ Examples:
         simulation_result = SimulationResult(
             metadata={
                 "simulation_type": "single_golfer",
-                "course": str(course_dir),
+                "course": str(args.course_dir),
                 "timestamp": datetime.now().isoformat(),
                 "config": {
                     "hole": args.hole,

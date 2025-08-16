@@ -1144,12 +1144,11 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        "Starting single-golfer delivery sims: %d run(s), hole=%s, prep=%d min, runner_speed=%.2f mph (%.2f m/s)",
+        "Starting single-golfer delivery sims: %d run(s), hole=%s, prep=%d min, runner_speed=%.2f m/s",
         int(args.num_runs),
         args.hole if getattr(args, "hole", None) else "random",
         int(args.prep_time),
         float(args.runner_speed),
-        float(args.runner_speed) * 0.44704,
     )
 
     all_runs: List[Dict] = []
@@ -1159,12 +1158,11 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
         run_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            mph_to_mps = float(args.runner_speed) * 0.44704
             results = run_golf_delivery_simulation(
                 course_dir=args.course_dir,
                 order_hole=getattr(args, "hole", None),
                 prep_time_min=int(args.prep_time),
-                runner_speed_mps=mph_to_mps,
+                runner_speed_mps=float(args.runner_speed),
                 hole_placement=str(getattr(args, "placement", "mid")),
                 runner_delay_min=float(getattr(args, "runner_delay", 0.0)),
                 use_enhanced_network=not bool(getattr(args, "no_enhanced", False)),
@@ -2274,7 +2272,7 @@ def main() -> None:
         "--runner-speed",
         type=float,
         default=6.0,
-        help="Runner speed (single-golfer: mph; other modes: m/s)",
+        help="Runner speed in m/s (all modes). Config allows mph but is converted during load.",
     )
     parser.add_argument("--revenue-per-order", type=float, default=25.0, help="Revenue per successful order")
     parser.add_argument("--sla-minutes", type=int, default=30, help="SLA in minutes")

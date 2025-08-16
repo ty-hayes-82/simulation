@@ -290,7 +290,7 @@ def main() -> int:
     )
     # Optional overrides (fall back to simulation_config.json)
     parser.add_argument("--prep-time", type=int, default=None, help="Delivery prep time minutes (override)")
-    parser.add_argument("--runner-speed", type=float, default=None, help="Runner speed m/s (override)")
+    parser.add_argument("--runner-speed", type=float, default=None, help="Runner speed in m/s (override; config mph converted on load)")
     parser.add_argument("--order-prob-9", type=float, default=None, help="Delivery order probability per 9 holes (override)")
     parser.add_argument("--bev-pass-prob", type=float, default=None, help="Bev cart pass order probability (override)")
     parser.add_argument("--bev-avg-order", type=float, default=None, help="Bev cart average order USD (override)")

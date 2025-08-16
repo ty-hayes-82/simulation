@@ -1335,10 +1335,9 @@ def run_improved_single_golfer_simulation(
 
     # Simulation results
     order_data = {}
-    # Record runner speed in results for clarity
+    # Record runner speed in results for clarity (m/s only; mph shown only in config)
     try:
         order_data['runner_speed_mps'] = float(runner_speed_mps)
-        order_data['runner_speed_mph'] = float(runner_speed_mps) / 0.44704
     except Exception:
         pass
 

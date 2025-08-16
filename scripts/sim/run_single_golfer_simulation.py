@@ -59,7 +59,7 @@ def main() -> int:
     parser.add_argument("--prep-time", type=int, default=10,
                        help="Food preparation time in minutes (default: 10)")
     parser.add_argument("--runner-speed", type=float, default=None,
-                        help="Runner speed in m/s (default: from course config 'delivery_runner_speed_mph')")
+                        help="Runner speed in m/s (default: converted from config 'delivery_runner_speed_mph')")
     parser.add_argument("--placement", choices=["tee", "mid", "green"], default="mid",
                         help="Where on the specified --hole to place the order: tee, mid, or green (default: mid)")
     parser.add_argument("--runner-delay", type=float, default=0.0, metavar="MIN",
@@ -121,15 +121,14 @@ def main() -> int:
     logger.info(f"Course: {args.course_dir}")
     logger.info(f"Order hole: {args.hole if args.hole else 'Random'}")
     logger.info(f"Prep time: {args.prep_time} minutes")
-    # Determine effective speed for logging (config mph → m/s if CLI not provided)
+    # Determine effective speed for logging (config mph → m/s conversion handled by loader)
     try:
         sim_cfg_preview = load_simulation_config(args.course_dir)
         cfg_mps = float(getattr(sim_cfg_preview, "delivery_runner_speed_mps", 6.0))
-        cfg_mph = cfg_mps / 0.44704
     except Exception:
         cfg_mps, cfg_mph = 6.0, 6.0
     if args.runner_speed is None:
-        logger.info(f"Runner speed: {cfg_mph:.1f} mph ({cfg_mps:.2f} m/s) [from config]")
+        logger.info(f"Runner speed: {cfg_mps:.2f} m/s [from config]")
     else:
         logger.info(f"Runner speed (override): {args.runner_speed:.2f} m/s")
     logger.info(f"Enhanced routing: {'No' if args.no_enhanced else 'Yes'}")

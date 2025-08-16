@@ -56,7 +56,7 @@ def main() -> None:
     parser.add_argument("--first-tee", type=str, default="09:00", help="First tee time HH:MM")
     parser.add_argument("--order-prob-9", type=float, default=0.5, help="Order probability per 9 holes per group (0..1)")
     parser.add_argument("--prep-time", type=int, default=10, help="Food preparation time in minutes")
-    parser.add_argument("--runner-speed", type=float, default=6.0, help="Runner speed in m/s")
+    parser.add_argument("--runner-speed", type=float, default=6.0, help="Runner speed in m/s (all scripts use m/s; config mph converted on load)")
     parser.add_argument("--revenue-per-order", type=float, default=25.0, help="Revenue per successful order")
     parser.add_argument("--sla-minutes", type=int, default=30, help="SLA in minutes")
     parser.add_argument("--service-hours", type=float, default=10.0, help="Active service hours for runner (for metrics scaling)")
