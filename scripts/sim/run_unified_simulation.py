@@ -26,11 +26,23 @@ from datetime import datetime
 from pathlib import Path
 import sys
 from typing import Dict, List, Tuple, Any, Optional
+import os
+import subprocess
 
 import simpy
 import csv
 
 from golfsim.logging import init_logging, get_logger
+from golfsim.performance_logger import (
+    get_performance_tracker, 
+    reset_performance_tracking, 
+    log_performance_summary,
+    timed_operation,
+    timed_file_io,
+    timed_visualization,
+    timed_computation,
+    timed_simulation
+)
 from golfsim.config.loaders import load_tee_times_config, load_simulation_config
 from golfsim.simulation.services import (
     BeverageCartService,
@@ -42,6 +54,10 @@ from golfsim.simulation.crossings import (
     compute_crossings_from_files,
     serialize_crossings_summary,
 )
+from golfsim.simulation.pass_detection import (
+    find_proximity_pass_events,
+    compute_group_hole_at_time,
+)
 from golfsim.simulation.bev_cart_pass import simulate_beverage_cart_sales
 from golfsim.io.results import write_unified_coordinates_csv, save_results_bundle
 from golfsim.viz.matplotlib_viz import (
@@ -50,7 +66,8 @@ from golfsim.viz.matplotlib_viz import (
     load_course_geospatial_data,
     create_folium_delivery_map,
 )
-from golfsim.viz.heatmap_viz import create_course_heatmap
+from golfsim.viz.heatmap_viz import create_course_heatmap, create_interactive_course_heatmap, load_all_heatmap_data, clear_heatmap_caches
+from golfsim.viz.matplotlib_viz import clear_course_data_cache
 from golfsim.io.phase_reporting import save_phase3_output_files, write_phase3_summary
 from golfsim.analysis.metrics_integration import generate_and_save_metrics
 from golfsim.simulation.engine import run_golf_delivery_simulation
@@ -63,6 +80,140 @@ from utils.simulation_reporting import (
 
 
 logger = get_logger(__name__)
+
+
+def _prepare_and_open_react_viewer(viewer_dir: Path, outputs_root: Path, run_path: Path, course_dir: str) -> None:
+    """Export hole delivery GeoJSON, prepare the React app data, and launch the viewer.
+
+    Best-effort: failures are logged but do not stop the simulation script.
+    Starts a dev server on a free port (default 3000) if none is running and opens /animation.
+    """
+    try:
+        # 0) Determine preferred default simulation id for the viewer manifest
+        preferred_id = None
+        try:
+            import os as _os  # local import
+            # Prefer coordinates.csv for the current run, else bev_cart_coordinates.csv
+            for fname in ("coordinates.csv", "bev_cart_coordinates.csv"):
+                p = run_path / fname
+                if p.exists():
+                    rel = _os.path.relpath(str(p), str(outputs_root))
+                    preferred_id = rel.replace(_os.sep, "_").replace(".csv", "")
+                    break
+        except Exception:
+            preferred_id = None
+
+        # 1) Export GeoJSON heatmap (if results exist)
+        exporter = Path("scripts") / "viz" / "export_hole_delivery_geojson.py"
+        results_json: Optional[Path] = None
+        # Prefer multi-order formats used by delivery-runner and bev-with-golfers
+        for name in ("results.json", "result.json", "simulation_results.json"):
+            cand = run_path / name
+            if cand.exists():
+                results_json = cand
+                break
+
+        # If only simulation_results.json exists (single-golfer), synthesize a minimal results file for exporter
+        synthesized_results: Optional[Path] = None
+        if results_json and results_json.name == "simulation_results.json":
+            try:
+                with results_json.open("r", encoding="utf-8") as f:
+                    sim_res = json.load(f)
+                orders_like = [{
+                    "hole_num": sim_res.get("order_hole"),
+                    "total_completion_time_s": sim_res.get("total_service_time_s"),
+                    "order_id": "order_1",
+                    "golfer_group_id": 1,
+                    "order_time_s": sim_res.get("order_time_s", 0)
+                }] if sim_res.get("order_hole") else []
+                minimal = {"orders": orders_like, "delivery_stats": []}
+                synthesized_results = run_path / "results_for_geojson.json"
+                synthesized_results.write_text(json.dumps(minimal, indent=2), encoding="utf-8")
+                results_json = synthesized_results
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Failed to synthesize results for GeoJSON export: %s", e)
+
+        if results_json and exporter.exists():
+            try:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(exporter),
+                        "--results-file",
+                        str(results_json),
+                        "--course-dir",
+                        str(course_dir),
+                        "--output",
+                        str(viewer_dir / "public" / "hole_delivery_times.geojson"),
+                    ],
+                    check=False,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("GeoJSON export failed: %s", e)
+
+        # 2) Prepare coordinates manifest for the viewer
+        try:
+            env = os.environ.copy()
+            env["SIM_BASE_DIR"] = str(outputs_root.resolve())
+            if preferred_id:
+                env["DEFAULT_SIMULATION_ID"] = str(preferred_id)
+            # Ensure UTF-8 to avoid Windows console emoji issues
+            env.setdefault("PYTHONIOENCODING", "utf-8")
+            subprocess.run([sys.executable, "run_map_app.py"], cwd=str(viewer_dir), env=env, check=False)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Preparing React viewer data failed: %s", e)
+
+        # 3) Start React dev server (non-blocking) and open browser
+        try:
+            import urllib.request as _url  # local import
+            import socket as _socket  # local import
+
+            def _is_up(port: int) -> bool:
+                try:
+                    with _url.urlopen(f"http://localhost:{port}", timeout=1) as _:
+                        return True
+                except Exception:
+                    return False
+
+            # Pick port: use 3000 if available, else find the next free port
+            port = 3000
+            if not _is_up(port):
+                # find a free port starting at 3000
+                for p in range(3000, 3011):
+                    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+                        try:
+                            s.bind(("127.0.0.1", p))
+                            port = p
+                            break
+                        except Exception:
+                            continue
+
+            if not _is_up(port):
+                try:
+                    env2 = os.environ.copy()
+                    env2["BROWSER"] = "none"  # prevent CRA from opening another tab
+                    env2["PORT"] = str(port)
+                    # Choose npm executable per OS
+                    npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
+                    subprocess.Popen([npm_cmd, "start"], cwd=str(viewer_dir), env=env2)
+                except Exception as e2:  # noqa: BLE001
+                    logger.warning("Failed to start React dev server: %s", e2)
+            else:
+                logger.info("Detected existing dev server at http://localhost:%d; skipping start", port)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Dev server check/start failed: %s", e)
+        try:
+            import webbrowser  # local import
+
+            # Open animation tab by default; user can switch to heatmap in the UI
+            try:
+                webbrowser.open(f"http://localhost:{port}/animation")  # type: ignore[name-defined]
+            except Exception:
+                webbrowser.open("http://localhost:3000/animation")
+        except Exception:
+            pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to open React viewer: %s", e)
 
 
 def _calculate_utilization_from_activity_log(activity_logs: List[Dict[str, Any]], service_hours: float) -> Dict[str, Dict[str, float]]:
@@ -243,7 +394,9 @@ def _generate_standardized_output_name(
     hole: int = None,
 ) -> str:
     """Generate standardized output directory name in format:
-    {timestamp}_{#}bevcarts_{#}runners_{#}golfers_{teetime_scenario if applicable}
+    {timestamp}_{#}bevcarts_{#}runners_{teetime_scenario if applicable}
+    
+    Note: Golfer counts are excluded when tee_scenario is specified to avoid redundancy.
     """
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     
@@ -252,21 +405,27 @@ def _generate_standardized_output_name(
     
     # Add beverage carts count
     if num_bev_carts > 0:
-        parts.append(f"{num_bev_carts}bevcarts")
+        parts.append(f"{num_bev_carts}_bevcarts")
     else:
-        parts.append("0bevcarts")
+        parts.append("0_bevcarts")
     
     # Add runners count
     if num_runners > 0:
-        parts.append(f"{num_runners}runners")
+        parts.append(f"{num_runners}_runners")
     else:
-        parts.append("0runners")
+        parts.append("0_runners")
     
-    # Add golfers count
-    if num_golfers > 0:
-        parts.append(f"{num_golfers}golfers")
+    # Add golfers count only if no tee scenario is specified
+    # (tee scenarios already imply golfer presence, so we don't need to count them)
+    if tee_scenario and tee_scenario.lower() not in {"none", "manual"}:
+        # Skip golfer count when using tee scenario
+        pass
     else:
-        parts.append("0golfers")
+        # Add golfers count only for manual/random scenarios
+        if num_golfers > 0:
+            parts.append(f"{num_golfers}_golfers")
+        else:
+            parts.append("0_golfers")
     
     # Add tee scenario if applicable
     if tee_scenario and tee_scenario.lower() not in {"none", "manual"}:
@@ -302,6 +461,36 @@ def _build_simulation_id(output_root: Path, run_idx: int) -> str:
         return f"sim_run_{run_idx:02d}"
 
 
+def _clear_cached_travel_times(course_dir: str) -> None:
+    """Clear cached travel times to force dynamic routing with current configuration.
+    
+    Moves travel_times.json and travel_times_simple.json to .backup files
+    so the simulation will use dynamic routing based on current runner speed.
+    """
+    course_path = Path(course_dir)
+    travel_files = [
+        course_path / "travel_times.json",
+        course_path / "travel_times_simple.json"
+    ]
+    
+    cleared_files = []
+    for travel_file in travel_files:
+        if travel_file.exists():
+            backup_file = travel_file.with_suffix(travel_file.suffix + ".backup")
+            try:
+                travel_file.rename(backup_file)
+                cleared_files.append(travel_file.name)
+                logger.info("Moved %s to %s", travel_file.name, backup_file.name)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Failed to move %s: %s", travel_file.name, e)
+    
+    if cleared_files:
+        logger.info("Cleared cached travel times: %s", ", ".join(cleared_files))
+        logger.info("Simulation will now use dynamic routing with current runner speed configuration")
+    else:
+        logger.info("No cached travel times found to clear")
+
+
 def _write_event_log_csv(events: List[Dict[str, Any]], save_path: Path) -> None:
     """Write a unified, replay-friendly events CSV.
 
@@ -335,6 +524,400 @@ def _write_event_log_csv(events: List[Dict[str, Any]], save_path: Path) -> None:
         for ev in sorted(events, key=lambda e: int(e.get("timestamp_s", 0))):
             writer.writerow(ev)
 
+
+def _write_order_logs_csv(sim_result: Dict[str, Any], save_path: Path) -> None:
+    """Write a per-run CSV summarizing order lifecycle and drive times.
+
+    Columns (abbreviated):
+    - order_id
+    - placed_ts (HH:MM)
+    - placed_hole
+    - queue
+    - mins_to_set
+    - drive_out_min (outbound only)
+    - drive_total_min (outbound + return)
+    - delivery_hole (hole number)
+    """
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "order_id",
+        "placed_ts",
+        "placed_hole",
+        "queue",
+        "mins_to_set",
+        "drive_out_min",
+        "drive_total_min",
+        "delivery_hole",
+    ]
+
+    activity: List[Dict[str, Any]] = list(sim_result.get("activity_log", []) or [])
+    delivery_stats: List[Dict[str, Any]] = list(sim_result.get("delivery_stats", []) or [])
+    # Prefer all generated orders (including those outside service hours) if available
+    orders_list: List[Dict[str, Any]] = list(
+        (sim_result.get("orders_all") or sim_result.get("orders") or [])
+    )
+
+    placed_by_id: Dict[str, Dict[str, Any]] = {}
+    start_by_id: Dict[str, Dict[str, Any]] = {}
+    for a in activity:
+        oid = a.get("order_id")
+        if not oid:
+            continue
+        t = int(a.get("timestamp_s", 0))
+        if a.get("activity_type") == "order_received" and oid not in placed_by_id:
+            placed_by_id[oid] = {
+                "timestamp_s": t,
+                "time_str": a.get("time_str") or _seconds_to_clock_str(t),
+                # Use golfer hole at placement if known via orders list; fallback to activity location
+                "location": a.get("location") or "",
+                "orders_in_queue": a.get("orders_in_queue"),
+            }
+        elif a.get("activity_type") == "delivery_start" and oid not in start_by_id:
+            start_by_id[oid] = {
+                "timestamp_s": t,
+                "time_str": a.get("time_str") or _seconds_to_clock_str(t),
+            }
+
+    stats_by_id: Dict[str, Dict[str, Any]] = {str(s.get("order_id")): s for s in delivery_stats if s.get("order_id") is not None}
+
+    with save_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for o in orders_list:
+            oid = str(o.get("order_id")) if o.get("order_id") is not None else ""
+            placed = placed_by_id.get(oid, {})
+            started = start_by_id.get(oid, {})
+            stats = stats_by_id.get(oid, {})
+
+            placed_ts_s = placed.get("timestamp_s")
+            start_ts_s = started.get("timestamp_s")
+            mins_to_set = None
+            if isinstance(placed_ts_s, (int, float)) and isinstance(start_ts_s, (int, float)):
+                delta = (float(start_ts_s) - float(placed_ts_s)) / 60.0
+                mins_to_set = max(0.0, round(delta))
+
+            # Determine placed location as golfer hole number at order time if available
+            placed_location = ""
+            try:
+                # use the hole from the orders list/stats
+                placed_location = stats.get("hole_num") or o.get("hole_num") or ""
+            except Exception:
+                placed_location = placed.get("location", "")
+
+            # Fallback to order_time_s if no placement activity exists
+            placed_ts_str = placed.get("time_str")
+            if not placed_ts_str:
+                if placed_ts_s is not None:
+                    placed_ts_str = _seconds_to_clock_str(int(placed_ts_s))
+                else:
+                    try:
+                        ots = o.get("order_time_s")
+                        if isinstance(ots, (int, float)):
+                            placed_ts_str = _seconds_to_clock_str(int(ots))
+                    except Exception:
+                        placed_ts_str = ""
+
+            # Convert queue length to 1-based position if present
+            q_raw = placed.get("orders_in_queue")
+            try:
+                queue_pos = (int(q_raw) + 1) if q_raw is not None else None
+            except Exception:
+                queue_pos = None
+
+            row = {
+                "order_id": oid,
+                "placed_ts": placed_ts_str or "",
+                "placed_hole": placed_location,
+                "queue": queue_pos,
+                "mins_to_set": mins_to_set,
+                "drive_out_min": (round(float(stats.get("delivery_time_s", 0.0)) / 60.0) if stats else None),
+                "drive_total_min": (round(float(stats.get("total_drive_time_s", 0.0)) / 60.0) if stats else None),
+                "delivery_hole": stats.get("hole_num") or o.get("hole_num"),
+            }
+            writer.writerow(row)
+
+
+def _normalize_streams_to_baseline(points_by_id: Dict[str, List[Dict[str, Any]]], baseline_s: int) -> Dict[str, List[Dict[str, Any]]]:
+    """Shift all timestamps so baseline_s becomes 0 and drop points before baseline.
+
+    - Uses 'timestamp' if present, else 'timestamp_s'.
+    - Returns a new mapping; does not mutate inputs.
+    """
+    normalized: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        b = int(baseline_s)
+    except Exception:
+        b = 0
+    for stream_id, pts in (points_by_id or {}).items():
+        out: List[Dict[str, Any]] = []
+        for p in pts or []:
+            try:
+                ts_raw = p.get("timestamp", p.get("timestamp_s", 0))
+                ts = int(float(ts_raw or 0))
+            except Exception:
+                ts = 0
+            if ts < b:
+                continue
+            q = dict(p)
+            q["timestamp"] = int(ts - b)
+            out.append(q)
+        normalized[stream_id] = out
+    return normalized
+
+
+def _clip_streams_at_baseline(points_by_id: Dict[str, List[Dict[str, Any]]], baseline_s: int) -> Dict[str, List[Dict[str, Any]]]:
+    """Drop any points earlier than baseline, but keep absolute timestamps.
+
+    - Uses 'timestamp' if present, else 'timestamp_s'.
+    - Returns a new mapping; does not mutate inputs.
+    """
+    clipped: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        b = int(baseline_s)
+    except Exception:
+        b = 0
+    for stream_id, pts in (points_by_id or {}).items():
+        out: List[Dict[str, Any]] = []
+        for p in pts or []:
+            try:
+                ts_raw = p.get("timestamp", p.get("timestamp_s", 0))
+                ts = int(float(ts_raw or 0))
+            except Exception:
+                ts = 0
+            if ts < b:
+                continue
+            out.append(dict(p))
+        clipped[stream_id] = out
+    return clipped
+
+
+def _build_runner_action_segments(activity_logs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Build contiguous runner action segments from activity logs.
+
+    Produces segments that fully partition the on-duty window into exactly three action types:
+    - delivery_drive: delivery_start → (order_delivered | delivery_failed | delivered)
+    - return_drive: returning → (runner_returned | returned_to_clubhouse | returned)
+    - waiting_at_clubhouse: all remaining time within [service_opened, service_closed]
+
+    Any incomplete drive/return segments are closed at service end.
+    """
+    if not activity_logs:
+        return []
+
+    # Group by runner
+    by_runner: Dict[str, List[Dict[str, Any]]] = {}
+    for a in activity_logs:
+        rid = a.get("runner_id") or "runner_1"
+        by_runner.setdefault(str(rid), []).append(a)
+
+    drive_like: List[Dict[str, Any]] = []
+    return_like: List[Dict[str, Any]] = []
+
+    def _is_delivery_end(tag: str) -> bool:
+        t = tag.lower()
+        return (
+            "order_delivered" in t
+            or ("delivered" in t and "order" in t)
+            or "delivery_complete" in t
+            or ("delivery_failed" in t or ("failed" in t and "delivery" in t))
+        )
+
+    def _is_return_end(tag: str) -> bool:
+        t = tag.lower()
+        return (
+            "runner_returned" in t
+            or "returned_to_clubhouse" in t
+            or ("returned" in t and "runner" in t)
+            or "return_complete" in t
+        )
+
+    for runner_id, entries in by_runner.items():
+        # Sort events
+        entries_sorted = sorted(entries, key=lambda x: int(x.get("timestamp_s", 0)))
+
+        service_open_s: Optional[int] = None
+        service_close_s: Optional[int] = None
+        delivery_start_s: Optional[int] = None
+        return_start_s: Optional[int] = None
+
+        for e in entries_sorted:
+            ts = int(e.get("timestamp_s", 0))
+            tag = str(e.get("activity_type", e.get("event", "")))
+            tag_l = tag.lower()
+
+            if "service_opened" in tag_l and service_open_s is None:
+                service_open_s = ts
+            elif "service_closed" in tag_l:
+                # Treat as end-of-day close only if after opening
+                if service_open_s is not None and ts >= service_open_s:
+                    service_close_s = ts
+
+            if "delivery_start" in tag_l and delivery_start_s is None:
+                delivery_start_s = ts
+            elif delivery_start_s is not None and _is_delivery_end(tag):
+                drive_like.append(
+                    {
+                        "runner_id": runner_id,
+                        "action_type": "delivery_drive",
+                        "start_timestamp_s": int(delivery_start_s),
+                        "end_timestamp_s": int(ts),
+                    }
+                )
+                delivery_start_s = None
+                # Immediately begin return drive at delivery completion
+                if return_start_s is None:
+                    return_start_s = ts
+
+            if "returning" in tag_l and return_start_s is None:
+                return_start_s = ts
+            else:
+                # Infer return end at the next event that isn't another returning marker
+                if return_start_s is not None and ts > return_start_s and not tag_l.startswith("returning"):
+                    return_like.append(
+                        {
+                            "runner_id": runner_id,
+                            "action_type": "return_drive",
+                            "start_timestamp_s": int(return_start_s),
+                            "end_timestamp_s": int(ts),
+                        }
+                    )
+                    return_start_s = None
+
+        # Determine duty window (fallback to observed span when open/close absent)
+        if service_open_s is None:
+            try:
+                service_open_s = int(min(int(e.get("timestamp_s", 0)) for e in entries_sorted)) if entries_sorted else None
+            except Exception:
+                service_open_s = None
+        if service_close_s is None:
+            try:
+                service_close_s = int(max(int(e.get("timestamp_s", 0)) for e in entries_sorted)) if entries_sorted else None
+            except Exception:
+                service_close_s = None
+
+        # Close any open segments at service end
+        if service_close_s is not None:
+            if delivery_start_s is not None and service_close_s > delivery_start_s:
+                drive_like.append(
+                    {
+                        "runner_id": runner_id,
+                        "action_type": "delivery_drive",
+                        "start_timestamp_s": int(delivery_start_s),
+                        "end_timestamp_s": int(service_close_s),
+                    }
+                )
+            if return_start_s is not None and service_close_s > return_start_s:
+                return_like.append(
+                    {
+                        "runner_id": runner_id,
+                        "action_type": "return_drive",
+                        "start_timestamp_s": int(return_start_s),
+                        "end_timestamp_s": int(service_close_s),
+                    }
+                )
+
+        if service_open_s is None or service_close_s is None or service_close_s <= service_open_s:
+            # Cannot build a fully partitioned timeline without a window
+            continue
+
+        # Combine and clip drive segments to duty window
+        combined: List[Dict[str, Any]] = []
+        for seg in drive_like + return_like:
+            s = max(int(seg["start_timestamp_s"]), int(service_open_s))
+            e = min(int(seg["end_timestamp_s"]), int(service_close_s))
+            if e > s:
+                combined.append({**seg, "start_timestamp_s": s, "end_timestamp_s": e})
+
+        # Order by start, then end
+        combined.sort(key=lambda d: (int(d.get("start_timestamp_s", 0)), int(d.get("end_timestamp_s", 0))))
+
+        # Build full partition: waiting fills gaps
+        cursor = int(service_open_s)
+        full_segments: List[Dict[str, Any]] = []
+        for seg in combined:
+            s = int(seg["start_timestamp_s"])
+            e = int(seg["end_timestamp_s"])
+            if s > cursor:
+                full_segments.append({
+                    "runner_id": runner_id,
+                    "action_type": "waiting_at_clubhouse",
+                    "start_timestamp_s": int(cursor),
+                    "end_timestamp_s": int(s),
+                })
+                cursor = s
+            # Trim overlap
+            if e > cursor:
+                seg2 = dict(seg)
+                seg2["start_timestamp_s"] = int(cursor)
+                full_segments.append(seg2)
+                cursor = e
+
+        if cursor < int(service_close_s):
+            full_segments.append({
+                "runner_id": runner_id,
+                "action_type": "waiting_at_clubhouse",
+                "start_timestamp_s": int(cursor),
+                "end_timestamp_s": int(service_close_s),
+            })
+
+        # Coalesce consecutive segments of the same action_type that are contiguous/overlapping
+        if full_segments:
+            full_segments.sort(key=lambda d: (int(d.get("start_timestamp_s", 0)), int(d.get("end_timestamp_s", 0))))
+            coalesced: List[Dict[str, Any]] = []
+            for seg in full_segments:
+                if not coalesced:
+                    coalesced.append(dict(seg))
+                    continue
+                prev = coalesced[-1]
+                same_type = str(prev.get("action_type")) == str(seg.get("action_type"))
+                # Treat touching segments (end == start) as contiguous
+                if same_type and int(seg.get("start_timestamp_s", 0)) <= int(prev.get("end_timestamp_s", 0)):
+                    prev["end_timestamp_s"] = int(max(int(prev.get("end_timestamp_s", 0)), int(seg.get("end_timestamp_s", 0))))
+                elif same_type and int(seg.get("start_timestamp_s", 0)) == int(prev.get("end_timestamp_s", 0)) + 0:
+                    prev["end_timestamp_s"] = int(seg.get("end_timestamp_s", 0))
+                else:
+                    coalesced.append(dict(seg))
+        else:
+            coalesced = full_segments
+
+        # Add formatted fields
+        for s in coalesced:
+            s["start_timestamp"] = _seconds_to_clock_str(int(s["start_timestamp_s"]))
+            s["end_timestamp"] = _seconds_to_clock_str(int(s["end_timestamp_s"]))
+            s["duration_s"] = int(max(0, int(s["end_timestamp_s"]) - int(s["start_timestamp_s"])) )
+
+        # Append to global list
+        drive_like.clear()
+        return_like.clear()
+        if 'segments' not in locals():
+            segments: List[Dict[str, Any]] = []
+        segments.extend(coalesced)
+
+    # Stable ordering across runners
+    if 'segments' not in locals():
+        segments = []
+    segments.sort(key=lambda d: (str(d.get("runner_id")), int(d.get("start_timestamp_s", 0)), str(d.get("action_type"))))
+    return segments
+
+
+def _write_runner_action_log(activity_logs: List[Dict[str, Any]], save_path: Path) -> None:
+    """Write runner action segments to CSV."""
+    segments = _build_runner_action_segments(activity_logs)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "runner_id",
+        "action_type",
+        "start_timestamp",
+        "end_timestamp",
+        "start_timestamp_s",
+        "end_timestamp_s",
+        "duration_s",
+    ]
+    with save_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for seg in segments:
+            writer.writerow({k: seg.get(k) for k in fieldnames})
 
 def _events_from_activity_log(
     activity_log: List[Dict[str, Any]],
@@ -494,6 +1077,46 @@ def _events_from_single_golfer_results(results: Dict[str, Any], simulation_id: s
             }
         )
     return events
+
+
+def _annotate_runner_coordinates_with_rolling_metrics(results: Dict[str, Any], revenue_per_order_usd: float) -> None:
+    """Annotate runner GPS coordinates with rolling daily metrics.
+
+    Adds per-point fields:
+    - total_orders: cumulative delivered orders up to that timestamp
+    - total_revenue: cumulative revenue (USD) up to that timestamp
+    - avg_order_time_min: average total completion time (minutes) across delivered orders up to that timestamp
+
+    Currently tailored for single-golfer runs (max one order). Safe no-op if
+    coordinates or timing fields are missing.
+    """
+    try:
+        coords = results.get("runner_coordinates") or []
+        if not coords:
+            return
+
+        delivered_s = results.get("delivered_s")
+        total_service_time_s = results.get("total_service_time_s")
+
+        # If we cannot determine delivery time, leave metrics absent
+        if not isinstance(delivered_s, (int, float)):
+            return
+
+        delivered_s = int(delivered_s)
+        avg_time_min = None
+        if isinstance(total_service_time_s, (int, float)):
+            avg_time_min = float(total_service_time_s) / 60.0
+
+        for p in coords:
+            ts = int(float(p.get("timestamp", p.get("timestamp_s", 0)) or 0))
+            delivered_count = 1 if ts >= delivered_s else 0
+            p["total_orders"] = delivered_count
+            p["total_revenue"] = float(revenue_per_order_usd) * delivered_count
+            # Only set avg when at least one order delivered; leave blank earlier
+            if delivered_count > 0 and avg_time_min is not None:
+                p["avg_order_time_min"] = avg_time_min
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed annotating runner coordinates with rolling metrics: %s", e)
 
 
 def _events_from_orders_list(orders: List[Dict[str, Any]] | None, simulation_id: str) -> List[Dict[str, Any]]:
@@ -862,6 +1485,161 @@ def _build_groups_from_scenario(course_dir: str, scenario_key: str, default_grou
     return groups
 
 
+# -------------------- Simple nodes mode --------------------
+def _load_holes_connected_points(course_dir: str) -> List[Tuple[float, float]]:
+    """Load Point features from holes_connected.geojson sorted by `idx` ascending.
+
+    Returns a list of (lon, lat).
+    """
+    path = Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson"
+    if not path.exists():
+        raise FileNotFoundError(f"holes_connected.geojson not found at {path}")
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            gj = json.load(f)
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(f"Failed reading holes_connected.geojson: {e}")
+
+    pts: Dict[int, Tuple[float, float]] = {}
+    for feat in (gj.get("features") or []):
+        geom = (feat or {}).get("geometry") or {}
+        if geom.get("type") != "Point":
+            continue
+        props = (feat or {}).get("properties") or {}
+        if "idx" not in props:
+            continue
+        try:
+            idx = int(props["idx"])  # enforce sortable
+        except Exception:
+            continue
+        coords = geom.get("coordinates") or []
+        if not coords or len(coords) < 2:
+            continue
+        lon = float(coords[0])
+        lat = float(coords[1])
+        pts[idx] = (lon, lat)
+
+    if not pts:
+        raise SystemExit("holes_connected.geojson contains no Point features with integer 'idx'")
+
+    ordered = [pts[i] for i in sorted(pts.keys())]
+    return ordered
+
+
+def _load_cart_graph_nodes_simple(course_dir: str) -> List[Tuple[str, Tuple[float, float]]]:
+    """Load nodes from pkl/cart_graph.pkl as (node_id, (lon,lat)) list.
+
+    Returns empty list if missing or unreadable.
+    """
+    pkl_path = Path(course_dir) / "pkl" / "cart_graph.pkl"
+    if not pkl_path.exists():
+        return []
+    try:
+        import pickle
+        with pkl_path.open("rb") as f:
+            g = pickle.load(f)
+        nodes: List[Tuple[str, Tuple[float, float]]] = []
+        for n in g.nodes():
+            data = g.nodes[n] or {}
+            x = data.get("x")
+            y = data.get("y")
+            if x is None or y is None:
+                continue
+            nodes.append((str(n), (float(x), float(y))))
+        return nodes
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to load cart_graph.pkl: %s", e)
+        return []
+
+
+def _run_mode_simple_nodes(args: argparse.Namespace) -> None:
+    """Minimal deterministic node-stepping sim for golfers, bev-cart, and runners.
+
+    - Golfer: 1 node/min forward over holes_connected (stops at last node)
+    - Bev cart: 1 node/min backward over holes_connected (loops)
+    - Runners: 4 nodes/min over cart_graph.pkl nodes (loops), supports N runners
+    """
+    default_name = _generate_standardized_output_name(
+        mode="simple-nodes",
+        num_bev_carts=1,
+        num_runners=int(args.num_runners),
+        num_golfers=1,
+        tee_scenario=None,
+    )
+    output_root = Path(args.output_dir or (Path("outputs") / default_name))
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    logger.info(
+        "Starting simple-nodes runs: %d run(s), runners=%d, course=%s",
+        int(args.num_runs), int(args.num_runners), args.course_dir,
+    )
+
+    # Preload paths
+    holes_points = _load_holes_connected_points(args.course_dir)  # [(lon,lat)]
+    last_idx = len(holes_points) - 1
+    runner_nodes = _load_cart_graph_nodes_simple(args.course_dir)  # [(id,(lon,lat))]
+
+    # Determine duration
+    duration_min = int(args.duration_min) if getattr(args, "duration_min", None) is not None else len(holes_points)
+    duration_min = max(0, duration_min)
+
+    def _loop_index(idx: int, n: int) -> int:
+        if n <= 0:
+            return 0
+        return idx % n
+
+    for run_idx in range(1, int(args.num_runs) + 1):
+        run_dir = output_root / f"sim_{run_idx:02d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build track streams: id -> list[dict(timestamp, longitude, latitude)]
+        streams: Dict[str, List[Dict[str, Any]]] = {"golfer_1": [], "bev_cart_1": []}
+        for t in range(duration_min):
+            ts = t * 60
+            # Golfer forward, clamp at end
+            g_idx = min(t, last_idx)
+            g_lon, g_lat = holes_points[g_idx]
+            streams["golfer_1"].append({"timestamp": ts, "longitude": g_lon, "latitude": g_lat})
+
+            # Bev backward, loop
+            b_idx = last_idx - _loop_index(t, last_idx + 1)
+            b_lon, b_lat = holes_points[b_idx]
+            streams["bev_cart_1"].append({"timestamp": ts, "longitude": b_lon, "latitude": b_lat})
+
+        # Runners at 4 nodes/minute, loop over cart graph nodes if available
+        if runner_nodes:
+            total_nodes = len(runner_nodes)
+            num_runners = int(args.num_runners)
+            num_runners = max(0, num_runners)
+            if num_runners > 0:
+                for r in range(num_runners):
+                    rid = f"delivery_runner_{r+1}"
+                    streams[rid] = []
+                for t in range(duration_min):
+                    ts = t * 60
+                    step = t * 4  # 4 nodes/min
+                    for r in range(num_runners):
+                        start_offset = (r * total_nodes) // max(1, num_runners)
+                        idx = _loop_index(start_offset + step, total_nodes)
+                        _, (lon, lat) = runner_nodes[idx]
+                        rid = f"delivery_runner_{r+1}"
+                        streams[rid].append({"timestamp": ts, "longitude": lon, "latitude": lat})
+
+        # Persist unified coordinates for the viewer/tools
+        write_unified_coordinates_csv(streams, run_dir / "coordinates.csv")
+
+        # Minimal run metadata
+        meta = {
+            "mode": "simple-nodes",
+            "run_idx": run_idx,
+            "duration_min": duration_min,
+            "num_points_holes_path": len(holes_points),
+            "has_cart_graph": bool(runner_nodes),
+            "num_runners": int(args.num_runners),
+        }
+        (run_dir / "result.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
 # -------------------- Beverage cart modes --------------------
 def _run_bev_carts_only_once(run_idx: int, course_dir: str, num_carts: int, output_root: Path) -> Dict:
     env = simpy.Environment()
@@ -962,12 +1740,14 @@ def _run_bev_with_groups_once(
     output_root: Path,
     rng_seed: Optional[int] = None,
     no_visualization: bool = False,
+    interactive_heatmap: bool = False,
 ) -> Dict:
     start_time = time.time()
 
-    # Compute crossings using files for accuracy
-    nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "lcm_course_nodes.geojson")
-    holes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_geofenced.geojson")
+    # Compute crossings using shared holes_connected.geojson for both bev-cart and golfers
+    nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson")
+    # Holes polygons optional because holes_connected already carries hole labels
+    holes_geojson = None
     config_json = str(Path(course_dir) / "config" / "simulation_config.json")
 
     first_tee_s = min(g["tee_time_s"] for g in groups) if groups else (9 - 7) * 3600
@@ -1013,49 +1793,23 @@ def _run_bev_with_groups_once(
     run_dir = output_root / f"sim_{run_idx:02d}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Coordinates CSV, combine golfer groups and cart
+    # Coordinates CSV, combine all golfer groups and cart, aligned to first tee time
     tracks: Dict[str, List[Dict]] = {"bev_cart_1": bev_points}
     for g in (groups or []):
         gid = g["group_id"]
         pts = [p for p in golfer_points if p.get("group_id") == gid]
         tracks[f"golfer_group_{gid}"] = pts
-    write_unified_coordinates_csv(tracks, run_dir / "coordinates.csv")
+    # Baseline at first tee time so animation starts at 0 for all entities
+    baseline_s = int(first_tee_s)
+    # Keep absolute timestamps but drop any points prior to first tee time
+    tracks_clipped = _clip_streams_at_baseline(tracks, baseline_s)
+    write_unified_coordinates_csv(tracks_clipped, run_dir / "coordinates.csv")
 
     # Visualization for cart
     if bev_points and not no_visualization:
         render_beverage_cart_plot(bev_points, course_dir=course_dir, save_path=run_dir / "bev_cart_route.png")
     
-    # Heatmap visualization for beverage cart sales
-    if not no_visualization:
-        try:
-            heatmap_file = run_dir / "bev_cart_sales_heatmap.png"
-            # Format beverage cart sales for heatmap function
-            # Convert sales data to order-like format for heatmap
-            heatmap_results = {'orders': [], 'delivery_stats': []}
-            if isinstance(sales_result, dict) and 'sales' in sales_result:
-                for i, sale in enumerate(sales_result['sales']):
-                    # Extract relevant fields from sales data for heatmap
-                    order_entry = {
-                        'hole_num': sale.get('hole', sale.get('hole_num', 1)),
-                        'total_completion_time_s': sale.get('service_time_s', 0),  # Use service time as proxy for completion time
-                        'order_id': f'sale_{i+1}',
-                        'golfer_group_id': sale.get('golfer_group_id', sale.get('group_id', 1)),
-                        'order_time_s': sale.get('order_time_s', sale.get('timestamp_s', 0))
-                    }
-                    heatmap_results['orders'].append(order_entry)
-            
-            if heatmap_results['orders']:  # Only create heatmap if there are sales
-                course_name = Path(course_dir).name.replace("_", " ").title()
-                create_course_heatmap(
-                    results=heatmap_results,
-                    course_dir=course_dir,
-                    save_path=heatmap_file,
-                    title=f"{course_name} - Beverage Cart Sales Heatmap (Run {run_idx})",
-                    colormap='RdYlGn_r'
-                )
-                logger.info("Created beverage cart sales heatmap: %s", heatmap_file)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Failed to create beverage cart sales heatmap: %s", e)
+    # Skip heatmap for bev-with-golfers mode to avoid empty visual noise
 
     # Sales and result
     (run_dir / "sales.json").write_text(json.dumps(sales_result, indent=2), encoding="utf-8")
@@ -1131,17 +1885,18 @@ def _run_bev_with_groups_once(
 # -------------------- Mode entrypoints --------------------
 def _run_mode_single_golfer(args: argparse.Namespace) -> None:
     # Single golfer mode: 0 bev carts, 1 runner, 1 golfer
-    hole = getattr(args, "hole", None)
-    default_name = _generate_standardized_output_name(
-        mode="single-golfer",
-        num_bev_carts=0,
-        num_runners=1,
-        num_golfers=1,
-        tee_scenario=None,
-        hole=hole,
-    )
-    output_root = Path(args.output_dir or (Path("outputs") / default_name))
-    output_root.mkdir(parents=True, exist_ok=True)
+    with timed_operation("single_golfer_setup"):
+        hole = getattr(args, "hole", None)
+        default_name = _generate_standardized_output_name(
+            mode="single-golfer",
+            num_bev_carts=0,
+            num_runners=1,
+            num_golfers=1,
+            tee_scenario=None,
+            hole=hole,
+        )
+        output_root = Path(args.output_dir or (Path("outputs") / default_name))
+        output_root.mkdir(parents=True, exist_ok=True)
 
     logger.info(
         "Starting single-golfer delivery sims: %d run(s), hole=%s, prep=%d min, runner_speed=%.2f m/s",
@@ -1154,159 +1909,197 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
     all_runs: List[Dict] = []
 
     for i in range(1, int(args.num_runs) + 1):
-        run_dir = output_root / f"sim_{i:02d}"
-        run_dir.mkdir(parents=True, exist_ok=True)
+        with timed_operation(f"single_golfer_run_{i:02d}"):
+            with timed_file_io("create_run_directory"):
+                run_dir = output_root / f"sim_{i:02d}"
+                run_dir.mkdir(parents=True, exist_ok=True)
 
-        try:
-            results = run_golf_delivery_simulation(
-                course_dir=args.course_dir,
-                order_hole=getattr(args, "hole", None),
-                prep_time_min=int(args.prep_time),
-                runner_speed_mps=float(args.runner_speed),
-                hole_placement=str(getattr(args, "placement", "mid")),
-                runner_delay_min=float(getattr(args, "runner_delay", 0.0)),
-                use_enhanced_network=not bool(getattr(args, "no_enhanced", False)),
-                track_coordinates=not bool(getattr(args, "no_coordinates", False)),
-            )
-
-            # Save results bundle (CSV + JSON)
-            save_results_bundle(results, run_dir)
-
-            # Log results consistently
-            log_simulation_results(results, run_idx=i, track_coords=not bool(getattr(args, "no_coordinates", False)))
-
-            # Combined unified coordinates CSV
             try:
-                points_by_id: Dict[str, List[Dict]] = {}
-                if results.get('golfer_coordinates'):
-                    points_by_id['golfer_1'] = results['golfer_coordinates']
-                if results.get('runner_coordinates'):
-                    points_by_id['delivery_runner_1'] = results['runner_coordinates']
-                if points_by_id:
-                    write_unified_coordinates_csv(points_by_id, run_dir / "coordinates.csv")
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Failed to write combined coordinates CSV: %s", e)
+                # Core simulation execution
+                with timed_simulation("golf_delivery_simulation"):
+                    results = run_golf_delivery_simulation(
+                        course_dir=args.course_dir,
+                        order_hole=getattr(args, "hole", None),
+                        prep_time_min=int(args.prep_time),
+                        runner_speed_mps=float(args.runner_speed),
+                        hole_placement=str(getattr(args, "placement", "mid")),
+                        runner_delay_min=float(getattr(args, "runner_delay", 0.0)),
+                        use_enhanced_network=not bool(getattr(args, "no_enhanced", False)),
+                        track_coordinates=not bool(getattr(args, "no_coordinates", False)),
+                    )
 
-            # Delivery log
-            try:
-                create_delivery_log(results, run_dir / "delivery_log.md")
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Failed to create delivery log: %s", e)
-
-            # Events CSV (single-golfer timeline)
-            try:
-                simulation_id = _build_simulation_id(output_root, i)
-                events = _events_from_single_golfer_results(results, simulation_id)
-                if events:
-                    _write_event_log_csv(events, run_dir / "events.csv")
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Failed to write events CSV: %s", e)
-
-            # Visualization
-            if not bool(getattr(args, "no_visualization", False)):
-                try:
-                    course_data = load_course_geospatial_data(args.course_dir)
-                    sim_cfg = load_simulation_config(args.course_dir)
-                    clubhouse_coords = sim_cfg.clubhouse
-
-                    # Load per-entity CSVs if present (optional)
-                    golfer_df = None
-                    runner_df = None
+                # Annotate runner GPS with rolling metrics before saving artifacts
+                with timed_computation("runner_metrics_annotation"):
                     try:
-                        import pandas as pd  # local import
-                        golfer_csv = run_dir / "golfer_coordinates.csv"
-                        runner_csv = run_dir / "runner_coordinates.csv"
-                        if golfer_csv.exists():
-                            golfer_df = pd.read_csv(golfer_csv)
-                        if runner_csv.exists():
-                            runner_df = pd.read_csv(runner_csv)
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("Failed to read coordinates CSVs: %s", e)
-
-                    # Load cart graph
-                    cart_graph = None
-                    try:
-                        import pickle
-                        cart_graph_pkl = Path(args.course_dir) / "pkl" / "cart_graph.pkl"
-                        if cart_graph_pkl.exists():
-                            with cart_graph_pkl.open("rb") as f:
-                                cart_graph = pickle.load(f)
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("Failed to load cart graph: %s", e)
-
-                    # Folium map
-                    try:
-                        folium_map_path = run_dir / "delivery_route_map.html"
-                        create_folium_delivery_map(results, course_data, folium_map_path)
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("Failed to create folium map: %s", e)
-
-                    # PNG visualization
-                    try:
-                        output_file = run_dir / "delivery_route_visualization.png"
-                        debug_coords_file = run_dir / "visualization_debug_coords.csv"
-                        render_delivery_plot(
-                            results=results,
-                            course_data=course_data,
-                            clubhouse_coords=clubhouse_coords,
-                            golfer_coords=golfer_df,
-                            runner_coords=runner_df,
-                            cart_graph=cart_graph,
-                            save_path=output_file,
-                            course_name=Path(args.course_dir).name.replace("_", " ").title(),
-                            style="simple",
-                            save_debug_coords_path=debug_coords_file,
+                        _annotate_runner_coordinates_with_rolling_metrics(
+                            results,
+                            float(getattr(args, "revenue_per_order", 0.0)),
                         )
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("Failed to create PNG visualization: %s", e)
+                        logger.warning("Runner coordinate metrics annotation failed: %s", e)
 
-                    # Heatmap visualization
+                # Save results bundle (CSV + JSON) after annotation so runner_coordinates.csv includes metrics
+                with timed_file_io("save_results_bundle"):
+                    save_results_bundle(results, run_dir)
+
+                # Log results consistently
+                with timed_operation("log_simulation_results"):
+                    log_simulation_results(results, run_idx=i, track_coords=not bool(getattr(args, "no_coordinates", False)))
+
+                # Combined unified coordinates CSV
+                with timed_file_io("write_coordinates_csv"):
                     try:
-                        heatmap_file = run_dir / "delivery_heatmap.png"
-                        # Format single-golfer results for heatmap function
-                        heatmap_results = {
-                            'orders': [{
-                                'hole_num': results.get('order_hole', 1),
-                                'total_completion_time_s': results.get('total_service_time_s', 0),
-                                'order_id': 'order_1',
-                                'golfer_group_id': 1,
-                                'order_time_s': results.get('order_time_s', 0)
-                            }],
-                            'delivery_stats': []
-                        }
-                        course_name = Path(args.course_dir).name.replace("_", " ").title()
-                        create_course_heatmap(
-                            results=heatmap_results,
-                            course_dir=args.course_dir,
-                            save_path=heatmap_file,
-                            title=f"{course_name} - Single Golfer Delivery Heatmap (Run {i})",
-                            colormap='RdYlGn_r'
-                        )
-                        logger.info("Created delivery heatmap: %s", heatmap_file)
+                        points_by_id: Dict[str, List[Dict]] = {}
+                        if results.get('golfer_coordinates'):
+                            points_by_id['golfer_1'] = results['golfer_coordinates']
+                        if results.get('runner_coordinates'):
+                            points_by_id['delivery_runner_1'] = results['runner_coordinates']
+                        if points_by_id:
+                            # Normalize all streams to a common baseline so timestamps are in sync for the animation
+                            def _min_timestamp(streams: Dict[str, List[Dict[str, Any]]]) -> int:
+                                m = None
+                                for pts in streams.values():
+                                    for p in (pts or []):
+                                        try:
+                                            tsv = int(float(p.get("timestamp", p.get("timestamp_s", 0)) or 0))
+                                        except Exception:
+                                            tsv = 0
+                                        m = tsv if m is None or tsv < m else m
+                                return int(m or 0)
+
+                            baseline_s = _min_timestamp(points_by_id)
+                            streams_clipped = _clip_streams_at_baseline(points_by_id, baseline_s)
+                            write_unified_coordinates_csv(streams_clipped, run_dir / "coordinates.csv")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("Failed to create delivery heatmap: %s", e)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("Visualization step failed: %s", e)
+                        logger.warning("Failed to write combined coordinates CSV: %s", e)
 
-            # Minimal per-run stats file
-            try:
-                stats_md = [
-                    f"# Single Golfer — Run {i:02d}",
-                    "",
-                    f"Order time: {float(results.get('order_time_s', 0.0))/60.0:.1f} min",
-                    f"Service time: {float(results.get('total_service_time_s', 0.0))/60.0:.1f} min",
-                    f"Distance (out+back): {float(results.get('delivery_distance_m', 0.0)):.0f} m",
-                ]
-                (run_dir / f"stats_run_{i:02d}.md").write_text("\n".join(stats_md), encoding="utf-8")
-            except Exception:
-                pass
+                # Delivery log
+                with timed_file_io("create_delivery_log"):
+                    try:
+                        create_delivery_log(results, run_dir / "delivery_log.md")
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("Failed to create delivery log: %s", e)
 
-            # Collect for summary
-            all_runs.append(results)
+                # Events CSV (single-golfer timeline)
+                with timed_file_io("write_events_csv"):
+                    try:
+                        simulation_id = _build_simulation_id(output_root, i)
+                        events = _events_from_single_golfer_results(results, simulation_id)
+                        if events:
+                            _write_event_log_csv(events, run_dir / "events.csv")
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("Failed to write events CSV: %s", e)
 
-        except Exception as e:  # noqa: BLE001
-            if not handle_simulation_error(e, run_idx=i, exit_on_first=True):
-                break
+                # Runner action log (if activity log present)
+                with timed_file_io("write_runner_action_log"):
+                    try:
+                        activity_logs = results.get("activity_log", []) if isinstance(results, dict) else []
+                        if activity_logs:
+                            _write_runner_action_log(activity_logs, run_dir / "runner_action_log.csv")
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("Failed to write runner action log: %s", e)
+
+                # Visualization
+                if not bool(getattr(args, "no_visualization", False)):
+                    with timed_visualization("single_golfer_visualization"):
+                        try:
+                            with timed_file_io("load_course_data"):
+                                course_data = load_course_geospatial_data(args.course_dir)
+                                sim_cfg = load_simulation_config(args.course_dir)
+                                clubhouse_coords = sim_cfg.clubhouse
+
+                            # Load per-entity CSVs if present (optional)
+                            with timed_file_io("load_entity_csvs"):
+                                golfer_df = None
+                                runner_df = None
+                                try:
+                                    import pandas as pd  # local import
+                                    golfer_csv = run_dir / "golfer_coordinates.csv"
+                                    runner_csv = run_dir / "runner_coordinates.csv"
+                                    if golfer_csv.exists():
+                                        golfer_df = pd.read_csv(golfer_csv)
+                                    if runner_csv.exists():
+                                        runner_df = pd.read_csv(runner_csv)
+                                except Exception as e:  # noqa: BLE001
+                                    logger.warning("Failed to read coordinates CSVs: %s", e)
+
+                            # Load cart graph
+                            with timed_file_io("load_cart_graph"):
+                                cart_graph = None
+                                try:
+                                    import pickle
+                                    cart_graph_pkl = Path(args.course_dir) / "pkl" / "cart_graph.pkl"
+                                    if cart_graph_pkl.exists():
+                                        with cart_graph_pkl.open("rb") as f:
+                                            cart_graph = pickle.load(f)
+                                except Exception as e:  # noqa: BLE001
+                                    logger.warning("Failed to load cart graph: %s", e)
+
+                            # Folium map
+                            with timed_visualization("folium_map"):
+                                try:
+                                    folium_map_path = run_dir / "delivery_route_map.html"
+                                    create_folium_delivery_map(results, course_data, folium_map_path)
+                                except Exception as e:  # noqa: BLE001
+                                    logger.warning("Failed to create folium map: %s", e)
+
+                            # PNG visualization
+                            with timed_visualization("delivery_plot"):
+                                try:
+                                    output_file = run_dir / "delivery_route_visualization.png"
+                                    debug_coords_file = run_dir / "visualization_debug_coords.csv"
+                                    render_delivery_plot(
+                                        results=results,
+                                        course_data=course_data,
+                                        clubhouse_coords=clubhouse_coords,
+                                        golfer_coords=golfer_df,
+                                        runner_coords=runner_df,
+                                        cart_graph=cart_graph,
+                                        save_path=output_file,
+                                        course_name=Path(args.course_dir).name.replace("_", " ").title(),
+                                        style="simple",
+                                        save_debug_coords_path=debug_coords_file,
+                                    )
+                                except Exception as e:  # noqa: BLE001
+                                    logger.warning("Failed to create PNG visualization: %s", e)
+
+                            # Heatmap visualization
+                            with timed_visualization("delivery_heatmap"):
+                                try:
+                                    heatmap_file = run_dir / "delivery_heatmap.png"
+                                    # Format single-golfer results for heatmap function
+                                    heatmap_results = {
+                                        'orders': [{
+                                            'hole_num': results.get('order_hole', 1),
+                                            'total_completion_time_s': results.get('total_service_time_s', 0),
+                                            'order_id': 'order_1',
+                                            'golfer_group_id': 1,
+                                            'order_time_s': results.get('order_time_s', 0)
+                                        }],
+                                        'delivery_stats': []
+                                    }
+                                    course_name = Path(args.course_dir).name.replace("_", " ").title()
+                                    create_course_heatmap(
+                                        results=heatmap_results,
+                                        course_dir=args.course_dir,
+                                        save_path=heatmap_file,
+                                        title=f"{course_name} - Single Golfer Delivery Heatmap (Run {i})",
+                                        colormap='white_to_red'
+                                    )
+                                    logger.info("Created delivery heatmap: %s", heatmap_file)
+                                except Exception as e:  # noqa: BLE001
+                                    logger.warning("Failed to create delivery heatmap: %s", e)
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("Visualization step failed: %s", e)
+
+                # Removed per-run stats markdown output (stats_run_XX.md) as not valuable
+
+                # Collect for summary
+                all_runs.append(results)
+
+            except Exception as e:  # noqa: BLE001
+                if not handle_simulation_error(e, run_idx=i, exit_on_first=True):
+                    break
 
     # Multi-run summary
     try:
@@ -1316,6 +2109,15 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
 
     # Generate executive summary using Google Gemini
     _generate_executive_summary(output_root)
+
+    # Optional: open React viewer after single simulation series
+    if int(args.num_runs) == 1 and getattr(args, "open_viewer", False):
+        try:
+            viewer_dir = Path("my-map-animation")
+            run_dir = output_root / "sim_01"
+            _prepare_and_open_react_viewer(viewer_dir=viewer_dir, outputs_root=output_root, run_path=run_dir, course_dir=args.course_dir)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to open viewer: %s", e)
 
     logger.info("Complete. Results saved to: %s", output_root)
 def _run_mode_bev_carts(args: argparse.Namespace) -> None:
@@ -1368,39 +2170,53 @@ def _run_mode_bev_carts(args: argparse.Namespace) -> None:
     # Generate executive summary using Google Gemini
     _generate_executive_summary(output_root)
     
+    # Optionally open viewer when only one run and requested
+    if int(args.num_runs) == 1 and getattr(args, "open_viewer", False):
+        try:
+            viewer_dir = Path("my-map-animation")
+            run_dir = output_root / "sim_01"
+            _prepare_and_open_react_viewer(viewer_dir=viewer_dir, outputs_root=output_root, run_path=run_dir, course_dir=args.course_dir)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to open viewer: %s", e)
+
     logger.info("Complete. Results saved to: %s", output_root)
 
 
 def _run_mode_bev_with_golfers(args: argparse.Namespace) -> None:
     # Bev with golfers mode: 1 bev cart, 0 runners, N golfers
-    default_name = _generate_standardized_output_name(
-        mode="bev-with-golfers",
-        num_bev_carts=1,
-        num_runners=0,
-        num_golfers=int(args.groups_count),
-        tee_scenario=str(args.tee_scenario),
-    )
-    output_root = Path(args.output_dir or (Path("outputs") / default_name))
-    output_root.mkdir(parents=True, exist_ok=True)
+    with timed_operation("bev_with_golfers_setup"):
+        default_name = _generate_standardized_output_name(
+            mode="bev-with-golfers",
+            num_bev_carts=1,
+            num_runners=0,
+            num_golfers=int(args.groups_count),
+            tee_scenario=str(args.tee_scenario),
+        )
+        output_root = Path(args.output_dir or (Path("outputs") / default_name))
+        output_root.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Starting beverage cart + golfers runs: %d runs, %d groups", args.num_runs, args.groups_count)
-    phase3_summary_rows: List[Dict] = []
+        logger.info("Starting beverage cart + golfers runs: %d runs, %d groups", args.num_runs, args.groups_count)
+        phase3_summary_rows: List[Dict] = []
 
-    # Build groups either from scenario (preferred) or manual args
-    scenario_groups_base = _build_groups_from_scenario(args.course_dir, str(args.tee_scenario))
-    if scenario_groups_base:
-        first_tee_s = int(min(g["tee_time_s"] for g in scenario_groups_base))
-    else:
-        hh, mm = args.first_tee.split(":")
-        first_tee_s = (int(hh) - 7) * 3600 + int(mm) * 60
+        # Build groups either from scenario (preferred) or manual args
+        scenario_groups_base = _build_groups_from_scenario(args.course_dir, str(args.tee_scenario))
+        if scenario_groups_base:
+            first_tee_s = int(min(g["tee_time_s"] for g in scenario_groups_base))
+        else:
+            hh, mm = args.first_tee.split(":")
+            first_tee_s = (int(hh) - 7) * 3600 + int(mm) * 60
 
-    # Load simulation config to get total orders
-    sim_config = load_simulation_config(args.course_dir)
+        # Load simulation config to get total orders
+        sim_config = load_simulation_config(args.course_dir)
     
     for i in range(1, int(args.num_runs) + 1):
         groups = scenario_groups_base or _build_groups_interval(int(args.groups_count), first_tee_s, float(args.groups_interval_min))
-        # Use configured beverage cart order probability per 9 holes
-        bev_order_probability = float(getattr(sim_config, "bev_cart_order_probability_per_9_holes", 0.35))
+        # Use configured beverage cart order probability per 9 holes (override via CLI if provided)
+        bev_order_probability = (
+            float(getattr(args, "bev_order_prob", None))
+            if getattr(args, "bev_order_prob", None) is not None
+            else float(getattr(sim_config, "bev_cart_order_probability_per_9_holes", 0.35))
+        )
         res = _run_bev_with_groups_once(
             i,
             args.course_dir,
@@ -1410,6 +2226,7 @@ def _run_mode_bev_with_golfers(args: argparse.Namespace) -> None:
             output_root,
             rng_seed=getattr(args, "random_seed", None),
             no_visualization=bool(getattr(args, "no_visualization", False)),
+            interactive_heatmap=bool(getattr(args, "interactive_heatmap", False)),
         )
 
         # Save phase3-style outputs for the generated result
@@ -1442,14 +2259,28 @@ def _run_mode_bev_with_golfers(args: argparse.Namespace) -> None:
             "revenue": float(res.get("revenue", 0.0)),
             "num_sales": int(res.get("num_sales", 0)),
             "tee_time_s": int(res.get("first_tee_time_s", (9 - 7) * 3600)),
+            # Include crossings so the summary can report crossing counts/times
+            "crossings": res.get("crossings"),
         })
 
-    if phase3_summary_rows:
-        write_phase3_summary(phase3_summary_rows, output_root)
+    # Post-simulation summary and reporting
+    with timed_file_io("write_summary"):
+        if phase3_summary_rows:
+            write_phase3_summary(phase3_summary_rows, output_root)
     
     # Generate executive summary using Google Gemini
-    _generate_executive_summary(output_root)
+    with timed_operation("generate_executive_summary"):
+        _generate_executive_summary(output_root)
     
+    # Optionally open viewer when only one run and requested
+    if int(args.num_runs) == 1 and getattr(args, "open_viewer", False):
+        try:
+            viewer_dir = Path("my-map-animation")
+            run_dir = output_root / "sim_01"
+            _prepare_and_open_react_viewer(viewer_dir=viewer_dir, outputs_root=output_root, run_path=run_dir, course_dir=args.course_dir)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to open viewer: %s", e)
+
     logger.info("Complete. Results saved to: %s", output_root)
 
 
@@ -1570,7 +2401,9 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
 
         # Compute crossings to detect bev-cart passes for boost
         crossings = None
-        if groups and not bool(getattr(args, "no_bev_cart", False)):
+        # Determine if bev-cart should be included (default: disabled unless explicitly enabled)
+        include_bev_cart = bool(getattr(args, "with_bev_cart", False)) and not bool(getattr(args, "no_bev_cart", False))
+        if groups and include_bev_cart:
             try:
                 nodes_geojson = str(Path(args.course_dir) / "geojson" / "generated" / "lcm_course_nodes.geojson")
                 holes_geojson = str(Path(args.course_dir) / "geojson" / "generated" / "holes_geofenced.geojson")
@@ -1596,18 +2429,30 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 logger.warning("Failed to compute crossings for bev-cart pass boost: %s", e)
                 crossings = None
 
+        # Determine effective runner speed (config file vs command line)
+        # Use config value if available (already converted from mph to m/s by config loader)
+        if hasattr(sim_config, 'delivery_runner_speed_mps'):
+            effective_runner_speed = float(getattr(sim_config, 'delivery_runner_speed_mps', 6.0))
+            # Convert back to mph for logging
+            config_mph = effective_runner_speed / 0.44704
+            logger.info("Using runner speed from config: %.2f mph = %.3f m/s", config_mph, effective_runner_speed)
+        else:
+            effective_runner_speed = float(args.runner_speed)
+            logger.info("Using runner speed default: %.2f m/s", effective_runner_speed)
+
         # Use unified multi-runner service even for a single runner to allow custom order generation
         env = simpy.Environment()
         service = MultiRunnerDeliveryService(
             env=env,
             course_dir=args.course_dir,
             num_runners=int(args.num_runners),
-            runner_speed_mps=float(args.runner_speed),
+            runner_speed_mps=effective_runner_speed,
             prep_time_min=int(args.prep_time),
         )
 
         # Generate orders according to configured mode and feed into shared queue
         orders: List[DeliveryOrder] = []
+        orders_all: List[DeliveryOrder] = []
         if groups:
             if use_hourly:
                 # Use hourly distribution: draw total orders directly from config and randomize within hour windows
@@ -1617,7 +2462,7 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                     total_orders=int(getattr(sim_config, "delivery_total_orders", 0)),
                     service_open_hhmm=str(sim_config.delivery_service_hours.get("open_time", "10:00")),
                     service_close_hhmm=str(sim_config.delivery_service_hours.get("close_time", "19:00")),
-                    minutes_per_hole=float(getattr(sim_config, "minutes_per_hole", 12.0)),
+                    minutes_per_hole=float(12.0),
                     rng_seed=args.random_seed,
                 )
             else:
@@ -1629,9 +2474,11 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                     rng_seed=args.random_seed,
                 )
             # Restrict order placement to service open window
+            # Include orders placed before service opens (they will be queued at open),
+            # but exclude orders after close.
             orders = [
                 o for o in orders_all
-                if service.service_open_s <= int(getattr(o, "order_time_s", 0)) <= service.service_close_s
+                if int(getattr(o, "order_time_s", 0)) <= service.service_close_s
             ]
 
         def order_arrival_process():  # simpy process
@@ -1664,6 +2511,19 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 }
                 for o in orders
             ],
+            # Include all generated orders (even those outside service window) for reporting
+            "orders_all": [
+                {
+                    "order_id": getattr(o, "order_id", None),
+                    "golfer_group_id": getattr(o, "golfer_group_id", None),
+                    "golfer_id": getattr(o, "golfer_id", None),
+                    "hole_num": getattr(o, "hole_num", None),
+                    "order_time_s": getattr(o, "order_time_s", None),
+                    "status": getattr(o, "status", "pending"),
+                    "total_completion_time_s": getattr(o, "total_completion_time_s", 0.0),
+                }
+                for o in (orders_all or [])
+            ],
             "delivery_stats": service.delivery_stats,
             "failed_orders": [
                 {"order_id": getattr(o, "order_id", None), "reason": getattr(o, "failure_reason", None)}
@@ -1683,7 +2543,7 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
         bev_points: List[Dict[str, Any]] = []
         bev_sales_result: Dict[str, Any] = {"sales": [], "revenue": 0.0}
         golfer_points: List[Dict[str, Any]] = []
-        if groups and not bool(getattr(args, "no_bev_cart", False)):
+        if groups and include_bev_cart:
             try:
                 # Generate golfer tracks for bev sales proximity/visibility
                 golfer_points = _generate_golfer_points_for_groups(args.course_dir, groups)
@@ -1694,8 +2554,12 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 env2.run(until=svc2.service_end_s)
                 bev_points = svc2.coordinates or []
 
-                # Use configured beverage cart order probability per 9 holes
-                bev_order_probability = float(getattr(sim_config, "bev_cart_order_probability_per_9_holes", 0.35))
+                # Use configured beverage cart order probability per 9 holes (override via CLI)
+                bev_order_probability = (
+                    float(getattr(args, "bev_order_prob", None))
+                    if getattr(args, "bev_order_prob", None) is not None
+                    else float(getattr(sim_config, "bev_cart_order_probability_per_9_holes", 0.35))
+                )
                 bev_sales_result = simulate_beverage_cart_sales(
                     course_dir=args.course_dir,
                     groups=groups,
@@ -1714,7 +2578,7 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 logger.warning("Failed to include beverage cart revenue in delivery-runner mode: %s", e)
 
         # Create visualizations if requested and there are orders
-        if sim_result["orders"] and not bool(getattr(args, "no_visualization", False)):
+        if sim_result["orders"] and not bool(getattr(args, "no_visualization", False)) and bool(getattr(args, "include_delivery_maps", False)):
             try:
                 from golfsim.viz.matplotlib_viz import render_delivery_plot, render_individual_delivery_plots
                 from golfsim.viz.matplotlib_viz import load_course_geospatial_data
@@ -1751,41 +2615,44 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 logger.info("Created delivery visualization: %s", viz_path)
                 sim_result["visualization_path"] = str(viz_path)
 
-                # Create individual delivery visualizations (optional)
-                if not bool(getattr(args, "no_individual_plots", False)):
-                    individual_paths = render_individual_delivery_plots(
-                        results=sim_result,
-                        course_data=course_data,
-                        clubhouse_coords=clubhouse_coords,
-                        cart_graph=cart_graph,
-                        output_dir=run_path,
-                        filename_prefix="delivery_order",
-                        style="detailed"
-                    )
+                # Create individual delivery visualizations (always include if delivery maps are enabled)
+                individual_paths = render_individual_delivery_plots(
+                    results=sim_result,
+                    course_data=course_data,
+                    clubhouse_coords=clubhouse_coords,
+                    cart_graph=cart_graph,
+                    output_dir=run_path,
+                    filename_prefix="delivery_order",
+                    style="detailed"
+                )
 
-                    if individual_paths:
-                        logger.info("Created %d individual delivery visualizations", len(individual_paths))
-                        sim_result["individual_visualization_paths"] = [str(p) for p in individual_paths]
-
-                # Heatmap visualization
-                try:
-                    heatmap_file = run_path / "delivery_heatmap.png"
-                    course_name = Path(args.course_dir).name.replace("_", " ").title()
-                    create_course_heatmap(
-                        results=sim_result,
-                        course_dir=args.course_dir,
-                        save_path=heatmap_file,
-                        title=f"{course_name} - Delivery Runner Heatmap (Run {run_idx})",
-                        colormap='RdYlGn_r'
-                    )
-                    logger.info("Created delivery heatmap: %s", heatmap_file)
-                    sim_result["heatmap_path"] = str(heatmap_file)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("Failed to create delivery heatmap: %s", e)
+                if individual_paths:
+                    logger.info("Created %d individual delivery visualizations", len(individual_paths))
+                    sim_result["individual_visualization_paths"] = [str(p) for p in individual_paths]
 
             except Exception as e:
                 logger.warning("Failed to create delivery visualization: %s", e)
                 sim_result["visualization_error"] = str(e)
+
+        # Heatmap visualization (default enabled, separate from delivery maps)
+        if sim_result["orders"] and not bool(getattr(args, "no_heatmap", False)):
+            try:
+                run_path = output_dir / f"run_{run_idx:02d}"
+                run_path.mkdir(parents=True, exist_ok=True)
+                
+                heatmap_file = run_path / "delivery_heatmap.png"
+                course_name = Path(args.course_dir).name.replace("_", " ").title()
+                create_course_heatmap(
+                    results=sim_result,
+                    course_dir=args.course_dir,
+                    save_path=heatmap_file,
+                    title=f"{course_name} - Delivery Runner Heatmap (Run {run_idx})",
+                    colormap='white_to_red'
+                )
+                logger.info("Created delivery heatmap: %s", heatmap_file)
+                sim_result["heatmap_path"] = str(heatmap_file)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Failed to create delivery heatmap: %s", e)
 
         # Persist outputs
         run_path = output_dir / f"run_{run_idx:02d}"
@@ -1793,6 +2660,136 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
 
         # Raw results
         (run_path / "results.json").write_text(json.dumps(sim_result, indent=2, default=str), encoding="utf-8")
+        # Coordinates CSV for React animation (runner + golfers), independent of bev-cart
+        try:
+            runner_points: List[Dict[str, Any]] = []
+            golfer_points_csv: Dict[str, List[Dict[str, Any]]] = {}
+            # Build runner outbound/return coordinates from delivery_stats using cart_graph if available
+            try:
+                import pickle
+                cart_graph_path = Path(args.course_dir) / "pkl" / "cart_graph.pkl"
+                cart_graph = None
+                if cart_graph_path.exists():
+                    with cart_graph_path.open("rb") as f:
+                        cart_graph = pickle.load(f)
+            except Exception:
+                cart_graph = None  # type: ignore[assignment]
+
+            # Index delivery_start timestamps by order_id from activity log
+            start_ts_by_order: Dict[str, int] = {}
+            try:
+                for a in sim_result.get("activity_log", []) or []:
+                    if str(a.get("activity_type", "")).lower() == "delivery_start":
+                        oid = str(a.get("order_id", ""))
+                        if oid:
+                            start_ts_by_order[oid] = int(a.get("timestamp_s", 0))
+            except Exception:
+                pass
+
+            def _coords_for_nodes(nodes: List[int]) -> List[Tuple[float, float]]:
+                pts: List[Tuple[float, float]] = []
+                if not cart_graph or not isinstance(nodes, list) or len(nodes) < 1:
+                    return pts
+                for n in nodes:
+                    try:
+                        x = float(cart_graph.nodes[n]["x"])  # lon
+                        y = float(cart_graph.nodes[n]["y"])  # lat
+                        pts.append((x, y))
+                    except Exception:
+                        continue
+                return pts
+
+            def _interpolate_points(path_pts: List[Tuple[float, float]], start_ts: int, duration_s: float, runner_id: str) -> None:
+                if not path_pts or duration_s <= 0:
+                    return
+                segments = max(1, len(path_pts) - 1)
+                # Allocate evenly per segment; fine for animation
+                per_seg = float(duration_s) / float(segments)
+                t_cursor = float(start_ts)
+                for i in range(segments):
+                    x0, y0 = path_pts[i]
+                    x1, y1 = path_pts[i + 1]
+                    # Sample at 1s resolution per segment
+                    steps = max(1, int(round(per_seg)))
+                    for s in range(steps):
+                        frac = s / float(max(steps, 1))
+                        lon = x0 + frac * (x1 - x0)
+                        lat = y0 + frac * (y1 - y0)
+                        runner_points.append({
+                            "id": runner_id,
+                            "latitude": lat,
+                            "longitude": lon,
+                            "timestamp": int(round(t_cursor + s)),
+                            "type": "delivery_runner",
+                        })
+                    t_cursor += per_seg
+
+            # Build runner points per delivery stat
+            try:
+                for stat in sim_result.get("delivery_stats", []) or []:
+                    runner_id = str(stat.get("runner_id", "runner_1"))
+                    oid = str(stat.get("order_id", ""))
+                    to_trip = (stat.get("trip_to_golfer") or {})
+                    back_trip = (stat.get("trip_back") or {})
+                    to_nodes = to_trip.get("nodes") or []
+                    back_nodes = back_trip.get("nodes") or []
+                    to_time = float(stat.get("delivery_time_s", 0.0) or 0.0)
+                    back_time = float(stat.get("return_time_s", 0.0) or 0.0)
+                    delivered_ts = int(stat.get("delivered_at_time_s", 0) or 0)
+                    start_ts = int(start_ts_by_order.get(oid, max(0, delivered_ts - int(to_time))))
+                    # Outbound
+                    pts_to = _coords_for_nodes(to_nodes)
+                    _interpolate_points(pts_to, start_ts, to_time, runner_id)
+                    # Return
+                    pts_back = _coords_for_nodes(back_nodes)
+                    _interpolate_points(pts_back, delivered_ts, back_time, runner_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Failed to synthesize runner coordinates: %s", e)
+
+            # Build golfer stream if groups exist
+            try:
+                if groups:
+                    gp = _generate_golfer_points_for_groups(args.course_dir, groups)
+                    by_gid: Dict[int, List[Dict[str, Any]]] = {}
+                    for p in gp:
+                        gid = int(p.get("group_id", 0) or 0)
+                        by_gid.setdefault(gid, []).append(p)
+                    for gid, pts in by_gid.items():
+                        golfer_points_csv[f"golfer_group_{gid}"] = pts
+            except Exception:
+                pass
+
+            streams: Dict[str, List[Dict[str, Any]]] = {}
+            if runner_points:
+                # Combine per-runner streams under their IDs
+                by_rid: Dict[str, List[Dict[str, Any]]] = {}
+                for rp in runner_points:
+                    rid = str(rp.get("id", "delivery_runner_1"))
+                    by_rid.setdefault(rid, []).append(rp)
+                streams.update(by_rid)
+            if golfer_points_csv:
+                streams.update(golfer_points_csv)
+            if streams:
+                # Clip timestamps so animation starts at first tee time when groups exist (keep absolute ts)
+                try:
+                    baseline_s = int(min(int(g.get("tee_time_s", 0)) for g in (groups or []))) if groups else 0
+                except Exception:
+                    baseline_s = 0
+                streams_clipped = _clip_streams_at_baseline(streams, baseline_s)
+                write_unified_coordinates_csv(streams_clipped, run_path / "coordinates.csv")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to write animation coordinates CSV: %s", e)
+        # Order logs CSV
+        try:
+            _write_order_logs_csv(sim_result, run_path / "order_logs.csv")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to write order logs CSV: %s", e)
+
+        # Runner action log
+        try:
+            _write_runner_action_log(sim_result.get("activity_log", []) or [], run_path / "runner_action_log.csv")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to write runner action log: %s", e)
 
         # Generate metrics using integrated approach (both bev cart and delivery if present)
         try:
@@ -1863,25 +2860,13 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to write events for delivery-runner run %d: %s", run_idx, e)
 
-        # Simple stats
-        orders = sim_result.get("orders", [])
-        failed_orders = sim_result.get("failed_orders", [])
-
-        stats_md = [
-            f"# Delivery Dynamic — Run {run_idx:02d}",
-            "",
-            f"Groups: {len(groups)}",
-            f"Orders placed: {len([o for o in orders if o.get('status') == 'processed'])}",
-            f"Orders failed: {len(failed_orders)}",
-            f"Revenue per order: ${float(args.revenue_per_order):.2f}",
-        ]
-        (run_path / f"stats_run_{run_idx:02d}.md").write_text("\n".join(stats_md), encoding="utf-8")
+        # Removed per-run stats markdown output (stats_run_XX.md) as not valuable
 
         all_runs.append({
             "run_idx": run_idx,
             "groups": len(groups),
-            "orders": len(orders),
-            "failed": len(failed_orders),
+            "orders": len(sim_result.get("orders", [])),
+            "failed": len(sim_result.get("failed_orders", [])),
             "rpr": float(getattr(metrics, 'revenue_per_round', 0.0) or 0.0),
         })
 
@@ -1894,6 +2879,15 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
 
     # Generate executive summary using Google Gemini
     _generate_executive_summary(output_dir)
+
+    # Optionally open viewer when only one run and requested
+    if int(args.num_runs) == 1 and getattr(args, "open_viewer", False):
+        try:
+            viewer_dir = Path("my-map-animation")
+            run_dir = output_dir / "run_01"
+            _prepare_and_open_react_viewer(viewer_dir=viewer_dir, outputs_root=output_dir, run_path=run_dir, course_dir=args.course_dir)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to open viewer: %s", e)
 
     logger.info("Done. Results in: %s", output_dir)
 
@@ -1945,8 +2939,8 @@ def _run_mode_optimize_runners(args: argparse.Namespace) -> None:
     crossings_opt: Optional[Dict[str, Any]] = None
     try:
         if groups_master:
-            nodes_geojson = str(Path(args.course_dir) / "geojson" / "generated" / "lcm_course_nodes.geojson")
-            holes_geojson = str(Path(args.course_dir) / "geojson" / "generated" / "holes_geofenced.geojson")
+            nodes_geojson = str(Path(args.course_dir) / "geojson" / "generated" / "holes_connected.geojson")
+            holes_geojson = None
             config_json = str(Path(args.course_dir) / "config" / "simulation_config.json")
             first_tee_in_groups = min(g["tee_time_s"] for g in groups_master)
             last_tee_in_groups = max(g["tee_time_s"] for g in groups_master)
@@ -2208,7 +3202,7 @@ def _run_mode_optimize_runners(args: argparse.Namespace) -> None:
                 course_dir=args.course_dir,
                 save_path=heatmap_file,
                 title=f"{course_name} - Optimized Delivery Heatmap ({recommendation} Runners)",
-                colormap='RdYlGn_r'
+                colormap='white_to_red'
             )
             logger.info("Created optimization heatmap: %s", heatmap_file)
 
@@ -2226,78 +3220,96 @@ def _run_mode_optimize_runners(args: argparse.Namespace) -> None:
 
 # -------------------- CLI --------------------
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Unified simulation runner for beverage carts and delivery runner",
-    )
+    # Reset performance tracking at start of simulation
+    reset_performance_tracking()
+    
+    with timed_operation("cli_setup"):
+        parser = argparse.ArgumentParser(
+            description="Unified simulation runner for beverage carts and delivery runner",
+        )
 
-    # Top-level mode selector
-    parser.add_argument(
-        "--mode",
-        type=str,
-        choices=["bev-carts", "bev-with-golfers", "golfers-only", "delivery-runner", "single-golfer", "optimize-runners"],
-        default="bev-carts",
-        help="Simulation mode",
-    )
+        # Top-level mode selector
+        parser.add_argument(
+            "--mode",
+            type=str,
+            choices=["bev-carts", "bev-with-golfers", "golfers-only", "delivery-runner", "single-golfer", "optimize-runners", "simple-nodes"],
+            default="bev-carts",
+            help="Simulation mode",
+        )
 
-    # Common
-    parser.add_argument("--course-dir", default="courses/pinetree_country_club", help="Course directory")
-    parser.add_argument("--num-runs", type=int, default=5, help="Number of runs")
-    parser.add_argument("--output-dir", type=str, default=None, help="Output directory root")
-    parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
+        # Common
+        parser.add_argument("--course-dir", default="courses/pinetree_country_club", help="Course directory")
+        parser.add_argument("--num-runs", type=int, default=5, help="Number of runs")
+        parser.add_argument("--output-dir", type=str, default=None, help="Output directory root")
+        parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
+        parser.add_argument("--open-viewer", action="store_true", help="After a single run, open React GeoJSON viewer and preload coordinates")
+        parser.add_argument("--regenerate-travel-times", action="store_true", help="Clear cached travel times to force dynamic routing with current runner speed")
 
-    # Groups scheduling
-    parser.add_argument("--groups-count", type=int, default=0, help="Number of golfer groups (0 for none)")
-    parser.add_argument("--groups-interval-min", type=float, default=15.0, help="Interval between groups in minutes")
-    parser.add_argument("--first-tee", type=str, default="09:00", help="First tee time HH:MM")
-    parser.add_argument(
-        "--tee-scenario",
-        type=str,
-        default="typical_weekday",
-        help=(
-            "Tee-times scenario key from course tee_times_config.json. "
-            "Use 'none' to disable and rely on manual --groups-* options."
-        ),
-    )
+        # Groups scheduling
+        parser.add_argument("--groups-count", type=int, default=0, help="Number of golfer groups (0 for none)")
+        parser.add_argument("--groups-interval-min", type=float, default=15.0, help="Interval between groups in minutes")
+        parser.add_argument("--first-tee", type=str, default="09:00", help="First tee time HH:MM")
+        parser.add_argument(
+            "--tee-scenario",
+            type=str,
+            default="typical_weekday",
+            help=(
+                "Tee-times scenario key from course tee_times_config.json. "
+                "Use 'none' to disable and rely on manual --groups-* options."
+            ),
+        )
 
-    # Beverage cart params
-    parser.add_argument("--num-carts", type=int, default=1, help="Number of carts for bev-carts mode")
-    parser.add_argument("--order-prob", type=float, default=0.4, help="[DEPRECATED] Use bev_cart_order_probability_per_9_holes in simulation_config.json")
-    parser.add_argument("--avg-order-usd", type=float, default=12.0, help="Average order value in USD for bev-with-golfers")
-    parser.add_argument("--random-seed", type=int, default=None, help="Optional RNG seed for bev-with-golfers runs and crossings")
+        # Beverage cart params
+        parser.add_argument("--num-carts", type=int, default=1, help="Number of carts for bev-carts mode")
+        parser.add_argument("--order-prob", type=float, default=0.4, help="[DEPRECATED] Use bev_cart_order_probability_per_9_holes in simulation_config.json")
+        parser.add_argument("--avg-order-usd", type=float, default=12.0, help="Average order value in USD for bev-with-golfers")
+        parser.add_argument("--random-seed", type=int, default=None, help="Optional RNG seed for bev-with-golfers runs and crossings")
 
-    # Delivery runner params
-    parser.add_argument("--order-prob-9", type=float, default=0.5, help="[DEPRECATED] Order probability is now calculated from delivery_total_orders in simulation_config.json")
-    parser.add_argument("--prep-time", type=int, default=10, help="Food preparation time in minutes")
-    parser.add_argument(
-        "--runner-speed",
-        type=float,
-        default=6.0,
-        help="Runner speed in m/s (all modes). Config allows mph but is converted during load.",
-    )
-    parser.add_argument("--revenue-per-order", type=float, default=25.0, help="Revenue per successful order")
-    parser.add_argument("--sla-minutes", type=int, default=30, help="SLA in minutes")
-    parser.add_argument("--service-hours", type=float, default=10.0, help="Active service hours for runner (metrics scaling)")
-    parser.add_argument("--num-runners", type=int, default=1, help="Number of delivery runners (1 for single-runner, >1 enables multi-runner shared queue)")
-    parser.add_argument("--no-bev-cart", action="store_true", help="Disable bev-cart pass boost (simulate 0 beverage carts during delivery hours)")
-    parser.add_argument("--no-individual-plots", action="store_true", help="Skip per-order PNGs; keep overall map/heatmap")
-    # Optimization params
-    parser.add_argument("--target-on-time", type=float, default=0.99, help="Target on-time rate (0..1) for optimization")
-    parser.add_argument("--max-runners", type=int, default=6, help="Maximum runners to consider for optimization")
+        # Delivery runner params
+        parser.add_argument("--order-prob-9", type=float, default=0.5, help="[DEPRECATED] Order probability is now calculated from delivery_total_orders in simulation_config.json")
+        parser.add_argument("--prep-time", type=int, default=10, help="Food preparation time in minutes")
+        parser.add_argument(
+            "--runner-speed",
+            type=float,
+            default=6.0,
+            help="Runner speed in m/s (all modes). Config allows mph but is converted during load.",
+        )
+        parser.add_argument("--revenue-per-order", type=float, default=25.0, help="Revenue per successful order")
+        parser.add_argument("--sla-minutes", type=int, default=30, help="SLA in minutes")
+        parser.add_argument("--service-hours", type=float, default=10.0, help="Active service hours for runner (metrics scaling)")
+        parser.add_argument("--num-runners", type=int, default=1, help="Number of delivery runners (1 for single-runner, >1 enables multi-runner shared queue)")
+        parser.add_argument("--no-bev-cart", action="store_true", help="[Deprecated] Use --with-bev-cart to enable. When set, forces bev-cart OFF even if --with-bev-cart provided")
+        parser.add_argument("--with-bev-cart", action="store_true", help="Explicitly include a beverage cart in delivery-runner mode (enables bev-pass boost, bev GPS, and bev metrics)")
+        parser.add_argument("--include-delivery-maps", action="store_true", help="Include delivery route maps (both individual and overall)")
+        parser.add_argument("--no-heatmap", action="store_true", help="Skip creating delivery heatmap")
+        parser.add_argument("--interactive-heatmap", action="store_true", help="Create interactive HTML heatmap with hover tooltips")
+        # Optimization params
+        parser.add_argument("--target-on-time", type=float, default=0.99, help="Target on-time rate (0..1) for optimization")
+        parser.add_argument("--max-runners", type=int, default=6, help="Maximum runners to consider for optimization")
 
-    # Single-golfer params
-    parser.add_argument("--hole", type=int, choices=range(1, 19), metavar="1-18", help="Specific hole for single-golfer mode; random if omitted")
-    parser.add_argument("--placement", choices=["tee", "mid", "green"], default="mid", help="Where on the --hole to place the order")
-    parser.add_argument("--runner-delay", type=float, default=0.0, metavar="MIN", help="Additional delay before runner departs (busy runner)")
-    parser.add_argument("--no-enhanced", action="store_true", help="Don't use enhanced cart network")
-    parser.add_argument("--no-coordinates", action="store_true", help="Disable GPS coordinate tracking")
-    parser.add_argument("--no-visualization", action="store_true", help="Skip creating visualizations")
+        # Simple-nodes params
+        parser.add_argument("--duration-min", type=int, default=None, help="Minutes to simulate in simple-nodes mode (default: number of holes_connected points)")
 
-    args = parser.parse_args()
-    init_logging(args.log_level)
+        # Single-golfer params
+        parser.add_argument("--hole", type=int, choices=range(1, 19), metavar="1-18", help="Specific hole for single-golfer mode; random if omitted")
+        parser.add_argument("--placement", choices=["tee", "mid", "green"], default="mid", help="Where on the --hole to place the order")
+        parser.add_argument("--runner-delay", type=float, default=0.0, metavar="MIN", help="Additional delay before runner departs (busy runner)")
+        parser.add_argument("--no-enhanced", action="store_true", help="Don't use enhanced cart network")
+        parser.add_argument("--no-coordinates", action="store_true", help="Disable GPS coordinate tracking")
+        parser.add_argument("--no-visualization", action="store_true", help="Skip creating visualizations")
+        # Override probability of order per 9 holes for bev cart sales (0..1)
+        parser.add_argument("--bev-order-prob", type=float, default=None, help="Override bev-cart order probability per 9 holes (0..1)")
+
+        args = parser.parse_args()
+        init_logging(args.log_level)
 
     logger.info("Unified simulation runner starting. Mode: %s", args.mode)
     logger.info("Course: %s", args.course_dir)
     logger.info("Runs: %d", args.num_runs)
+
+    # Clear cached travel times if requested
+    if getattr(args, "regenerate_travel_times", False):
+        _clear_cached_travel_times(args.course_dir)
 
     if args.mode == "bev-carts":
         _run_mode_bev_carts(args)
@@ -2313,8 +3325,25 @@ def main() -> None:
         _run_mode_single_golfer(args)
     elif args.mode == "optimize-runners":
         _run_mode_optimize_runners(args)
+    elif args.mode == "simple-nodes":
+        _run_mode_simple_nodes(args)
     else:
         raise SystemExit(f"Unknown mode: {args.mode}")
+    
+    # Log comprehensive performance summary
+    log_performance_summary(f"Simulation Performance Summary - {args.mode.upper()} Mode")
+    
+    # Clear visualization caches to free memory
+    with timed_operation("cleanup_caches"):
+        clear_course_data_cache()
+        clear_heatmap_caches()
+        logger.debug("Cleared visualization caches")
+
+
+if __name__ == "__main__":
+    main()
+
+
 
 
 if __name__ == "__main__":

@@ -53,6 +53,8 @@ class SingleRunnerDeliveryService:
     service_close_s: int = 0
     # Precomputed distances from clubhouse to each hole (meters)
     hole_distance_m: Dict[int, float] | None = None
+    # Configured queue timeout: orders not dispatched within this window fail
+    queue_timeout_s: int = 3600
 
     def __post_init__(self) -> None:
         self.prep_time_s = self.prep_time_min * 60
@@ -62,6 +64,10 @@ class SingleRunnerDeliveryService:
     def _load_course_config(self) -> None:
         sim_cfg = load_simulation_config(self.course_dir)
         self.clubhouse_coords = sim_cfg.clubhouse
+        try:
+            self.queue_timeout_s = max(60, int(getattr(sim_cfg, "minutes_for_delivery_order_failure", 60)) * 60)
+        except Exception:
+            self.queue_timeout_s = 3600
         if getattr(sim_cfg, "service_hours", None) is not None:
             open_time = f"{int(sim_cfg.service_hours.start_hour):02d}:00"
             close_time = f"{int(sim_cfg.service_hours.end_hour):02d}:00"
@@ -79,6 +85,28 @@ class SingleRunnerDeliveryService:
         )
         # Try to load realistic distances per hole
         self._load_travel_distances()
+
+    def _prune_expired_orders(self) -> None:
+        """Remove orders from queue that exceeded queue_timeout_s without dispatch."""
+        if not self.order_queue:
+            return
+        kept: List[DeliveryOrder] = []
+        for o in self.order_queue:
+            placed = o.order_placed_time if o.order_placed_time is not None else self.env.now
+            if (self.env.now - placed) >= self.queue_timeout_s:
+                o.status = "failed"
+                o.failure_reason = f"Not dispatched within {int(self.queue_timeout_s/60)} minutes"
+                self.failed_orders.append(o)
+                self.log_activity(
+                    "order_failed_timeout",
+                    f"Order {o.order_id} timed out in queue (>{int(self.queue_timeout_s/60)} min); removed from queue",
+                    o.order_id,
+                    "clubhouse",
+                    orders_in_queue=len(self.order_queue),
+                )
+            else:
+                kept.append(o)
+        self.order_queue = kept
 
     def _load_travel_distances(self) -> None:
         """Load clubhouse→hole distances from travel_times.json if available.
@@ -126,24 +154,27 @@ class SingleRunnerDeliveryService:
     def is_service_open(self) -> bool:
         return self.service_open_s <= self.env.now <= self.service_close_s
 
-    def log_activity(self, activity_type: str, description: str, order_id: str | None = None, location: Optional[str] = None) -> None:
+    def log_activity(self, activity_type: str, description: str, order_id: str | None = None, location: Optional[str] = None, orders_in_queue: Optional[int] = None) -> None:
         current_time_min = self.env.now / 60
         hours = int(current_time_min // 60) + 7
         minutes = int(current_time_min % 60)
         time_str = f"{hours:02d}:{minutes:02d}"
-        self.activity_log.append(
-            {
-                "timestamp_s": self.env.now,
-                "time_str": time_str,
-                "activity_type": activity_type,
-                "description": description,
-                "order_id": order_id,
-                "location": location or self.runner_location,
-            }
-        )
+        entry = {
+            "timestamp_s": self.env.now,
+            "time_str": time_str,
+            "activity_type": activity_type,
+            "description": description,
+            "order_id": order_id,
+            "location": location or self.runner_location,
+        }
+        if orders_in_queue is not None:
+            entry["orders_in_queue"] = int(orders_in_queue)
+        self.activity_log.append(entry)
 
     def place_order(self, order: DeliveryOrder) -> None:
         order.order_placed_time = self.env.now
+        # Queue length BEFORE appending this order
+        prior_queue_len = len(self.order_queue)
         self.order_queue.append(order)
         queue_size = len(self.order_queue)
         if queue_size == 1:
@@ -152,6 +183,7 @@ class SingleRunnerDeliveryService:
                 f"New order from Group {order.golfer_group_id} on Hole {order.hole_num} - Processing immediately",
                 order.order_id,
                 "clubhouse",
+                orders_in_queue=prior_queue_len,
             )
         else:
             self.log_activity(
@@ -159,6 +191,7 @@ class SingleRunnerDeliveryService:
                 f"New order from Group {order.golfer_group_id} on Hole {order.hole_num} - Added to queue (position {queue_size})",
                 order.order_id,
                 "clubhouse",
+                orders_in_queue=prior_queue_len,
             )
 
     def _delivery_service_process(self):  # simpy process
@@ -178,6 +211,9 @@ class SingleRunnerDeliveryService:
                 self.order_queue.clear()
                 break
 
+            # Periodically prune expired orders from the head/tail of the queue
+            self._prune_expired_orders()
+
             if self.order_queue and not self.runner_busy:
                 order = self.order_queue.pop(0)
                 # Process order regardless of wait time - no SLA timeout during processing
@@ -188,6 +224,19 @@ class SingleRunnerDeliveryService:
     def _process_single_order(self, order: DeliveryOrder):  # simpy process
         self.runner_busy = True
         placed_time = order.order_placed_time if order.order_placed_time is not None else self.env.now
+        # Fail immediately if order has already exceeded timeout before starting any work
+        if (self.env.now - placed_time) >= self.queue_timeout_s:
+            order.status = "failed"
+            order.failure_reason = f"Not dispatched within {int(self.queue_timeout_s/60)} minutes"
+            self.failed_orders.append(order)
+            self.log_activity(
+                "order_failed_timeout",
+                f"Order {order.order_id} timed out before processing (>{int(self.queue_timeout_s/60)} min)",
+                order.order_id,
+                self.runner_location,
+            )
+            self.runner_busy = False
+            return
         order.queue_delay_s = self.env.now - placed_time
         self.log_activity(
             "processing_start",
@@ -209,6 +258,19 @@ class SingleRunnerDeliveryService:
         self.log_activity("prep_complete", f"Completed food preparation for Order {order.order_id} ({self.prep_time_s/60:.0f} min)", order.order_id, "clubhouse")
 
         delivery_distance_m, delivery_time_s = self._calculate_delivery_details(order.hole_num)
+        # Final pre-departure timeout check
+        if (self.env.now - placed_time) >= self.queue_timeout_s:
+            order.status = "failed"
+            order.failure_reason = f"Not dispatched within {int(self.queue_timeout_s/60)} minutes"
+            self.failed_orders.append(order)
+            self.log_activity(
+                "order_failed_timeout",
+                f"Order {order.order_id} exceeded timeout before departure; discarding",
+                order.order_id,
+                "clubhouse",
+            )
+            self.runner_busy = False
+            return
         order.delivery_started_time = self.env.now
         self.log_activity("delivery_start", f"Departing clubhouse to deliver Order {order.order_id} to Hole {order.hole_num} ({delivery_distance_m:.0f}m, {delivery_time_s/60:.1f} min)", order.order_id, "clubhouse")
         yield self.env.timeout(delivery_time_s)
@@ -219,31 +281,24 @@ class SingleRunnerDeliveryService:
         order.total_completion_time_s = order.delivered_time - placed_time
         return_time_s = self._calculate_return_time()
         total_drive_time_s = delivery_time_s + return_time_s
-        # Hard failure rule: if total completion exceeds 60 minutes, treat as failed
-        if order.total_completion_time_s > 3600:
-            order.status = "failed"
-            order.failure_reason = "Exceeded 1-hour SLA after processing"
-            self.failed_orders.append(order)
-            self.log_activity("delivery_failed_late", f"Order {order.order_id} exceeded 60 minutes (Total: {order.total_completion_time_s/60:.1f} min). Marked failed.", order.order_id, f"hole_{order.hole_num}")
-        else:
-            self.log_activity("delivery_complete", f"Delivered Order {order.order_id} to Group {order.golfer_group_id} at Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", order.order_id, f"hole_{order.hole_num}")
-            order.status = "processed"
-            self.delivery_stats.append(
-                {
-                    "order_id": order.order_id,
-                    "golfer_group_id": order.golfer_group_id,
-                    "hole_num": order.hole_num,
-                    "order_time_s": order.order_time_s,
-                    "queue_delay_s": order.queue_delay_s,
-                    "prep_time_s": self.prep_time_s,
-                    "delivery_time_s": delivery_time_s,
-                    "return_time_s": return_time_s,
-                    "total_drive_time_s": total_drive_time_s,
-                    "delivery_distance_m": delivery_distance_m,
-                    "total_completion_time_s": order.total_completion_time_s,
-                    "delivered_at_time_s": order.delivered_time,
-                }
-            )
+        self.log_activity("delivery_complete", f"Delivered Order {order.order_id} to Group {order.golfer_group_id} at Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", order.order_id, f"hole_{order.hole_num}")
+        order.status = "processed"
+        self.delivery_stats.append(
+            {
+                "order_id": order.order_id,
+                "golfer_group_id": order.golfer_group_id,
+                "hole_num": order.hole_num,
+                "order_time_s": order.order_time_s,
+                "queue_delay_s": order.queue_delay_s,
+                "prep_time_s": self.prep_time_s,
+                "delivery_time_s": delivery_time_s,
+                "return_time_s": return_time_s,
+                "total_drive_time_s": total_drive_time_s,
+                "delivery_distance_m": delivery_distance_m,
+                "total_completion_time_s": order.total_completion_time_s,
+                "delivered_at_time_s": order.delivered_time,
+            }
+        )
 
         if self.order_queue:
             next_order = self.order_queue[0]
@@ -308,6 +363,8 @@ class MultiRunnerDeliveryService:
     service_open_s: int = 0
     service_close_s: int = 0
     hole_distance_m: Dict[int, float] | None = None
+    # Configured queue timeout
+    queue_timeout_s: int = 3600
 
     # Internal per-runner state
     runner_locations: List[str] = field(default_factory=list)
@@ -373,6 +430,10 @@ class MultiRunnerDeliveryService:
     def _load_course_config(self) -> None:
         sim_cfg = load_simulation_config(self.course_dir)
         self.clubhouse_coords = sim_cfg.clubhouse
+        try:
+            self.queue_timeout_s = max(60, int(getattr(sim_cfg, "minutes_for_delivery_order_failure", 60)) * 60)
+        except Exception:
+            self.queue_timeout_s = 3600
         if getattr(sim_cfg, "service_hours", None) is not None:
             open_time = f"{int(sim_cfg.service_hours.start_hour):02d}:00"
             close_time = f"{int(sim_cfg.service_hours.end_hour):02d}:00"
@@ -389,6 +450,66 @@ class MultiRunnerDeliveryService:
             self.service_close_s / 3600,
         )
         self._load_travel_distances()
+        # Start background expiration sweeper
+        self.env.process(self._expiration_sweeper())
+
+    def _expiration_sweeper(self):  # simpy process
+        """Periodically remove expired orders from shared and per-runner queues."""
+        while True:
+            # Stop sweeper after close and all queues empty
+            if (
+                self.env.now > self.service_close_s
+                and len(self.order_store.items) == 0
+                and all(not q.items for q in self.runner_stores)
+            ):
+                return
+            # Sweep shared queue
+            if self.order_store is not None and self.order_store.items:
+                kept: List[DeliveryOrder] = []
+                for o in list(self.order_store.items):
+                    placed = o.order_placed_time if o.order_placed_time is not None else self.env.now
+                    if (self.env.now - placed) >= self.queue_timeout_s:
+                        o.status = "failed"
+                        o.failure_reason = f"Not dispatched within {int(self.queue_timeout_s/60)} minutes"
+                        self.failed_orders.append(o)
+                        try:
+                            self.order_store.items.remove(o)
+                        except ValueError:
+                            pass
+                        self.log_activity(
+                            "order_failed_timeout",
+                            f"Order {o.order_id} timed out in dispatcher queue; removed",
+                            runner_id=None,
+                            order_id=o.order_id,
+                            location="clubhouse",
+                            orders_in_queue=len(self.order_store.items),
+                        )
+                    else:
+                        kept.append(o)
+            # Sweep per-runner queues
+            for idx, q in enumerate(self.runner_stores):
+                if not q.items:
+                    continue
+                for o in list(q.items):
+                    placed = o.order_placed_time if o.order_placed_time is not None else self.env.now
+                    if (self.env.now - placed) >= self.queue_timeout_s:
+                        o.status = "failed"
+                        o.failure_reason = f"Not dispatched within {int(self.queue_timeout_s/60)} minutes"
+                        self.failed_orders.append(o)
+                        try:
+                            q.items.remove(o)
+                        except ValueError:
+                            pass
+                        self.log_activity(
+                            "order_failed_timeout",
+                            f"Order {o.order_id} timed out before runner departure; removed from {f'runner_{idx+1}'} queue",
+                            runner_id=f"runner_{idx+1}",
+                            order_id=o.order_id,
+                            location=self.runner_locations[idx],
+                            orders_in_queue=len(q.items),
+                        )
+            # Sleep until next sweep
+            yield self.env.timeout(30)
 
     def _load_travel_distances(self) -> None:
         try:
@@ -422,25 +543,31 @@ class MultiRunnerDeliveryService:
         hour, minute = map(int, time_str.split(":"))
         return (hour - 7) * 3600 + minute * 60
 
-    def log_activity(self, activity_type: str, description: str, runner_id: Optional[str] = None, order_id: str | None = None, location: Optional[str] = None) -> None:
+    def log_activity(self, activity_type: str, description: str, runner_id: Optional[str] = None, order_id: str | None = None, location: Optional[str] = None, orders_in_queue: Optional[int] = None) -> None:
         current_time_min = self.env.now / 60
         hours = int(current_time_min // 60) + 7
         minutes = int(current_time_min % 60)
         time_str = f"{hours:02d}:{minutes:02d}"
-        self.activity_log.append(
-            {
-                "timestamp_s": self.env.now,
-                "time_str": time_str,
-                "activity_type": activity_type,
-                "description": description,
-                "runner_id": runner_id,
-                "order_id": order_id,
-                "location": location,
-            }
-        )
+        entry = {
+            "timestamp_s": self.env.now,
+            "time_str": time_str,
+            "activity_type": activity_type,
+            "description": description,
+            "runner_id": runner_id,
+            "order_id": order_id,
+            "location": location,
+        }
+        if orders_in_queue is not None:
+            entry["orders_in_queue"] = int(orders_in_queue)
+        self.activity_log.append(entry)
 
     def place_order(self, order: DeliveryOrder) -> None:
         order.order_placed_time = self.env.now
+        # Capture queue length BEFORE placing this order
+        try:
+            prior_len = len(self.order_store.items)
+        except Exception:
+            prior_len = None
         # Note: store.put returns an event; we don't need to wait on it here
         self.order_store.put(order)
         self.log_activity(
@@ -449,6 +576,7 @@ class MultiRunnerDeliveryService:
             runner_id=None,
             order_id=order.order_id,
             location="clubhouse",
+            orders_in_queue=prior_len,
         )
 
     def _runner_loop(self, runner_index: int):  # simpy process
@@ -469,13 +597,26 @@ class MultiRunnerDeliveryService:
             # Wait for an order assigned to this runner
             order: DeliveryOrder = yield self.runner_stores[runner_index].get()
 
-            # Process order regardless of wait time - no SLA timeout during processing
-
-            # Process the order
+            # Process the order (timeout checks handled in processing)
             yield self.env.process(self._process_single_order(order, runner_index, runner_label))
 
     def _process_single_order(self, order: DeliveryOrder, runner_index: int, runner_label: str):  # simpy process
         # If not at clubhouse, return first
+        placed_time = order.order_placed_time if order.order_placed_time is not None else self.env.now
+        # Early timeout check before doing any work
+        if (self.env.now - placed_time) >= self.queue_timeout_s:
+            order.status = "failed"
+            order.failure_reason = f"Not dispatched within {int(self.queue_timeout_s/60)} minutes"
+            self.failed_orders.append(order)
+            self.log_activity(
+                "order_failed_timeout",
+                f"{runner_label} received expired order {order.order_id}; discarding",
+                runner_id=runner_label,
+                order_id=order.order_id,
+                location=self.runner_locations[runner_index],
+            )
+            self.runner_busy[runner_index] = False
+            return
         if self.runner_locations[runner_index] != "clubhouse":
             return_time = self._calculate_return_time(self.runner_locations[runner_index])
             self.log_activity("returning", f"{runner_label} returning to clubhouse from {self.runner_locations[runner_index]} ({return_time/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
@@ -490,7 +631,28 @@ class MultiRunnerDeliveryService:
         order.prep_completed_time = self.env.now
         self.log_activity("prep_complete", f"{runner_label} completed prep for Order {order.order_id}", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
 
-        delivery_distance_m, delivery_time_s = self._calculate_delivery_details(order.hole_num)
+        # Use enhanced routing to get actual delivery paths for visualization
+        delivery_route_data = self._calculate_enhanced_delivery_route(order.hole_num)
+        delivery_distance_m = delivery_route_data["delivery_distance_m"]
+        delivery_time_s = delivery_route_data["delivery_time_s"]
+        trip_to_golfer = delivery_route_data.get("trip_to_golfer")
+        trip_back = delivery_route_data.get("trip_back")
+        
+        # Final pre-departure timeout check
+        if (self.env.now - placed_time) >= self.queue_timeout_s:
+            order.status = "failed"
+            order.failure_reason = f"Not dispatched within {int(self.queue_timeout_s/60)} minutes"
+            self.failed_orders.append(order)
+            self.log_activity(
+                "order_failed_timeout",
+                f"{runner_label} exceeded timeout before departure for Order {order.order_id}; discarding",
+                runner_id=runner_label,
+                order_id=order.order_id,
+                location="clubhouse",
+            )
+            self.runner_busy[runner_index] = False
+            return
+
         order.delivery_started_time = self.env.now
         self.log_activity("delivery_start", f"{runner_label} departing to Hole {order.hole_num} ({delivery_distance_m:.0f}m, {delivery_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
         yield self.env.timeout(delivery_time_s)
@@ -501,32 +663,30 @@ class MultiRunnerDeliveryService:
         order.total_completion_time_s = order.delivered_time - placed_time
         return_time_s = self._calculate_return_time(self.runner_locations[runner_index])
         total_drive_time_s = delivery_time_s + return_time_s
-        # Hard failure rule: if total completion exceeds 60 minutes, treat as failed
-        if order.total_completion_time_s > 3600:
-            order.status = "failed"
-            order.failure_reason = "Exceeded 1-hour SLA after processing"
-            self.failed_orders.append(order)
-            self.log_activity("delivery_failed_late", f"{runner_label} exceeded 60 minutes for Order {order.order_id} (Total: {order.total_completion_time_s/60:.1f} min). Marked failed.", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
-        else:
-            self.log_activity("delivery_complete", f"{runner_label} delivered Order {order.order_id} to Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
-            order.status = "processed"
-            self.delivery_stats.append(
-                {
-                    "order_id": order.order_id,
-                    "golfer_group_id": order.golfer_group_id,
-                    "hole_num": order.hole_num,
-                    "order_time_s": order.order_time_s,
-                    "queue_delay_s": order.queue_delay_s,
-                    "prep_time_s": self.prep_time_s,
-                    "delivery_time_s": delivery_time_s,
-                    "return_time_s": return_time_s,
-                    "total_drive_time_s": total_drive_time_s,
-                    "delivery_distance_m": delivery_distance_m,
-                    "total_completion_time_s": order.total_completion_time_s,
-                    "delivered_at_time_s": order.delivered_time,
-                    "runner_id": runner_label,
-                }
-            )
+        self.log_activity("delivery_complete", f"{runner_label} delivered Order {order.order_id} to Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
+        order.status = "processed"
+        delivery_stats_entry = {
+            "order_id": order.order_id,
+            "golfer_group_id": order.golfer_group_id,
+            "hole_num": order.hole_num,
+            "order_time_s": order.order_time_s,
+            "queue_delay_s": order.queue_delay_s,
+            "prep_time_s": self.prep_time_s,
+            "delivery_time_s": delivery_time_s,
+            "return_time_s": return_time_s,
+            "total_drive_time_s": total_drive_time_s,
+            "delivery_distance_m": delivery_distance_m,
+            "total_completion_time_s": order.total_completion_time_s,
+            "delivered_at_time_s": order.delivered_time,
+            "runner_id": runner_label,
+        }
+        # Add routing data for visualization if available
+        if trip_to_golfer:
+            delivery_stats_entry["trip_to_golfer"] = trip_to_golfer
+        if trip_back:
+            delivery_stats_entry["trip_back"] = trip_back
+            
+        self.delivery_stats.append(delivery_stats_entry)
         # Mark runner available for next assignment
         self.runner_busy[runner_index] = False
 
@@ -557,6 +717,95 @@ class MultiRunnerDeliveryService:
             distance_m = 1000.0
         travel_time_s = distance_m / max(self.runner_speed_mps, 0.1)
         return distance_m, travel_time_s
+
+    def _calculate_enhanced_delivery_route(self, hole_num: int) -> Dict:
+        """Calculate enhanced delivery route with actual path data for visualization."""
+        try:
+            # Load cart graph for enhanced routing
+            import pickle
+            from pathlib import Path
+            from .engine import enhanced_delivery_routing
+            
+            cart_graph_path = Path(self.course_dir) / "pkl" / "cart_graph.pkl"
+            if not cart_graph_path.exists():
+                # Fall back to simple calculation if no cart graph
+                distance_m, travel_time_s = self._calculate_delivery_details(hole_num)
+                return {
+                    "delivery_distance_m": distance_m,
+                    "delivery_time_s": travel_time_s,
+                }
+            
+            with open(cart_graph_path, 'rb') as f:
+                cart_graph = pickle.load(f)
+            
+            # Get hole location for routing
+            hole_location = self._get_hole_location(hole_num)
+            if not hole_location:
+                # Fall back to simple calculation if no hole location
+                distance_m, travel_time_s = self._calculate_delivery_details(hole_num)
+                return {
+                    "delivery_distance_m": distance_m,
+                    "delivery_time_s": travel_time_s,
+                }
+            
+            # Calculate trip to golfer
+            trip_to_golfer = enhanced_delivery_routing(
+                cart_graph, self.clubhouse_coords, hole_location, self.runner_speed_mps
+            )
+            
+            # Calculate return trip
+            trip_back = enhanced_delivery_routing(
+                cart_graph, hole_location, self.clubhouse_coords, self.runner_speed_mps
+            )
+            
+            # Total delivery metrics
+            total_distance_m = trip_to_golfer["length_m"] + trip_back["length_m"]
+            total_time_s = trip_to_golfer["time_s"] + trip_back["time_s"]
+            
+            return {
+                "delivery_distance_m": total_distance_m,
+                "delivery_time_s": trip_to_golfer["time_s"],  # Only outbound time for simulation
+                "trip_to_golfer": trip_to_golfer,
+                "trip_back": trip_back,
+            }
+            
+        except Exception as e:
+            logger.warning("Enhanced routing failed for hole %d: %s. Falling back to simple calculation.", hole_num, e)
+            # Fall back to simple calculation on any error
+            distance_m, travel_time_s = self._calculate_delivery_details(hole_num)
+            return {
+                "delivery_distance_m": distance_m,
+                "delivery_time_s": travel_time_s,
+            }
+
+    def _get_hole_location(self, hole_num: int) -> Optional[Tuple[float, float]]:
+        """Get the coordinates for a hole based on course geospatial data."""
+        try:
+            from ..viz.matplotlib_viz import load_course_geospatial_data
+            
+            course_data = load_course_geospatial_data(self.course_dir)
+            if 'holes' not in course_data:
+                return None
+                
+            holes_gdf = course_data['holes']
+            for _, hole in holes_gdf.iterrows():
+                hole_ref = hole.get('ref', str(hole.name + 1))
+                try:
+                    hole_id = int(hole_ref)
+                    if hole_id == hole_num:
+                        if hole.geometry.geom_type == "LineString":
+                            # Use midpoint of hole as delivery location
+                            midpoint = hole.geometry.interpolate(0.5, normalized=True)
+                            return (midpoint.x, midpoint.y)
+                        elif hasattr(hole.geometry, 'centroid'):
+                            return (hole.geometry.centroid.x, hole.geometry.centroid.y)
+                except (ValueError, TypeError):
+                    continue
+            return None
+            
+        except Exception as e:
+            logger.warning("Failed to get hole location for hole %d: %s", hole_num, e)
+            return None
 
 def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: float, rng_seed: Optional[int] = None) -> List[DeliveryOrder]:
     """Generate delivery orders on a per-group, per-9-holes basis.
@@ -633,6 +882,7 @@ class BeverageCartService:
     clubhouse_coords: Tuple[float, float] | None = None
     service_start_s: int = 0
     service_end_s: int = 0
+    # Deprecated: timing now derived from node-per-minute pacing
     bev_cart_18_holes_minutes: int = 180
 
     def __post_init__(self) -> None:
@@ -643,12 +893,8 @@ class BeverageCartService:
     def _load_course_config(self) -> None:
         sim_cfg = load_simulation_config(self.course_dir)
         self.clubhouse_coords = sim_cfg.clubhouse
-        # Read configured 18-hole loop durations
-        try:
-            minutes = int(getattr(sim_cfg, "bev_cart_18_holes_minutes", 180))
-            self.bev_cart_18_holes_minutes = max(1, minutes)
-        except Exception:
-            self.bev_cart_18_holes_minutes = 180
+        # Deprecated: ignore bev_cart_18_holes_minutes; pacing is one node per minute backward
+        self.bev_cart_18_holes_minutes = 180
         # Service hours for beverage cart (prefer config, else defaults)
         if getattr(sim_cfg, "bev_cart_hours", None) is not None:
             start_time = f"{int(sim_cfg.bev_cart_hours.start_hour):02d}:00"
@@ -665,7 +911,7 @@ class BeverageCartService:
             self.service_start_s / 3600,
             self.service_end_s / 3600,
         )
-        logger.info("Beverage cart 18-hole circuit time: %d minutes", self.bev_cart_18_holes_minutes)
+        # Deprecated informational log removed (fixed node pacing)
 
     # -------------------- Loop points utilities --------------------
     def _build_hole_sequence(self, minutes_per_loop: int) -> List[int]:
@@ -713,43 +959,68 @@ class BeverageCartService:
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         return 6371000.0 * c
 
-    def _flatten_holes_linestrings(self) -> list[tuple[float, float]]:
-        """Concatenate holes 1..18 LineStrings into a single coordinate list (lon, lat)."""
+    def _load_connected_points(self) -> tuple[list[tuple[float, float]], list[int | None]]:
+        """Load per-minute loop points from holes_connected.geojson.
+
+        Returns:
+            (coords_lonlat, hole_numbers)
+        """
         import json
-        from shapely.geometry import LineString
-
-        holes_path = Path(self.course_dir) / "geojson" / "holes.geojson"
-        if not holes_path.exists():
-            return []
-        data = json.loads(holes_path.read_text(encoding="utf-8"))
-        feats = data.get("features", [])
-
-        def _ref(props):
-            v = props.get("ref") or props.get("hole")
-            try:
-                return int(v)
-            except Exception:
-                return 10**9
-
-        feats.sort(key=lambda f: _ref(f.get("properties", {})))
+        # Local imports to avoid module-level dependency cycles
+        try:
+            from golfsim.simulation.crossings import load_holes_geojson, locate_hole_for_point  # type: ignore
+        except Exception:
+            load_holes_geojson = None  # type: ignore
+            locate_hole_for_point = None  # type: ignore
         coords: list[tuple[float, float]] = []
-        for f in feats:
-            geom = f.get("geometry", {})
-            if geom.get("type") != "LineString":
+        hole_nums: list[int | None] = []
+        path = Path(self.course_dir) / "geojson" / "generated" / "holes_connected.geojson"
+        if not path.exists():
+            return [], []
+        data = json.loads(path.read_text(encoding="utf-8"))
+        features = data.get("features", []) if isinstance(data, dict) else []
+        # Optional hole polygons for labeling when Point properties absent
+        holes_fc = None
+        try:
+            if load_holes_geojson is not None:
+                holes_path = Path(self.course_dir) / "geojson" / "generated" / "holes_geofenced.geojson"
+                if holes_path.exists():
+                    holes_fc = load_holes_geojson(str(holes_path))
+        except Exception:
+            holes_fc = None
+
+        # Use Point features only (no LineString resampling) and use embedded hole labels or polygon fallback
+        for feat in features:
+            if not isinstance(feat, dict):
                 continue
-            for lon, lat in geom.get("coordinates", []):
-                coords.append((float(lon), float(lat)))
-        # Close loop by returning to start
-        if len(coords) > 1:
-            coords.append(coords[0])
-        # Deduplicate consecutive duplicates
-        dedup: list[tuple[float, float]] = []
-        last: tuple[float, float] | None = None
-        for pt in coords:
-            if last is None or (pt[0] != last[0] or pt[1] != last[1]):
-                dedup.append(pt)
-                last = pt
-        return dedup
+            geom = feat.get("geometry") or {}
+            if geom.get("type") != "Point":
+                continue
+            coords_xy = geom.get("coordinates") or []
+            if not isinstance(coords_xy, (list, tuple)) or len(coords_xy) < 2:
+                continue
+            lon = float(coords_xy[0])
+            lat = float(coords_xy[1])
+            props = feat.get("properties") or {}
+            hn = (
+                props.get("hole_number")
+                or props.get("hole")
+                or props.get("hole_num")
+                or props.get("current_hole")
+            )
+            hole_num = None
+            try:
+                hole_num = int(hn) if hn is not None else None
+            except Exception:
+                hole_num = None
+            if hole_num is None and holes_fc is not None and locate_hole_for_point is not None:
+                try:
+                    hole_num = locate_hole_for_point(lon=lon, lat=lat, holes=holes_fc)
+                except Exception:
+                    hole_num = None
+            coords.append((lon, lat))
+            hole_nums.append(hole_num)
+        return coords, hole_nums
 
     def _resample_uniform(self, coords: list[tuple[float, float]], num_points: int) -> list[tuple[float, float]]:
         if num_points <= 0 or len(coords) < 2:
@@ -780,34 +1051,14 @@ class BeverageCartService:
             res.append((lon, lat))
         return res
 
-    def _load_or_build_loop_points(self) -> list[tuple[float, float]]:
-        """Load loop points from outputs if present; otherwise build from holes.
-
-        Uses bev_cart_18_holes_minutes to determine per-loop minutes when building.
-        """
-        # Prefer prebuilt points
-        prebuilt = Path("outputs") / "holes_path" / "holes_path_points.json"
-        if prebuilt.exists():
-            try:
-                import json
-                data = json.loads(prebuilt.read_text(encoding="utf-8"))
-                coords = data.get("coordinates", [])
-                pts = [(float(lon), float(lat)) for lon, lat in coords]
-                if len(pts) >= 2:
-                    logger.info("Loaded %d loop points from %s", len(pts), prebuilt)
-                    return pts
-            except Exception:
-                pass
-
-        # Build from holes with configured minutes per loop
-        minutes = int(self.bev_cart_18_holes_minutes)
-        base = self._flatten_holes_linestrings()
-        if len(base) < 2:
-            logger.warning("Could not build holes path; falling back to clubhouse point only")
-            return []
-        pts = self._resample_uniform(base, max(2, minutes))
-        logger.info("Built %d loop points from holes.geojson (%d min per loop)", len(pts), self.bev_cart_18_holes_minutes)
-        return pts
+    def _load_or_build_loop_points(self) -> tuple[list[tuple[float, float]], list[int | None]]:
+        """Load per-minute loop points and hole labels from holes_connected.geojson."""
+        coords, holes = self._load_connected_points()
+        if coords:
+            logger.info("Loaded %d loop points from holes_connected.geojson", len(coords))
+            return coords, holes
+        logger.warning("holes_connected.geojson missing or empty; no loop points loaded")
+        return [], []
 
     @staticmethod
     def _time_str_to_seconds(time_str: str) -> int:
@@ -840,39 +1091,9 @@ class BeverageCartService:
 
         # Load loop points and generate GPS coordinates from 09:00 to 17:00
         try:
-            loop_points = self._load_or_build_loop_points()
+            loop_points, loop_holes = self._load_or_build_loop_points()
 
-            # Load hole lines (optional; current_hole will be time-based for 18→1 traversal)
-            import json
-            from shapely.geometry import LineString, Point
-
-            hole_lines: dict[int, LineString] = {}
-            holes_file = Path(self.course_dir) / "geojson" / "holes.geojson"
-            if holes_file.exists():
-                holes_data = json.loads(holes_file.read_text(encoding="utf-8"))
-                for feature in holes_data.get("features", []):
-                    props = feature.get("properties", {})
-                    raw_num = props.get("hole", props.get("ref"))
-                    try:
-                        hole_num = int(raw_num) if raw_num is not None else None
-                    except (TypeError, ValueError):
-                        hole_num = None
-                    if hole_num and feature.get("geometry", {}).get("type") == "LineString":
-                        coords = feature["geometry"]["coordinates"]
-                        hole_lines[hole_num] = LineString(coords)
-
-            def nearest_hole(lon: float, lat: float) -> int | None:
-                # Retained for potential diagnostics; not used for assignment
-                if not hole_lines:
-                    return None
-                pt = Point(lon, lat)
-                best_hole, best_dist = None, float("inf")
-                for h, line in hole_lines.items():
-                    d = line.distance(pt)
-                    if d < best_dist:
-                        best_dist = d
-                        best_hole = h
-                return best_hole
+            # Hole lines no longer required; hole labels come from holes_connected.geojson
 
             import math
             # Build timestamps at 60s from start to end (inclusive)
@@ -893,37 +1114,15 @@ class BeverageCartService:
 
             # If we have loop points, follow them minute-by-minute after opening
             if loop_points:
-                points = loop_points
+                points = list(reversed(loop_points))  # beverage cart traverses reverse
+                holes = list(reversed(loop_holes)) if loop_holes else [None] * len(points)
                 num_points = len(points)
-                minutes_per_loop = max(1, int(self.bev_cart_18_holes_minutes))
-                # Traverse the loop in reverse so the cart goes 18→1
-                rotated = list(reversed(points))
-
-                # Build hole sequence based on starting hole
-                hole_sequence = self._build_hole_sequence(minutes_per_loop)
-
-                # Advance through the loop so one full loop takes minutes_per_loop minutes,
-                # even if we have a different number of prebuilt points
-                step_per_minute = num_points / float(minutes_per_loop)
-                
-                # Adjust starting position based on starting hole
-                if self.starting_hole == 9:
-                    # Cart 2 starts at hole 9, which is roughly halfway through the course
-                    # Start at roughly the middle of the loop
-                    pos = num_points * 0.5
-                else:
-                    # Cart 1 starts at the beginning (hole 18)
-                    pos = 0.0
+                # Align number of timestamps to available points
+                # Cycle through points if service window exceeds one loop
                 for i, t in enumerate(timestamps[1:]):
-                    idx0 = int(math.floor(pos)) % num_points
-                    idx1 = (idx0 + 1) % num_points
-                    frac = pos - math.floor(pos)
-                    lon = rotated[idx0][0] + frac * (rotated[idx1][0] - rotated[idx0][0])
-                    lat = rotated[idx0][1] + frac * (rotated[idx1][1] - rotated[idx0][1])
-
-                    minutes_into_loop = i % minutes_per_loop
-                    current_hole = hole_sequence[minutes_into_loop]
-                    
+                    idx = i % num_points
+                    lon, lat = points[idx]
+                    current_hole = holes[idx] if idx < len(holes) else None
                     self.coordinates.append(
                         {
                             "latitude": float(lat),
@@ -933,7 +1132,6 @@ class BeverageCartService:
                             "current_hole": current_hole,
                         }
                     )
-                    pos += step_per_minute
 
             self.log_activity(
                 "coordinates_generated",

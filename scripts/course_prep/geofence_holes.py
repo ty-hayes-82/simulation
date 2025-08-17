@@ -21,6 +21,7 @@ import logging
 import math
 import sys
 from typing import Dict, List, Tuple
+import json
 from pathlib import Path
 
 import geopandas as gpd
@@ -36,6 +37,7 @@ from shapely.geometry import (
 from shapely.ops import linemerge, unary_union
 
 from golfsim.logging import init_logging
+from golfsim.config.loaders import load_simulation_config
 
 # Optional dependencies (used if available)
 try:
@@ -467,6 +469,183 @@ def split_course_into_holes(
     logging.info(f"Wrote: {output_path}")
 
 
+def _get_ref_int(val) -> int:
+    try:
+        return int(val)
+    except Exception:
+        # push invalid refs to the end
+        return 10 ** 9
+
+
+def _flatten_holes_path(holes_gdf: gpd.GeoDataFrame, close_loop: bool) -> List[Tuple[float, float]]:
+    """Return ordered (lon, lat) path across holes 1..18 sorted by `ref`.
+
+    If a feature is MultiLineString, the longest LineString part is used.
+    Consecutive duplicate coordinates are removed. Optionally closes loop.
+    """
+    if holes_gdf.empty:
+        raise ValueError("Holes GeoDataFrame is empty")
+
+    if "ref" not in holes_gdf.columns:
+        raise ValueError("Expected 'ref' property in holes GeoJSON")
+
+    holes_sorted = holes_gdf.copy()
+    holes_sorted["_ref_int"] = holes_sorted["ref"].apply(_get_ref_int)
+    holes_sorted.sort_values("_ref_int", inplace=True)
+
+    coords: List[Tuple[float, float]] = []
+    for _, row in holes_sorted.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type == "LineString":
+            seq = list(geom.coords)  # type: ignore[attr-defined]
+        else:
+            try:
+                longest = max(geom.geoms, key=lambda g: g.length)
+                seq = list(longest.coords)  # type: ignore[attr-defined]
+            except Exception:
+                continue
+        for (lon, lat) in seq:
+            coords.append((float(lon), float(lat)))
+
+    # Deduplicate consecutive identical points
+    deduped: List[Tuple[float, float]] = []
+    last: Tuple[float, float] | None = None
+    for pt in coords:
+        if last is None or (pt[0] != last[0] or pt[1] != last[1]):
+            deduped.append(pt)
+            last = pt
+
+    if close_loop and len(deduped) > 1:
+        deduped.append(deduped[0])
+
+    if len(deduped) < 2:
+        raise ValueError("Not enough coordinates to form a path")
+
+    return deduped
+
+
+def _haversine_meters(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+    import math as _math
+    phi1 = _math.radians(lat1)
+    phi2 = _math.radians(lat2)
+    dphi = _math.radians(lat2 - lat1)
+    dlambda = _math.radians(lon2 - lon1)
+    a = _math.sin(dphi / 2) ** 2 + _math.cos(phi1) * _math.cos(phi2) * _math.sin(dlambda / 2) ** 2
+    c = 2 * _math.atan2((_math.sqrt(a)), _math.sqrt(1 - a))
+    return 6371000.0 * c
+
+
+def _resample_path_uniform(coords: List[Tuple[float, float]], num_points: int) -> List[Tuple[float, float]]:
+    if num_points <= 0:
+        raise ValueError("num_points must be positive")
+    if len(coords) < 2:
+        return list(coords)
+
+    # cumulative distances
+    cum: List[float] = [0.0]
+    total = 0.0
+    for i in range(1, len(coords)):
+        (lon1, lat1) = coords[i - 1]
+        (lon2, lat2) = coords[i]
+        d = _haversine_meters(lon1, lat1, lon2, lat2)
+        total += d
+        cum.append(total)
+
+    if total <= 0:
+        return [coords[0]] * num_points
+
+    targets = [i * (total / max(num_points - 1, 1)) for i in range(num_points)]
+
+    def _lerp(p1: Tuple[float, float], p2: Tuple[float, float], frac: float) -> Tuple[float, float]:
+        return (p1[0] + frac * (p2[0] - p1[0]), p1[1] + frac * (p2[1] - p1[1]))
+
+    resampled: List[Tuple[float, float]] = []
+    j = 0
+    for t in targets:
+        while j < len(cum) - 1 and cum[j + 1] < t:
+            j += 1
+        if j >= len(cum) - 1:
+            resampled.append(coords[-1])
+            continue
+        seg_len = max(cum[j + 1] - cum[j], 1e-9)
+        frac = (t - cum[j]) / seg_len
+        resampled.append(_lerp(coords[j], coords[j + 1], frac))
+
+    return resampled
+
+
+def generate_holes_connected(geojson_dir: Path, output_path: Path | None = None) -> Path:
+    """Generate a clubhouse-anchored continuous path across holes and minute nodes.
+
+    - Reads holes.geojson under geojson_dir
+    - Reads simulation_config.json under course_dir to get clubhouse and golfer minutes
+    - Builds a continuous path: clubhouse -> hole 1..18 path -> clubhouse
+    - Resamples into exactly N points where N == golfer_18_holes_minutes
+    - Writes FeatureCollection to output_path (or geojson/generated/holes_connected.geojson)
+    Returns the written output path.
+    """
+    if not isinstance(geojson_dir, Path):
+        geojson_dir = Path(str(geojson_dir))
+
+    course_dir = geojson_dir.parent
+
+    # Load config for clubhouse and minutes
+    cfg = load_simulation_config(course_dir)
+    clubhouse_lon, clubhouse_lat = cfg.clubhouse  # loaders returns (lon, lat)
+    minutes = int(cfg.golfer_18_holes_minutes)
+    minutes = max(1, minutes)
+
+    holes_path = geojson_dir / "holes.geojson"
+    if not holes_path.exists():
+        raise FileNotFoundError(f"Missing holes.geojson at {holes_path}")
+
+    holes_gdf = gpd.read_file(holes_path).to_crs(4326)
+
+    # Build ordered path across holes and anchor at clubhouse (start and end)
+    ordered = _flatten_holes_path(holes_gdf, close_loop=False)
+    path_coords: List[Tuple[float, float]] = []
+    # start at clubhouse
+    path_coords.append((float(clubhouse_lon), float(clubhouse_lat)))
+    path_coords.extend(ordered)
+    # end back at clubhouse
+    path_coords.append((float(clubhouse_lon), float(clubhouse_lat)))
+
+    # Resample into exactly `minutes` points (one per minute)
+    sampled = _resample_path_uniform(path_coords, minutes)
+
+    # Compose single FeatureCollection with line + points
+    features = []
+    features.append(
+        {
+            "type": "Feature",
+            "properties": {"name": "holes_connected_path"},
+            "geometry": {"type": "LineString", "coordinates": [[x, y] for (x, y) in path_coords]},
+        }
+    )
+    for idx, (x, y) in enumerate(sampled):
+        features.append(
+            {
+                "type": "Feature",
+                "properties": {"idx": int(idx)},
+                "geometry": {"type": "Point", "coordinates": [x, y]},
+            }
+        )
+
+    fc = {"type": "FeatureCollection", "features": features}
+
+    if output_path is None:
+        gen_dir = geojson_dir / "generated"
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        output_path = gen_dir / "holes_connected.geojson"
+
+    output_path = Path(output_path)
+    output_path.write_text(json.dumps(fc, indent=2))
+    logging.info(f"Wrote: {output_path}")
+    return output_path
+
+
 def _parse_args(argv: List[str] | None = None):
     parser = argparse.ArgumentParser(
         description="Split course polygon into 18 hole sections via Voronoi of centerlines."
@@ -542,6 +721,13 @@ def main(argv: List[str] | None = None) -> int:
         smooth_m=args.smooth,
         max_points_per_hole=args.max_points_per_hole,
     )
+
+    # Also generate a connected path + minute nodes alongside the geofenced output
+    try:
+        geojson_dir = boundary_path.parent
+        generate_holes_connected(geojson_dir)
+    except Exception as e:
+        logging.warning(f"Failed to generate holes_connected.geojson automatically: {e}")
     return 0
 
 

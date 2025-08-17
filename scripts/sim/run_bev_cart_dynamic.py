@@ -156,9 +156,9 @@ def _run_single_cart_with_groups_once(
 ) -> Dict:
     start_time = time.time()
 
-    # Compute crossings using files for accuracy
-    nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "lcm_course_nodes.geojson")
-    holes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_geofenced.geojson")
+    # Compute crossings using shared holes_connected.geojson
+    nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson")
+    holes_geojson = None
     config_json = str(Path(course_dir) / "config" / "simulation_config.json")
 
     first_tee_s = min(g["tee_time_s"] for g in groups) if groups else (9 - 7) * 3600

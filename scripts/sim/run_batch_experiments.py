@@ -135,8 +135,8 @@ def _generate_golfer_points_for_groups(course_dir: str, groups: List[Dict[str, A
 
 def _compute_crossings(course_dir: str, groups: List[Dict[str, Any]], random_seed: int) -> Optional[Dict[str, Any]]:
     try:
-        nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "lcm_course_nodes.geojson")
-        holes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_geofenced.geojson")
+        nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson")
+        holes_geojson = None
         config_json = str(Path(course_dir) / "config" / "simulation_config.json")
         first_tee_s = min(g["tee_time_s"] for g in groups) if groups else (9 - 7) * 3600
         last_tee_s = max(g["tee_time_s"] for g in groups) if groups else first_tee_s

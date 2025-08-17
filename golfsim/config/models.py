@@ -37,13 +37,15 @@ class SimulationConfig:
     # Extended config values (optional)
     # Minute-based configuration (preferred and required)
     golfer_18_holes_minutes: int = 240  # default 4.25h
-    bev_cart_18_holes_minutes: int = 180  # default 3.0h
+    # Deprecated: fixed node pacing now; bev cart timing is derived from nodes per minute
     delivery_runner_speed_mps: float = 6.0
     delivery_prep_time_sec: int = 600
     bev_cart_avg_order_usd: float = 12.5
     delivery_avg_order_usd: float = 30.0
     bev_cart_order_probability_per_9_holes: float = 0.35
     delivery_total_orders: int = 10
+    # New: orders that are not taken out for delivery within N minutes should fail
+    minutes_for_delivery_order_failure: int = 60
 
     @staticmethod
     def from_dict(data: Dict) -> "SimulationConfig":
@@ -89,19 +91,15 @@ class SimulationConfig:
         )
         network.validate()
 
-        # Extended defaults
-        mph = float(data.get("delivery_runner_speed_mph", 6.0))
-        delivery_runner_speed_mps = float(data.get("delivery_runner_speed_mps", mph * 0.44704))
+        # Extended defaults (mph config removed; use mps only)
+        delivery_runner_speed_mps = float(data.get("delivery_runner_speed_mps", 6.0))
 
         # Parse minutes-only (hours fields are deprecated and unsupported)
         try:
             golfer_minutes = int(data.get("golfer_18_holes_minutes", 240))
         except Exception:
             golfer_minutes = 240
-        try:
-            bev_minutes = int(data.get("bev_cart_18_holes_minutes", 180))
-        except Exception:
-            bev_minutes = 180
+        # Deprecated: bev_cart_18_holes_minutes removed
 
         cfg = SimulationConfig(
             course_name=str(data.get("course_name", "Unknown Course")),
@@ -110,13 +108,13 @@ class SimulationConfig:
             bev_cart_hours=bev_cart_hours,
             network=network,
             golfer_18_holes_minutes=golfer_minutes,
-            bev_cart_18_holes_minutes=bev_minutes,
             delivery_runner_speed_mps=delivery_runner_speed_mps,
             delivery_prep_time_sec=int(data.get("delivery_prep_time_sec", 600)),
             bev_cart_avg_order_usd=float(data.get("bev_cart_avg_order_usd", 12.5)),
             delivery_avg_order_usd=float(data.get("delivery_avg_order_usd", 30.0)),
             bev_cart_order_probability_per_9_holes=float(data.get("bev_cart_order_probability_per_9_holes", 0.35)),
             delivery_total_orders=int(data.get("delivery_total_orders", 10)),
+            minutes_for_delivery_order_failure=int(data.get("minutes_for_delivery_order_failure", 60)),
         )
         return cfg
 

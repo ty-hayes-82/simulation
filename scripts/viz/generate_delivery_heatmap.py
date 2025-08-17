@@ -132,8 +132,8 @@ Examples:
     parser.add_argument(
         '--colormap',
         type=str,
-        default='RdYlGn_r',
-        help='Matplotlib colormap name (default: RdYlGn_r)'
+        default='white_to_red',
+        help='Matplotlib colormap name (default: white_to_red)'
     )
     parser.add_argument(
         '--summary',
@@ -213,7 +213,7 @@ Examples:
             
             order_data = extract_order_data(results)
             if order_data:
-                delivery_times = [o['delivery_time_min'] for o in order_data]
+                delivery_times = [o['drive_time_min'] for o in order_data]
                 avg_time = np.mean(delivery_times)
                 print(f"\n📊 Processed {len(order_data)} orders with avg delivery time: {avg_time:.1f} minutes")
             else:

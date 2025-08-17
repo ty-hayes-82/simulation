@@ -34,14 +34,14 @@ import sys
 import json
 import pickle
 import geopandas as gpd
-from shapely.geometry import mapping
+from shapely.geometry import mapping, Point
 import networkx as nx
 from pathlib import Path
 
 # Add the project root to Python path to enable imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from scripts.course_prep.geofence_holes import split_course_into_holes
+from scripts.course_prep.geofence_holes import split_course_into_holes, generate_holes_connected
 
 from golfsim.data.osm_ingest import load_course, build_cartpath_graph, _get_streets_near_course
 from golfsim.preprocess.course_model import build_traditional_route
@@ -347,6 +347,83 @@ def _connect_cart_paths_to_streets(combined_graph, cart_graph, street_graph, max
     return connections_made
 
 
+def tag_holes_on_connected_points(geojson_dir: str) -> str:
+    """Tag each Point in generated/holes_connected.geojson with its hole number
+    determined by containment within polygons in generated/holes_geofenced.geojson.
+
+    Returns the path to the updated holes_connected.geojson.
+    """
+    generated_dir = os.path.join(geojson_dir, "generated")
+    holes_polygons_path = os.path.join(generated_dir, "holes_geofenced.geojson")
+    connected_path = os.path.join(generated_dir, "holes_connected.geojson")
+
+    if not (os.path.exists(holes_polygons_path) and os.path.exists(connected_path)):
+        raise FileNotFoundError("Required generated GeoJSON files not found for hole tagging")
+
+    # Load hole polygons (expects a 'hole' property)
+    holes_gdf = gpd.read_file(holes_polygons_path)
+    if holes_gdf.empty:
+        raise ValueError("holes_geofenced.geojson contains no polygons")
+
+    # Ensure CRS is consistent
+    if holes_gdf.crs is None:
+        holes_gdf.set_crs("EPSG:4326", inplace=True)
+
+    # Prepare list of (hole_number, polygon)
+    hole_polygons = []
+    for _, row in holes_gdf.iterrows():
+        hole_number = int(row.get("hole", -1))
+        geom = row.geometry
+        if geom is not None:
+            hole_polygons.append((hole_number, geom))
+
+    # Read connected geojson as dict to preserve feature order/types
+    with open(connected_path, "r", encoding="utf-8") as f:
+        connected_data = json.load(f)
+
+    features = connected_data.get("features", [])
+    updated_count = 0
+    missing_count = 0
+
+    for feat in features:
+        geom = feat.get("geometry", {})
+        if geom.get("type") == "Point":
+            coords = geom.get("coordinates")
+            if not coords or len(coords) < 2:
+                continue
+            pt = Point(coords[0], coords[1])
+
+            assigned_hole = None
+            for hole_number, poly in hole_polygons:
+                # Use contains or covers to be robust on boundaries
+                try:
+                    if poly.contains(pt) or poly.covers(pt):
+                        assigned_hole = hole_number
+                        break
+                except Exception:
+                    # Fallback is to skip this polygon
+                    continue
+
+            if "properties" not in feat or feat["properties"] is None:
+                feat["properties"] = {}
+            if assigned_hole is not None:
+                feat["properties"]["hole"] = int(assigned_hole)
+                updated_count += 1
+            else:
+                # Tag as unassigned (-1) to make gaps visible for debugging
+                feat["properties"]["hole"] = -1
+                missing_count += 1
+
+    with open(connected_path, "w", encoding="utf-8") as f:
+        json.dump(connected_data, f, indent=2)
+
+    print(f"✓ Tagged hole numbers on holes_connected points: {updated_count} updated, {missing_count} unassigned")
+    logger.info(
+        f"Tagged hole numbers on holes_connected points: {updated_count} updated, {missing_count} unassigned"
+    )
+    return connected_path
+
+
 def save_simulation_config(args, output_dir):
     """Create or merge simulation configuration without overwriting existing values unnecessarily."""
     config_dir = os.path.join(output_dir, "config")
@@ -377,13 +454,14 @@ def save_simulation_config(args, output_dir):
         },
         # Simulation timing and economics defaults (preserved if file exists)
         "golfer_18_holes_hours": 4.25,
-        "bev_cart_18_holes_hours": 3.0,
-        "delivery_runner_speed_mph": 6.0,
+        # Deprecated keys removed: bev_cart_18_holes_hours, delivery_runner_speed_mph
         "delivery_prep_time_sec": 600,
         "bev_cart_avg_order_usd": 12.50,
         "delivery_avg_order_usd": 30.00,
         "bev_cart_order_probability": 0.4,
         "delivery_order_probability_per_9_holes": 0.2,
+        # Orders not dispatched within this many minutes are failed and removed from the queue
+        "minutes_for_delivery_order_failure": 60,
         "delivery_service_hours": {
             "open_time": "11:00",
             "close_time": "18:00",
@@ -533,6 +611,22 @@ def main():
                     )
                     print(f"✓ Saved geofenced holes to {out_path}")
                     logger.info(f"Generated geofenced holes with {args.geofence_step}m step, {args.geofence_smooth}m smoothing")
+
+                    # Additionally generate a connected clubhouse→holes→clubhouse path with minute nodes
+                    try:
+                        connected_out = generate_holes_connected(Path(geojson_dir))
+                        print(f"✓ Saved connected holes path to {connected_out}")
+                        logger.info("Generated holes_connected.geojson alongside geofenced holes")
+
+                        # After both files exist, tag points in holes_connected with hole numbers
+                        try:
+                            tag_holes_on_connected_points(geojson_dir)
+                        except Exception as te:
+                            print(f"⚠ Failed to tag hole numbers on holes_connected points: {te}")
+                            logger.warning(f"Failed to tag hole numbers on holes_connected points: {te}")
+                    except Exception as ce:
+                        print(f"⚠ Failed to create holes_connected.geojson automatically: {ce}")
+                        logger.warning(f"Failed to create holes_connected.geojson automatically: {ce}")
                 else:
                     print("⊘ Skipping geofenced holes: boundary or holes GeoJSON not found")
                     logger.warning("Skipping geofenced holes: boundary or holes GeoJSON not found")

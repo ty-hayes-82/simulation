@@ -242,6 +242,11 @@ def normalize_coordinate_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     if revenue_per_hour is not None:
         base_entry["revenue_per_hour"] = revenue_per_hour
 
+    # Optional: rolling average order time in minutes (for runner points)
+    avg_order_time_min = _get_first("avg_order_time_min")
+    if avg_order_time_min is not None:
+        base_entry["avg_order_time_min"] = avg_order_time_min
+
     return base_entry
 
 
@@ -260,7 +265,8 @@ def write_unified_coordinates_csv(points_by_id: Dict[str, List[Dict[str, Any]]],
     fieldnames = [
         "id", "latitude", "longitude", "timestamp", "type", "hole",
         "visibility_status", "time_since_last_sighting_min", "pulsing",
-        "total_orders", "total_revenue", "avg_per_order", "revenue_per_hour"
+        "total_orders", "total_revenue", "avg_per_order", "revenue_per_hour",
+        "avg_order_time_min",
     ]
     
     # Use csv module to avoid pandas dependency here

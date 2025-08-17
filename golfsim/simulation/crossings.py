@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from bisect import bisect_left
 from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
 from datetime import datetime, date, time, timedelta
 import json
 import random
@@ -30,7 +31,8 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dphi = radians(lat2 - lat1)
     dlambda = radians(lon2 - lon1)
     a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
-    c = 2 * atan2(sqrt(1 - a), sqrt(a))
+    # Correct haversine: atan2(sqrt(a), sqrt(1 - a))
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
     return R * c
 
 
@@ -79,7 +81,8 @@ def load_nodes_geojson(path: str) -> List[Tuple[float, float]]:
         except (TypeError, ValueError):
             return None
 
-    ordered_points: List[Tuple[int, Optional[float], Optional[int], float, float]] = []
+    # Prefer Point features with ordering; they can carry hole labels and indices
+    ordered_points: List[Tuple[int, Optional[int], Optional[float], Optional[int], float, float]] = []
     for idx, feat in enumerate(features):
         if not isinstance(feat, dict):
             continue
@@ -91,26 +94,30 @@ def load_nodes_geojson(path: str) -> List[Tuple[float, float]]:
             continue
         lon, lat = float(coords[0]), float(coords[1])
         props = feat.get("properties") or {}
+        idx_prop = coerce_int(props.get("idx"))
         seq = coerce_float(props.get("sequence_position"))
         nid = coerce_int(props.get("node_id"))
-        ordered_points.append((idx, seq, nid, lat, lon))
+        ordered_points.append((idx, idx_prop, seq, nid, lat, lon))
 
-    if not ordered_points:
-        raise ValueError("GeoJSON contains no Point features with valid coordinates.")
+    if ordered_points:
+        def sort_key(item: Tuple[int, Optional[int], Optional[float], Optional[int], float, float]):
+            original_index, idx_opt, seq_opt, node_id_opt, _lat, _lon = item
+            if idx_opt is not None:
+                return (0, idx_opt)
+            if seq_opt is not None:
+                return (1, seq_opt)
+            if node_id_opt is not None:
+                return (2, node_id_opt)
+            return (3, original_index)
 
-    def sort_key(item: Tuple[int, Optional[float], Optional[int], float, float]):
-        original_index, seq_opt, node_id_opt, _lat, _lon = item
-        if seq_opt is not None:
-            return (0, seq_opt)
-        if node_id_opt is not None:
-            return (1, node_id_opt)
-        return (2, original_index)
+        ordered_points.sort(key=sort_key)
+        nodes = [(lat, lon) for (_i, _idx, _s, _n, lat, lon) in ordered_points]
+        if len(nodes) < 2:
+            raise ValueError("GeoJSON must contain at least 2 Point features with coordinates.")
+        return nodes
 
-    ordered_points.sort(key=sort_key)
-    nodes = [(lat, lon) for (_i, _s, _n, lat, lon) in ordered_points]
-    if len(nodes) < 2:
-        raise ValueError("GeoJSON must contain at least 2 Point features with coordinates.")
-    return nodes
+    # No Points available; do not use LineString for nodes
+    raise ValueError("GeoJSON contains no Point features with usable coordinates.")
 
 
 def load_nodes_geojson_with_holes(path: str) -> Tuple[List[Tuple[float, float]], List[Optional[int]]]:
@@ -136,7 +143,8 @@ def load_nodes_geojson_with_holes(path: str) -> Tuple[List[Tuple[float, float]],
         except (TypeError, ValueError):
             return None
 
-    temp: List[Tuple[int, Optional[float], Optional[int], float, float, Optional[int]]] = []
+    # Prefer Point features with ordering and optional hole labels
+    temp: List[Tuple[int, Optional[int], Optional[float], Optional[int], float, float, Optional[int]]] = []
     for idx, feat in enumerate(features):
         if not isinstance(feat, dict):
             continue
@@ -148,26 +156,36 @@ def load_nodes_geojson_with_holes(path: str) -> Tuple[List[Tuple[float, float]],
             continue
         lon, lat = float(coords[0]), float(coords[1])
         props = feat.get("properties") or {}
+        idx_prop = coerce_int(props.get("idx"))
         seq = coerce_float(props.get("sequence_position"))
         nid = coerce_int(props.get("node_id"))
-        hole_num = coerce_int(props.get("hole_number"))
-        temp.append((idx, seq, nid, lat, lon, hole_num))
+        hole_raw = (
+            props.get("hole_number")
+            or props.get("hole")
+            or props.get("hole_num")
+            or props.get("current_hole")
+        )
+        hole_num = coerce_int(hole_raw)
+        temp.append((idx, idx_prop, seq, nid, lat, lon, hole_num))
 
-    if not temp:
-        raise ValueError("GeoJSON contains no Point features with valid coordinates.")
+    if temp:
+        def sort_key(item: Tuple[int, Optional[int], Optional[float], Optional[int], float, float, Optional[int]]):
+            original_index, idx_opt, seq_opt, node_id_opt, _lat, _lon, _h = item
+            if idx_opt is not None:
+                return (0, idx_opt)
+            if seq_opt is not None:
+                return (1, seq_opt)
+            if node_id_opt is not None:
+                return (2, node_id_opt)
+            return (3, original_index)
 
-    def sort_key(item: Tuple[int, Optional[float], Optional[int], float, float, Optional[int]]):
-        original_index, seq_opt, node_id_opt, _lat, _lon, _h = item
-        if seq_opt is not None:
-            return (0, seq_opt)
-        if node_id_opt is not None:
-            return (1, node_id_opt)
-        return (2, original_index)
+        temp.sort(key=sort_key)
+        nodes = [(lat, lon) for (_i, _idx, _s, _n, lat, lon, _h) in temp]
+        node_holes: List[Optional[int]] = [h for (_i, _idx, _s, _n, _lat, _lon, h) in temp]
+        return nodes, node_holes
 
-    temp.sort(key=sort_key)
-    nodes = [(lat, lon) for (_i, _s, _n, lat, lon, _h) in temp]
-    node_holes: List[Optional[int]] = [h for (_i, _s, _n, _lat, _lon, h) in temp]
-    return nodes, node_holes
+    # No Points available; do not use LineString for nodes
+    raise ValueError("GeoJSON contains no Point features with usable coordinates.")
 
 
 def load_holes_geojson(path: str) -> List[Dict[str, Any]]:
@@ -368,6 +386,100 @@ def compute_crossings(
     }
 
 
+def compute_crossings_minute_indexed(
+    num_nodes: int,
+    bev_start_clock: str,
+    groups_start_clock: str,
+    groups_end_clock: str,
+    groups_count: int,
+    random_seed: Optional[int],
+    node_holes: Optional[List[Optional[int]]] = None,
+    tee_mode: str = "interval",
+    groups_interval_min: float = 30.0,
+) -> Dict[str, Any]:
+    """Compute crossings assuming one node per minute for both golfer (forward) and bev-cart (backward).
+
+    - Time grid is integer minutes.
+    - Golfer index at time t: floor((t - tee_time)/60) mod N
+    - Bev-cart forward-equivalent index at time t: (N - 1 - floor((t - bev_start)/60 mod N))
+    - A crossing occurs when indices are equal. Only first crossing per group is reported.
+    """
+    if num_nodes <= 0:
+        raise ValueError("num_nodes must be positive")
+
+    bev_t0 = datetime.combine(date.today(), parse_hhmm_or_hhmmss(bev_start_clock))
+    g_start_abs = datetime.combine(date.today(), parse_hhmm_or_hhmmss(groups_start_clock))
+    g_end_abs = datetime.combine(date.today(), parse_hhmm_or_hhmmss(groups_end_clock))
+    if g_end_abs <= g_start_abs:
+        g_end_abs = g_start_abs + timedelta(minutes=groups_interval_min * max(1, groups_count))
+
+    # Build group tee times
+    tee_times: List[datetime] = []
+    if tee_mode == "interval":
+        for i in range(groups_count):
+            tee_times.append(g_start_abs + timedelta(minutes=groups_interval_min * i))
+    else:
+        rng = random.Random(random_seed)
+        window_min = int((g_end_abs - g_start_abs).total_seconds() // 60)
+        for _ in range(groups_count):
+            offset_min = rng.randint(0, max(0, window_min))
+            tee_times.append(g_start_abs + timedelta(minutes=offset_min))
+
+    groups_out: List[Dict[str, Any]] = []
+
+    for group_idx, tee_abs in enumerate(sorted(tee_times), start=1):
+        # Simulate minute steps from tee for up to one loop
+        crossed = False
+        crossings_list: List[Dict[str, Any]] = []
+
+        max_minutes = num_nodes  # one loop
+        for minute_offset in range(0, max_minutes + 1):
+            t = tee_abs + timedelta(minutes=minute_offset)
+            if t < bev_t0:
+                continue
+            # Indices
+            g_idx = minute_offset % num_nodes
+            b_idx = int(((t - bev_t0).total_seconds() // 60) % num_nodes)
+            b_idx_fwd = (num_nodes - 1 - b_idx) % num_nodes
+
+            # Consider a crossing if indices match or are off by one (wrap-around tolerance)
+            if (
+                g_idx == b_idx_fwd
+                or g_idx == (b_idx_fwd + 1) % num_nodes
+                or (g_idx + 1) % num_nodes == b_idx_fwd
+            ):
+                hole_num: Optional[int] = None
+                if node_holes is not None and 0 <= g_idx < len(node_holes):
+                    hole_num = node_holes[g_idx]
+                    hole_num = int(hole_num) if hole_num is not None else None
+
+                crossings_list.append(
+                    {
+                        "t_cross_s": int((t - bev_t0).total_seconds()),
+                        "timestamp": t,
+                        "node_index": int(g_idx),
+                        "hole": hole_num,
+                        "k_wraps": 0,
+                    }
+                )
+                crossed = True
+                break  # first crossing only
+
+        groups_out.append(
+            {
+                "group": group_idx,
+                "tee_time": tee_abs,
+                "crossed": crossed,
+                "crossings": crossings_list,
+            }
+        )
+
+    return {
+        "bev_start": bev_t0,
+        "course_length_m": float(num_nodes),
+        "groups": groups_out,
+    }
+
 def simulate_meeting(
     nodes: List[Tuple[float, float]],
     v_fwd_mph: float,
@@ -498,6 +610,29 @@ def compute_crossings_from_files(
         nodes = load_nodes_geojson(nodes_geojson)
         node_holes = None
 
+    # Prefer discrete minute-indexed crossings when nodes derive from holes_connected
+    try:
+        cfg = json.loads(Path(config_json).read_text(encoding="utf-8")) if config_json else {}
+    except Exception:
+        cfg = {}
+    golfer_minutes = int(cfg.get("golfer_18_holes_minutes", 0) or 0)
+    path_lower = str(nodes_geojson).lower()
+    use_discrete = ("holes_connected" in path_lower) or (golfer_minutes > 0 and abs(len(nodes) - golfer_minutes) <= 2)
+
+    if use_discrete:
+        return compute_crossings_minute_indexed(
+            num_nodes=len(nodes),
+            bev_start_clock=bev_start,
+            groups_start_clock=groups_start,
+            groups_end_clock=groups_end,
+            groups_count=groups_count,
+            random_seed=random_seed,
+            node_holes=node_holes,
+            tee_mode=tee_mode,
+            groups_interval_min=groups_interval_min,
+        )
+
+    # Fallback to distance-based analytic crossings
     holes = None
     try:
         if holes_geojson:
@@ -526,8 +661,6 @@ def compute_crossings_from_files(
 def serialize_crossings_summary(result: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "bev_start": result["bev_start"].isoformat(),
-        "v_golfer_mph": result["v_golfer_mph"],
-        "v_bev_mph": result["v_bev_mph"],
         "groups": [
             {
                 "group": g["group"],

@@ -8,12 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Use shared crossings utilities
 from golfsim.simulation.crossings import (
-    load_nodes_geojson_with_holes,
-    load_nodes_geojson,
-    load_holes_geojson,
-    compute_crossings,
-    cumulative_distances,
-    derive_mph_from_minutes,
+    compute_crossings_from_files,
 )
 
 try:
@@ -31,14 +26,14 @@ def main() -> None:
     parser.add_argument(
         "--nodes_geojson",
         type=str,
-        default="courses/pinetree_country_club/geojson/generated/lcm_course_nodes.geojson",
-        help="GeoJSON FeatureCollection with ordered Point nodes."
+        default="courses/pinetree_country_club/geojson/generated/holes_connected.geojson",
+        help="GeoJSON FeatureCollection with ordered Point nodes (prefer holes_connected.geojson)."
     )
     parser.add_argument(
         "--holes_geojson",
         type=str,
-        default="courses/pinetree_country_club/geojson/generated/holes_geofenced.geojson",
-        help="GeoJSON FeatureCollection with hole polygons (Polygon/MultiPolygon) and 'hole' property."
+        default=None,
+        help="Optional holes polygons (not needed if nodes carry hole labels)."
     )
     parser.add_argument(
         "--config_json",
@@ -58,54 +53,18 @@ def main() -> None:
     parser.add_argument("--out_dir", type=str, default=None, help="Optional output directory for summary files.")
     args = parser.parse_args()
 
-    # Load nodes with hole mapping if available
-    nodes: List[Tuple[float, float]]
-    node_holes: Optional[List[Optional[int]]] = None
-    try:
-        nodes, node_holes = load_nodes_geojson_with_holes(args.nodes_geojson)
-    except Exception:
-        nodes = load_nodes_geojson(args.nodes_geojson)
-
-    # Optional holes polygons (fallback if node_holes missing)
-    holes = None
-    try:
-        holes = load_holes_geojson(args.holes_geojson)
-    except Exception:
-        holes = None
-
-    # Derive speeds from config if not provided
-    v_fwd = args.v_fwd_mph
-    v_bwd = args.v_bwd_mph
-    try:
-        if v_fwd is None or v_bwd is None:
-            total_length_m = cumulative_distances(nodes)[-1]
-            if args.config_json and Path(args.config_json).exists():
-                cfg = json.loads(Path(args.config_json).read_text(encoding="utf-8"))
-                g_min = float(cfg.get("golfer_18_holes_minutes"))
-                b_min = float(cfg.get("bev_cart_18_holes_minutes"))
-                if v_fwd is None:
-                    v_fwd = derive_mph_from_minutes(total_length_m, g_min)
-                if v_bwd is None:
-                    v_bwd = derive_mph_from_minutes(total_length_m, b_min)
-    except Exception:
-        pass
-
-    # Sensible fallbacks if still None
-    v_fwd = v_fwd if v_fwd is not None else 12.0
-    v_bwd = v_bwd if v_bwd is not None else 10.0
-
-    # Compute crossings using the shared reference logic
-    result = compute_crossings(
-        nodes=nodes,
-        v_fwd_mph=v_fwd,
-        v_bwd_mph=v_bwd,
-        bev_start_clock=args.bev_start,
-        groups_start_clock=args.groups_start,
-        groups_end_clock=args.groups_end,
+    # Compute crossings using simplified minute-indexed logic via wrapper
+    result = compute_crossings_from_files(
+        nodes_geojson=args.nodes_geojson,
+        holes_geojson=args.holes_geojson,
+        config_json=args.config_json,
+        v_fwd_mph=None,
+        v_bwd_mph=None,
+        bev_start=args.bev_start,
+        groups_start=args.groups_start,
+        groups_end=args.groups_end,
         groups_count=args.groups_count,
         random_seed=args.random_seed,
-        holes=holes,
-        node_holes=node_holes,
         tee_mode=args.tee_mode,
         groups_interval_min=args.groups_interval_min,
     )
@@ -130,8 +89,6 @@ def main() -> None:
     summary_path = out_dir / "crossings_summary.json"
     serializable = {
         "bev_start": result["bev_start"].isoformat(),
-        "v_golfer_mph": result["v_golfer_mph"],
-        "v_bev_mph": result["v_bev_mph"],
         "groups": [
             {
                 "group": g["group"],

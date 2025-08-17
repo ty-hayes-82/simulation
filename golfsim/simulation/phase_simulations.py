@@ -248,8 +248,8 @@ def _run_standard_simulation(
     from pathlib import Path
     
     try:
-        nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "lcm_course_nodes.geojson")
-        holes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_geofenced.geojson")
+        nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson")
+        holes_geojson = None
         config_json = str(Path(course_dir) / "config" / "simulation_config.json")
         
         def seconds_to_clock_str(sec_since_7am: int) -> str:
@@ -485,8 +485,8 @@ def _run_phase4_standard_simulation(
     from pathlib import Path
     
     try:
-        nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "lcm_course_nodes.geojson")
-        holes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_geofenced.geojson")
+        nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson")
+        holes_geojson = None
         config_json = str(Path(course_dir) / "config" / "simulation_config.json")
         
         def seconds_to_clock_str(sec_since_7am: int) -> str:
@@ -812,8 +812,8 @@ def _run_phase5_standard_simulation(
     from pathlib import Path
     
     try:
-        nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "lcm_course_nodes.geojson")
-        holes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_geofenced.geojson")
+        nodes_geojson = str(Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson")
+        holes_geojson = None
         config_json = str(Path(course_dir) / "config" / "simulation_config.json")
         
         def seconds_to_clock_str(sec_since_7am: int) -> str:

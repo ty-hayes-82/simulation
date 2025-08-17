@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Any, List
 from pathlib import Path
 
 import pandas as pd
@@ -59,7 +59,7 @@ def main() -> int:
     parser.add_argument("--prep-time", type=int, default=10,
                        help="Food preparation time in minutes (default: 10)")
     parser.add_argument("--runner-speed", type=float, default=None,
-                        help="Runner speed in m/s (default: converted from config 'delivery_runner_speed_mph')")
+                        help="Runner speed in m/s (default: from config 'delivery_runner_speed_mps')")
     parser.add_argument("--placement", choices=["tee", "mid", "green"], default="mid",
                         help="Where on the specified --hole to place the order: tee, mid, or green (default: mid)")
     parser.add_argument("--runner-delay", type=float, default=0.0, metavar="MIN",
@@ -121,7 +121,7 @@ def main() -> int:
     logger.info(f"Course: {args.course_dir}")
     logger.info(f"Order hole: {args.hole if args.hole else 'Random'}")
     logger.info(f"Prep time: {args.prep_time} minutes")
-    # Determine effective speed for logging (config mph → m/s conversion handled by loader)
+    # Determine effective speed for logging (uses delivery_runner_speed_mps only)
     try:
         sim_cfg_preview = load_simulation_config(args.course_dir)
         cfg_mps = float(getattr(sim_cfg_preview, "delivery_runner_speed_mps", 6.0))
@@ -165,8 +165,23 @@ def main() -> int:
                 if results.get('runner_coordinates'):
                     points_by_id['delivery_runner_1'] = results['runner_coordinates']
                 if points_by_id:
+                    # Normalize to common baseline (earliest timestamp across streams) so map animation aligns
+                    def _min_timestamp(streams: Dict[str, List[Dict[str, Any]]]) -> int:
+                        m = None
+                        for pts in streams.values():
+                            for p in (pts or []):
+                                try:
+                                    tsv = int(float(p.get("timestamp", p.get("timestamp_s", 0)) or 0))
+                                except Exception:
+                                    tsv = 0
+                                m = tsv if m is None or tsv < m else m
+                        return int(m or 0)
+
+                    baseline_s = _min_timestamp(points_by_id)
+                    from .run_unified_simulation import _clip_streams_at_baseline  # local import to avoid duplication
+                    streams_norm = _clip_streams_at_baseline(points_by_id, baseline_s)
                     combined_csv = output_dir / "coordinates.csv"
-                    write_unified_coordinates_csv(points_by_id, combined_csv)
+                    write_unified_coordinates_csv(streams_norm, combined_csv)
                     logger.info("Saved combined coordinates CSV: %s", combined_csv)
             except Exception as e:
                 logger.warning("Failed to write combined coordinates CSV: %s", e)

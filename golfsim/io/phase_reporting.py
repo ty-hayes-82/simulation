@@ -133,11 +133,18 @@ def save_phase3_output_files(
         encoding="utf-8"
     )
     
-    # Save full result
-    (output_dir / "result.json").write_text(
-        json.dumps(sales_result, indent=2), 
-        encoding="utf-8"
-    )
+    # Save full result: avoid clobbering if an upstream writer already produced a richer result.json
+    result_path = output_dir / "result.json"
+    if not result_path.exists():
+        result_payload = {
+            "type": simulation_result.get("simulation_type", "phase3"),
+            "run_idx": int(simulation_result.get("run_idx", 1)),
+            "sales_result": sales_result,
+        }
+        result_path.write_text(
+            json.dumps(result_payload, indent=2),
+            encoding="utf-8"
+        )
     
     # Save coordinates if requested
     if include_coordinates:
@@ -159,8 +166,34 @@ def save_phase3_output_files(
         if bev_points:
             tracks[cart_id] = bev_points
 
+        # Normalize all streams so the first tee time is timestamp 0
+        def _normalize_streams_to_baseline(points_by_id: Dict[str, List[Dict]], baseline_s: int) -> Dict[str, List[Dict]]:
+            normalized: Dict[str, List[Dict]] = {}
+            try:
+                b = int(baseline_s)
+            except Exception:
+                b = 0
+            for sid, pts in (points_by_id or {}).items():
+                out: List[Dict] = []
+                for p in pts or []:
+                    try:
+                        ts_raw = p.get("timestamp", p.get("timestamp_s", 0))
+                        ts = int(float(ts_raw or 0))
+                    except Exception:
+                        ts = 0
+                    if ts < b:
+                        continue
+                    q = dict(p)
+                    q["timestamp"] = int(ts - b)
+                    out.append(q)
+                normalized[sid] = out
+            return normalized
+
+        baseline_s = int(tee_time_s) if isinstance(tee_time_s, (int, float)) else 0
+        tracks_norm = _normalize_streams_to_baseline(tracks, baseline_s)
+
         write_coordinates_csv_with_visibility_and_totals(
-            tracks,
+            tracks_norm,
             output_dir / "coordinates.csv",
             sales_data=sales_result.get("sales", []),
             enable_visibility_tracking=True,

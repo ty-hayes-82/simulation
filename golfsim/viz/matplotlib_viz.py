@@ -21,6 +21,7 @@ import pandas as pd
 from shapely.geometry import LineString, Point
 
 from ..logging import get_logger
+from ..performance_logger import timed_visualization, timed_file_io
 
 logger = get_logger(__name__)
 
@@ -33,32 +34,54 @@ plt.rcParams['axes.labelsize'] = 12
 plt.rcParams['legend.fontsize'] = 10
 
 
+# Global cache for course geospatial data
+_COURSE_DATA_CACHE = {}
+
+def clear_course_data_cache():
+    """Clear the course data cache to free memory."""
+    global _COURSE_DATA_CACHE
+    _COURSE_DATA_CACHE.clear()
+    logger.debug("Cleared course data cache")
+
 def load_course_geospatial_data(course_dir: str | Path) -> Dict:
-    """Load geospatial course data (holes, greens, cart paths, etc.)."""
+    """Load geospatial course data (holes, greens, cart paths, etc.) with caching."""
     course_path = Path(course_dir)
-    geojson_path = course_path / "geojson"
+    cache_key = str(course_path.resolve())
     
-    course_data = {}
+    # Return cached data if available
+    if cache_key in _COURSE_DATA_CACHE:
+        logger.debug("Using cached course data for %s", course_path.name)
+        return _COURSE_DATA_CACHE[cache_key]
     
-    # Load all available geospatial features
-    geojson_files = {
-        'course_polygon': 'course_polygon.geojson',
-        'holes': 'generated/holes_geofenced.geojson',  # Use the geofenced version
-        'cart_paths': 'cart_paths.geojson',
-        'greens': 'greens.geojson',
-        'tees': 'tees.geojson',
-    }
-    
-    for feature_name, filename in geojson_files.items():
-        file_path = geojson_path / filename
-        if file_path.exists():
-            try:
-                course_data[feature_name] = gpd.read_file(file_path).to_crs(4326)
-                logger.debug("Loaded %s: %d features", feature_name, len(course_data[feature_name]))
-            except Exception as e:
-                logger.warning("Failed to load %s: %s", file_path, e)
-    
-    return course_data
+    with timed_file_io("load_geospatial_data"):
+        geojson_path = course_path / "geojson"
+        
+        course_data = {}
+        
+        # Load all available geospatial features
+        geojson_files = {
+            'course_polygon': 'course_polygon.geojson',
+            'holes': 'generated/holes_geofenced.geojson',  # Use the geofenced version
+            'cart_paths': 'cart_paths.geojson',
+            'greens': 'greens.geojson',
+            'tees': 'tees.geojson',
+        }
+        
+        for feature_name, filename in geojson_files.items():
+            file_path = geojson_path / filename
+            if file_path.exists():
+                try:
+                    with timed_file_io(f"load_{feature_name}_geojson"):
+                        course_data[feature_name] = gpd.read_file(file_path).to_crs(4326)
+                    logger.debug("Loaded %s: %d features", feature_name, len(course_data[feature_name]))
+                except Exception as e:
+                    logger.warning("Failed to load %s: %s", file_path, e)
+        
+        # Cache the loaded data
+        _COURSE_DATA_CACHE[cache_key] = course_data
+        logger.debug("Cached course data for %s", course_path.name)
+        
+        return course_data
 
 
 def calculate_course_bounds(geospatial_data: Dict) -> Tuple[float, float, float, float]:
@@ -497,55 +520,59 @@ def render_beverage_cart_plot(
     title:
         Plot title.
     """
-    course_dir = Path(course_dir)
-    save_path = Path(save_path)
+    with timed_visualization("beverage_cart_plot"):
+        course_dir = Path(course_dir)
+        save_path = Path(save_path)
 
-    course_data = load_course_geospatial_data(course_dir)
+        course_data = load_course_geospatial_data(course_dir)
 
-    fig, ax = plt.subplots(figsize=(10, 8))
+        with timed_visualization("create_matplotlib_figure"):
+            fig, ax = plt.subplots(figsize=(10, 8))
 
-    # Plot features (holes and greens helpful for context)
-    plot_course_features(ax, course_data, include_holes=True, include_greens=True)
+            # Plot features (holes and greens helpful for context)
+            plot_course_features(ax, course_data, include_holes=True, include_greens=True)
 
-    # Extract lon/lat
-    if coordinates:
-        lons = [c.get('longitude') for c in coordinates if c.get('longitude') is not None]
-        lats = [c.get('latitude') for c in coordinates if c.get('latitude') is not None]
-        if len(lons) > 1:
-            ax.plot(
-                lons,
-                lats,
-                color='purple',
-                linewidth=2.5,
-                alpha=0.9,
-                label='Beverage Cart',
-                zorder=6,
-            )
+            # Extract lon/lat
+            if coordinates:
+                lons = [c.get('longitude') for c in coordinates if c.get('longitude') is not None]
+                lats = [c.get('latitude') for c in coordinates if c.get('latitude') is not None]
+                if len(lons) > 1:
+                    ax.plot(
+                        lons,
+                        lats,
+                        color='purple',
+                        linewidth=2.5,
+                        alpha=0.9,
+                        label='Beverage Cart',
+                        zorder=6,
+                    )
 
-            # Start and end markers
-            ax.plot(lons[0], lats[0], 'o', color='blue', markersize=8, label='Start', zorder=7)
-            ax.plot(lons[-1], lats[-1], 'X', color='red', markersize=8, label='End', zorder=7)
+                    # Start and end markers
+                    ax.plot(lons[0], lats[0], 'o', color='blue', markersize=8, label='Start', zorder=7)
+                    ax.plot(lons[-1], lats[-1], 'X', color='red', markersize=8, label='End', zorder=7)
 
-    # Bounds
-    lon_min, lon_max, lat_min, lat_max = calculate_course_bounds(course_data)
-    ax.set_xlim(lon_min, lon_max)
-    ax.set_ylim(lat_min, lat_max)
+            # Bounds
+            lon_min, lon_max, lat_min, lat_max = calculate_course_bounds(course_data)
+            ax.set_xlim(lon_min, lon_max)
+            ax.set_ylim(lat_min, lat_max)
 
-    # Use actual longitude/latitude on axes and prevent skewing
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.xaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=False))
-    ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=False))
-    ax.ticklabel_format(style='plain', axis='both', useOffset=False)
-    ax.set_aspect('equal', adjustable='box')
-    ax.set_title(title)
-    ax.legend(loc='upper right')
-    ax.grid(True, alpha=0.2)
+            # Use actual longitude/latitude on axes and prevent skewing
+            ax.set_xlabel('Longitude')
+            ax.set_ylabel('Latitude')
+            ax.xaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=False))
+            ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=False))
+            ax.ticklabel_format(style='plain', axis='both', useOffset=False)
+            ax.set_aspect('equal', adjustable='box')
+            ax.set_title(title)
+            ax.legend(loc='upper right')
+            ax.grid(True, alpha=0.2)
 
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.tight_layout()
+        
+        with timed_file_io("save_png", str(save_path.name)):
+            fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
 
 
 def _find_nearest_cart_node(cart_graph, target_coords):
@@ -835,6 +862,18 @@ def render_single_delivery_plot(order: Dict, order_index: int, results: Dict, co
     delivery_stats = results.get('delivery_stats', [])
     if delivery_stats and order_index < len(delivery_stats):
         single_order_results['delivery_stats'] = [delivery_stats[order_index]]
+        # Promote per-order routing data to the top-level keys expected by plot_runner_route
+        try:
+            per_order_stats = delivery_stats[order_index]
+            trip_to_golfer = per_order_stats.get('trip_to_golfer') if isinstance(per_order_stats, dict) else None
+            trip_back = per_order_stats.get('trip_back') if isinstance(per_order_stats, dict) else None
+            if trip_to_golfer:
+                single_order_results['trip_to_golfer'] = trip_to_golfer
+            if trip_back:
+                single_order_results['trip_back'] = trip_back
+        except Exception:
+            # Non-fatal: keep going without promoted routing data
+            pass
     else:
         single_order_results['delivery_stats'] = []
     
@@ -916,7 +955,8 @@ def render_single_delivery_plot(order: Dict, order_index: int, results: Dict, co
     ax.set_title(title)
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+    with timed_file_io("save_png", str(save_path.name)):
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
 
     logger.info("Saved single delivery visualization: %s (%.1f KB)", 
@@ -950,33 +990,34 @@ def render_individual_delivery_plots(results: Dict, course_data: Dict, clubhouse
     Returns:
         List of paths to saved visualization files
     """
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    orders = results.get('orders', [])
-    if not orders:
-        logger.info("No orders found, skipping individual delivery visualizations")
-        return []
-    
-    saved_paths = []
-    
-    for i, order in enumerate(orders):
-        order_id = order.get('order_id', i + 1)
-        hole_num = order.get('hole_num', 'unknown')
+    with timed_visualization("individual_delivery_plots"):
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Ensure order_id is an integer for formatting
-        try:
-            order_id_int = int(order_id) if order_id is not None else i + 1
-        except (ValueError, TypeError):
-            order_id_int = i + 1
+        orders = results.get('orders', [])
+        if not orders:
+            logger.info("No orders found, skipping individual delivery visualizations")
+            return []
         
-        # Create filename: delivery_order_001_hole_5.png
-        filename = f"{filename_prefix}_{order_id_int:03d}_hole_{hole_num}.png"
-        save_path = output_dir / filename
+        saved_paths = []
         
-        try:
-            # Generate individual delivery plot
-            saved_path = render_single_delivery_plot(
+        for i, order in enumerate(orders):
+            order_id = order.get('order_id', i + 1)
+            hole_num = order.get('hole_num', 'unknown')
+            
+            # Ensure order_id is an integer for formatting
+            try:
+                order_id_int = int(order_id) if order_id is not None else i + 1
+            except (ValueError, TypeError):
+                order_id_int = i + 1
+            
+            # Create filename: delivery_order_001_hole_5.png
+            filename = f"{filename_prefix}_{order_id_int:03d}_hole_{hole_num}.png"
+            save_path = output_dir / filename
+            
+            try:
+                # Generate individual delivery plot
+                saved_path = render_single_delivery_plot(
                 order=order,
                 order_index=i,
                 results=results,
@@ -988,18 +1029,18 @@ def render_individual_delivery_plots(results: Dict, course_data: Dict, clubhouse
                 save_path=save_path,
                 course_name=course_name,
                 style=style
-            )
-            saved_paths.append(saved_path)
-            logger.info("Created individual delivery visualization %d/%d: %s", 
-                       i + 1, len(orders), saved_path.name)
-            
-        except Exception as e:
-            logger.warning("Failed to create individual visualization for order %d: %s", 
-                          order_id, e)
-    
-    logger.info("Created %d individual delivery visualizations in %s", 
-                len(saved_paths), output_dir)
-    return saved_paths
+                )
+                saved_paths.append(saved_path)
+                logger.info("Created individual delivery visualization %d/%d: %s", 
+                           i + 1, len(orders), saved_path.name)
+                
+            except Exception as e:
+                logger.warning("Failed to create individual visualization for order %d: %s", 
+                              order_id, e)
+        
+        logger.info("Created %d individual delivery visualizations in %s", 
+                    len(saved_paths), output_dir)
+        return saved_paths
 
 
 def render_delivery_plot(
@@ -1028,13 +1069,15 @@ def render_delivery_plot(
         style: Visualization style ("simple" or "detailed")
         save_debug_coords_path: Optional path to save debug coordinates
     """
-    save_path = Path(save_path) if save_path else None
-    save_debug_coords_path = Path(save_debug_coords_path) if save_debug_coords_path else None
+    with timed_visualization("delivery_plot"):
+        save_path = Path(save_path) if save_path else None
+        save_debug_coords_path = Path(save_debug_coords_path) if save_debug_coords_path else None
 
-    logger.info("Creating delivery visualization: %s", save_path)
-    
-    # Create figure with single panel layout
-    fig, ax = plt.subplots(1, 1, figsize=(16, 12))
+        logger.info("Creating delivery visualization: %s", save_path)
+        
+        # Create figure with single panel layout
+        with timed_visualization("create_matplotlib_figure"):
+            fig, ax = plt.subplots(1, 1, figsize=(16, 12))
 
     # Plot course features (boundary only for clean look)
     if style == "simple":
