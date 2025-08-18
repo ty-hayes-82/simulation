@@ -108,24 +108,21 @@ def extract_order_data(results: Dict) -> List[Dict[str, Any]]:
     order_data = []
     
     for i, order in enumerate(orders):
-        hole_num = order.get('hole_num')
-        if hole_num is None:
-            continue
-            
         order_id = order.get('order_id', f'order_{i}')
-        
+
         # Only use true outbound drive time to the golfer. Ignore failed orders.
         drive_time_s = None
+        stat = delivery_stats_by_id.get(order_id)
         # Prefer stats entry (most authoritative)
-        if order_id in delivery_stats_by_id and 'delivery_time_s' in delivery_stats_by_id[order_id]:
-            drive_time_s = delivery_stats_by_id[order_id]['delivery_time_s']
+        if stat and 'delivery_time_s' in stat:
+            drive_time_s = stat['delivery_time_s']
         # Fallback: if the order object itself has a delivery_time_s (rare)
         elif 'delivery_time_s' in order:
             drive_time_s = order['delivery_time_s']
-        # If we still don't have an outbound drive time, skip this order. Do NOT
-        # fall back to total completion or total drive time, which can include
-        # queue and return components and distort the heatmap.
         else:
+            # If we still don't have an outbound drive time, skip this order. Do NOT
+            # fall back to total completion or total drive time, which can include
+            # queue and return components and distort the heatmap.
             status = str(order.get('status', '')).lower()
             if status != 'processed':
                 # Ignore failed/unfinished orders for heatmap
@@ -134,16 +131,27 @@ def extract_order_data(results: Dict) -> List[Dict[str, Any]]:
                 # Processed but missing explicit delivery_time_s; skip rather than
                 # using total completion times which are not pure drive-to-golfer.
                 continue
-        
-        if drive_time_s is not None:
-            order_data.append({
-                'hole_num': hole_num,
-                'drive_time_s': drive_time_s,
-                'drive_time_min': drive_time_s / 60.0,
-                'order_id': order_id,
-                'golfer_group_id': order.get('golfer_group_id'),
-                'order_time_s': order.get('order_time_s', 0)
-            })
+
+        # Choose the grouping hole number. Use delivered hole if available; otherwise
+        # fall back to placed hole from stats, then order's original hole.
+        hole_num: Optional[int] = None
+        if stat is not None:
+            delivered_hole = stat.get('hole_num')
+            placed_hole_from_stats = stat.get('placed_hole_num')
+            hole_num = delivered_hole if delivered_hole is not None else placed_hole_from_stats
+        if hole_num is None:
+            hole_num = order.get('hole_num')
+        if hole_num is None:
+            continue
+
+        order_data.append({
+            'hole_num': int(hole_num),
+            'drive_time_s': drive_time_s,
+            'drive_time_min': float(drive_time_s) / 60.0,
+            'order_id': order_id,
+            'golfer_group_id': order.get('golfer_group_id'),
+            'order_time_s': order.get('order_time_s', 0)
+        })
     
     return order_data
 

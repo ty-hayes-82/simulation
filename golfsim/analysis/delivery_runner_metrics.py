@@ -213,41 +213,37 @@ def _calculate_on_time_rate(delivery_stats: List[Dict[str, Any]], sla_minutes: i
 
 
 def _calculate_runner_utilization(activity_log: List[Dict[str, Any]], service_hours: float) -> Dict[str, float]:
-    """Calculate runner utilization mix (driving, prep, idle)."""
+    """Calculate runner utilization considering only driving as active time.
+
+    Prep is handled by the kitchen and should not count toward runner utilization.
+    """
     service_seconds = service_hours * 3600
-    
-    # Initialize time tracking
+
+    # Track only driving time (outbound + return). Ignore prep.
     driving_time = 0
-    prep_time = 0
-    
-    # Analyze activity log for time spent in different activities
+
     for i, activity in enumerate(activity_log):
         activity_type = activity.get('activity_type', '')
         timestamp = activity.get('timestamp_s', 0)
-        
-        # Calculate duration to next activity
+
+        # Duration to next activity marker within the log window
         next_timestamp = service_seconds
         if i + 1 < len(activity_log):
             next_timestamp = activity_log[i + 1].get('timestamp_s', service_seconds)
-        
+
         duration = next_timestamp - timestamp
-        
-        # Categorize activity
+
+        # Driving includes delivery_start.. and returning.. segments
         if 'delivery_start' in activity_type or 'returning' in activity_type:
-            driving_time += duration
-        elif 'prep_start' in activity_type or 'prep_complete' in activity_type:
-            prep_time += duration
-        # All other activities (delivery_complete, order_assigned, order_received, arrived_clubhouse, etc.) are counted as idle
-    
-    # Calculate percentages
+            driving_time += max(0, duration)
+
     total_time = max(service_seconds, 1)
-    driving_pct = (driving_time / total_time) * 100
-    prep_pct = (prep_time / total_time) * 100
-    idle_pct = 100 - driving_pct - prep_pct
-    
+    driving_pct = (driving_time / total_time) * 100.0
+    idle_pct = 100.0 - driving_pct
+
     return {
         'driving': driving_pct,
-        'prep': prep_pct,
+        'prep': 0.0,
         'idle': idle_pct,
     }
 
@@ -410,7 +406,7 @@ def format_delivery_runner_metrics_report(metrics: DeliveryRunnerMetrics) -> str
 5. **Failed Rate**: {metrics.failed_rate:.1%}
 6. **Second‑Runner Break‑Even**: {metrics.second_runner_break_even_orders:.1f} orders (assumes $25/hr wage, $5 variable cost)
 7. **Queue Wait (Avg)**: {metrics.queue_wait_avg:.1f} minutes
-8. **Runner Utilization**: Driving {metrics.runner_utilization_driving_pct:.1f}%, Prep {metrics.runner_utilization_prep_pct:.1f}%, Idle {metrics.runner_utilization_idle_pct:.1f}%
+8. **Runner Utilization (Driving)**: {metrics.runner_utilization_driving_pct:.1f}% (Idle {metrics.runner_utilization_idle_pct:.1f}%)
 9. **Avg Order Time**: {metrics.delivery_cycle_time_avg:.1f} minutes
 10. **Distance per Delivery (Avg)**: {metrics.distance_per_delivery_avg:.0f} meters
 

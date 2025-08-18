@@ -622,7 +622,7 @@ def _add_path_arrows(ax, path_coords):
             )
 
 
-def plot_key_locations(ax, results: Dict, clubhouse_coords: Tuple[float, float], course_data: Dict):
+def plot_key_locations(ax, results: Dict, clubhouse_coords: Tuple[float, float], course_data: Dict, cart_graph: Optional[nx.Graph] = None):
     """Plot key locations including clubhouse, order locations, and delivery points."""
     # Clubhouse with red square
     ax.plot(
@@ -646,11 +646,27 @@ def plot_key_locations(ax, results: Dict, clubhouse_coords: Tuple[float, float],
     if 'holes' in course_data:
         holes_gdf = course_data['holes']
         for idx, hole in holes_gdf.iterrows():
-            hole_ref = hole.get('ref', str(idx + 1))
-            if hole.geometry.geom_type == "LineString":
-                # Use midpoint of hole as approximate order location
-                midpoint = hole.geometry.interpolate(0.5, normalized=True)
-                hole_locations[int(hole_ref)] = (midpoint.x, midpoint.y)
+            # Robust hole id detection: prefer 'hole', then 'ref', else index+1
+            hole_id_val = hole.get('hole', None)
+            if hole_id_val is None:
+                hole_id_val = hole.get('ref', str(idx + 1))
+            try:
+                hole_id = int(hole_id_val)
+            except Exception:
+                hole_id = idx + 1
+
+            # Derive a point for the hole regardless of geometry type
+            geom = hole.geometry
+            pt = None
+            try:
+                if hasattr(geom, 'geom_type') and geom.geom_type == "LineString":
+                    pt = geom.interpolate(0.5, normalized=True)
+                elif hasattr(geom, 'centroid'):
+                    pt = geom.centroid
+            except Exception:
+                pt = None
+            if pt is not None:
+                hole_locations[int(hole_id)] = (pt.x, pt.y)
     
     for i, order in enumerate(orders):
         # First try to get golfer position when order was placed (if available from single-golfer sim)
@@ -663,10 +679,40 @@ def plot_key_locations(ax, results: Dict, clubhouse_coords: Tuple[float, float],
                 order_position = (coord.get('longitude'), coord.get('latitude'))
                 break
         
-        # If no exact coordinates, estimate where golfer was when order was placed
-        # Orders are typically placed 1-3 holes before delivery
+        # If no exact coordinates, use placed_hole_num from per-order stats or orders_all when available,
+        # else estimate where golfer was when order was placed (typically 1-3 holes prior)
         if not order_position:
-            hole_num = order.get('hole_num')
+            # Delivered hole from per-order stats or order record
+            delivered_hole = None
+            if delivery_stats and i < len(delivery_stats):
+                try:
+                    delivered_hole = int(delivery_stats[i].get('hole_num')) if delivery_stats[i].get('hole_num') is not None else None
+                except Exception:
+                    delivered_hole = None
+            if delivered_hole is None:
+                delivered_hole = order.get('hole_num')
+
+            # Prefer explicit placed_hole_num if provided by the simulator
+            placed_hole_num = None
+            if delivery_stats and i < len(delivery_stats):
+                try:
+                    placed_hole_num = delivery_stats[i].get('placed_hole_num')
+                    placed_hole_num = int(placed_hole_num) if placed_hole_num is not None else None
+                except Exception:
+                    placed_hole_num = None
+            # Fallback: find matching order in orders_all to get placed hole at order time
+            if placed_hole_num is None:
+                try:
+                    orders_all = results.get('orders_all') or []
+                    oid = order.get('order_id')
+                    for oa in orders_all:
+                        if oa.get('order_id') == oid:
+                            ph = oa.get('hole_num')
+                            placed_hole_num = int(ph) if ph is not None else None
+                            break
+                except Exception:
+                    placed_hole_num = placed_hole_num
+
             order_time_s = order.get('order_time_s', 0)
             tee_time_s = None
             
@@ -679,32 +725,51 @@ def plot_key_locations(ax, results: Dict, clubhouse_coords: Tuple[float, float],
                     # Estimate how many holes into the round the golfer was when ordering
                     # Assuming they started at tee time and play 12 min/hole
                     # We need to work backwards from delivery hole to order placement hole
-                    
-                    # Estimate golfer was 1-2 holes before delivery when they placed order
-                    estimated_order_hole = max(1, hole_num - 2)  # 1-2 holes before delivery
-                    
-                    if estimated_order_hole != hole_num and estimated_order_hole in hole_locations:
-                        order_position = hole_locations[estimated_order_hole]
-                    elif hole_num and hole_num in hole_locations:
-                        # Fallback to delivery hole if estimation fails
-                        order_position = hole_locations[hole_num]
+                    if placed_hole_num and placed_hole_num in hole_locations:
+                        order_position = hole_locations[placed_hole_num]
+                    else:
+                        # Estimate golfer was ~2 holes before delivery when they placed order
+                        estimated_order_hole = None
+                        try:
+                            estimated_order_hole = max(1, int(delivered_hole) - 2) if delivered_hole else None
+                        except Exception:
+                            estimated_order_hole = None
+                        if estimated_order_hole and estimated_order_hole in hole_locations:
+                            order_position = hole_locations[estimated_order_hole]
+                        elif delivered_hole and delivered_hole in hole_locations:
+                            # Fallback to delivered hole if estimation fails
+                            order_position = hole_locations[delivered_hole]
         
         if order_position:
-            # Mark where order was placed with blue circle
+            # Mark where order was placed (gold circle with black edge)
             ax.plot(
                 order_position[0], order_position[1],
                 'o',
-                markersize=10,
-                color='blue',
+                markersize=12,
+                color='#FFD700',  # gold
                 label='Order Placed' if i == 0 else "",
-                markeredgecolor='darkblue',
-                markeredgewidth=2,
-                zorder=9,
+                markeredgecolor='#000000',
+                markeredgewidth=1.8,
+                zorder=100,
             )
             
-            # Add order number annotation with placement info
-            estimated_order_hole = max(1, hole_num - 2) if hole_num else 1
-            annotation_text = f'Order {order.get("order_id", i+1)}\n(placed ~hole {estimated_order_hole})'
+            # Add order number annotation with placement info (prefer explicit placed_hole_num)
+            try:
+                placed_hole_for_label = None
+                if delivery_stats and i < len(delivery_stats):
+                    ph = delivery_stats[i].get('placed_hole_num')
+                    placed_hole_for_label = int(ph) if ph is not None else None
+                if placed_hole_for_label is None:
+                    # Estimate from delivered hole if not provided
+                    delivered_hole_label = None
+                    try:
+                        delivered_hole_label = int(delivered_hole) if delivered_hole is not None else None
+                    except Exception:
+                        delivered_hole_label = None
+                    placed_hole_for_label = max(1, (delivered_hole_label or 1) - 2)
+            except Exception:
+                placed_hole_for_label = 1
+            annotation_text = f'Order {order.get("order_id", i+1)}\n(placed ~hole {placed_hole_for_label})'
             
             ax.annotate(
                 annotation_text,
@@ -734,20 +799,46 @@ def plot_key_locations(ax, results: Dict, clubhouse_coords: Tuple[float, float],
             zorder=10,
         )
     else:
-        # For multi-golfer sims, show delivery locations as hole locations
+        # For multi-golfer sims, show delivery locations per order
         for i, order in enumerate(orders):
-            hole_num = order.get('hole_num')
-            if hole_num and hole_num in hole_locations:
-                delivery_location = hole_locations[hole_num]
+            # Prefer exact endpoint from trip_to_golfer if available and cart_graph provided
+            delivery_xy = None
+            try:
+                per_stat = delivery_stats[i] if delivery_stats and i < len(delivery_stats) else None
+            except Exception:
+                per_stat = None
+            if per_stat and isinstance(per_stat, dict):
+                trip_to = per_stat.get('trip_to_golfer')
+                if trip_to and isinstance(trip_to.get('nodes'), list) and len(trip_to['nodes']) > 0:
+                    last = trip_to['nodes'][-1]
+                    if isinstance(last, (list, tuple)) and len(last) == 2:
+                        delivery_xy = (float(last[0]), float(last[1]))
+                    elif cart_graph is not None and last in cart_graph.nodes:
+                        nd = cart_graph.nodes[last]
+                        if 'x' in nd and 'y' in nd:
+                            delivery_xy = (float(nd['x']), float(nd['y']))
+            if delivery_xy is None:
+                # Fallback to hole centroid
+                delivered_hole = None
+                try:
+                    if per_stat:
+                        delivered_hole = int(per_stat.get('hole_num')) if per_stat.get('hole_num') is not None else None
+                except Exception:
+                    delivered_hole = None
+                if delivered_hole is None:
+                    delivered_hole = order.get('hole_num')
+                if delivered_hole and delivered_hole in hole_locations:
+                    delivery_xy = hole_locations[delivered_hole]
+            if delivery_xy is not None:
                 ax.plot(
-                    delivery_location[0], delivery_location[1],
+                    delivery_xy[0], delivery_xy[1],
                     'D',  # Diamond shape for delivery
-                    markersize=10,
-                    color='blue',
+                    markersize=13,
+                    color='#2E8B57',  # sea green
                     label='Delivery Location' if i == 0 else "",
-                    markeredgecolor='darkblue',
+                    markeredgecolor='#004225',
                     markeredgewidth=2,
-                    zorder=10,
+                    zorder=100,
                 )
 
 
@@ -906,8 +997,8 @@ def render_single_delivery_plot(order: Dict, order_index: int, results: Dict, co
     # Plot runner delivery route for this specific order
     plot_runner_route(ax, filtered_runner_coords, single_order_results, course_data, clubhouse_coords, cart_graph)
 
-    # Plot key locations for this order
-    plot_key_locations(ax, single_order_results, clubhouse_coords, course_data)
+    # Plot key locations for this order (pass cart_graph to resolve exact delivery endpoint)
+    plot_key_locations(ax, single_order_results, clubhouse_coords, course_data, cart_graph)
 
     # Set up styling and bounds
     course_bounds = calculate_course_bounds(course_data)
@@ -1097,7 +1188,7 @@ def render_delivery_plot(
     outbound_coords, return_coords = plot_runner_route(ax, runner_coords, results, course_data, clubhouse_coords, cart_graph)
 
     # Plot key locations
-    plot_key_locations(ax, results, clubhouse_coords, course_data)
+    plot_key_locations(ax, results, clubhouse_coords, course_data, cart_graph)
 
     # Set up styling and bounds
     course_bounds = calculate_course_bounds(course_data)

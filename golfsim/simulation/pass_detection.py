@@ -65,24 +65,48 @@ def extract_pass_events_from_sales_data(sales_data: Dict[str, Any]) -> List[Dict
 def compute_group_hole_at_time(
     group: Dict[str, Any],
     timestamp_s: int,
-    minutes_per_hole: float = 12.0,
+    *,
+    course_dir: Optional[str] = None,
+    golfer_points: Optional[List[Dict]] = None,
 ) -> int:
     """
-    Compute which hole a golfer group is on at a given time.
-    
-    Args:
-        group: Group dictionary with tee_time_s
-        timestamp_s: Time to check
-        minutes_per_hole: Minutes spent per hole
-        
-    Returns:
-        Hole number (1-18), clamped to valid range
+    Compute which hole a golfer group is on at a given time using node-index pacing (1 minute per node).
+
+    Strategy:
+    - If golfer_points are provided and have a point at this timestamp with 'current_hole'/'hole', use it.
+    - Else, derive nodes_per_hole from holes_connected.geojson and map (timestamp - tee_time)/60 → node index → hole.
     """
-    tee_time_s = group.get("tee_time_s", 0)
-    elapsed_s = max(0, timestamp_s - tee_time_s)
-    elapsed_holes = elapsed_s / (minutes_per_hole * 60.0)
-    hole_num = int(elapsed_holes) + 1
-    return max(1, min(18, hole_num))
+    # Try exact lookup from golfer_points
+    if golfer_points:
+        try:
+            by_time = {int(p.get("timestamp", p.get("timestamp_s", 0))): p for p in golfer_points}
+            p = by_time.get(int(timestamp_s))
+            if p is not None:
+                for key in ("current_hole", "hole", "hole_num"):
+                    v = p.get(key)
+                    if isinstance(v, int):
+                        return max(1, min(18, int(v)))
+        except Exception:
+            pass
+
+    # Fallback: node-based inference using holes_connected.geojson
+    try:
+        tee_time_s = int(group.get("tee_time_s", 0))
+        delta_min = max(0, int((int(timestamp_s) - tee_time_s) // 60))
+        total_nodes = 18 * 12
+        if course_dir:
+            from pathlib import Path
+            import json as _json
+            path = Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson"
+            if path.exists():
+                data = _json.loads(path.read_text(encoding="utf-8"))
+                total_nodes = len([f for f in (data.get("features") or []) if (f.get("geometry") or {}).get("type") == "Point"]) or total_nodes
+        nodes_per_hole = max(1, int(round(float(total_nodes) / 18.0)))
+        node_idx = delta_min
+        hole = 1 + int(node_idx // nodes_per_hole)
+        return max(1, min(18, int(hole)))
+    except Exception:
+        return 1
 
 
 def find_proximity_pass_events(
@@ -91,7 +115,6 @@ def find_proximity_pass_events(
     golfer_points: List[Dict],
     proximity_threshold_m: float = 100.0,
     min_pass_interval_s: int = 1200,
-    minutes_per_hole: float = 12.0,
 ) -> List[Dict[str, Any]]:
     """
     Find pass events based on GPS proximity between beverage cart and golfers.
@@ -148,9 +171,21 @@ def find_proximity_pass_events(
         distance_m = haversine_m(bev_lat, bev_lon, golfer_lat, golfer_lon)
         
         if distance_m <= proximity_threshold_m:
-            # Estimate hole number
-            elapsed_s = timestamp - tee_time_s
-            hole_num = max(1, min(18, int(elapsed_s / (minutes_per_hole * 60)) + 1))
+            # Determine hole number from golfer point when available
+            hole_num = (
+                golfer_point.get("current_hole")
+                or golfer_point.get("hole")
+                or golfer_point.get("hole_num")
+            )
+            if not isinstance(hole_num, int):
+                # Fallback to node-based estimate from tee time if labels missing
+                try:
+                    delta_min = max(0, int((timestamp - tee_time_s) // 60))
+                    # Assume ~216 points (18*12) if no better info, but label will be overwritten if present later
+                    nodes_per_hole = 12
+                    hole_num = 1 + int(delta_min // nodes_per_hole)
+                except Exception:
+                    hole_num = 1
             
             pass_events.append({
                 "timestamp_s": timestamp,

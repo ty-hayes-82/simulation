@@ -221,7 +221,7 @@ def build_graph_from_holes_connected(
     # Label junctions
     _label_junction_types(G)
 
-    # Optionally connect clubhouse to nearest node
+    # Optionally connect clubhouse to graph
     if auto_connect_clubhouse:
         # allow config override
         cfg = _load_simulation_config(course_dir)
@@ -230,9 +230,41 @@ def build_graph_from_holes_connected(
             max_conn_m = float(net_params.get("max_connection_distance_m", max_connection_distance_m))
         except Exception:
             max_conn_m = max_connection_distance_m
+
+        # Always ensure one nearest connection (backward compatible)
         added = _auto_connect_clubhouse(G, clubhouse, max_distance_m=max_conn_m)
         if added:
             print(f"Auto-connected clubhouse to nearest node (<= {float(max_conn_m):.0f} m)")
+
+        # New: Explicitly connect clubhouse to specific indices when requested
+        # This supports true multi-way junction at the clubhouse for direct routing
+        indices_to_connect: List[int] = []
+        try:
+            explicit = net_params.get("connect_clubhouse_to_indices")
+            if isinstance(explicit, list):
+                indices_to_connect = [int(i) for i in explicit if isinstance(i, (int, float, str))]
+        except Exception:
+            indices_to_connect = []
+
+        # Fallback for Pinetree default: ensure connection to node 120 (after hole 9),
+        # and also connect to indices at the clubhouse coordinate (0 and 239) to form a 4-way.
+        if not indices_to_connect and course_dir.name == "pinetree_country_club":
+            indices_to_connect = [120, 0, 239]
+
+        # Create edges from clubhouse to the requested indices (if present in graph)
+        if indices_to_connect:
+            # Ensure clubhouse exists as a node
+            clubhouse_node = _ensure_clubhouse_node(G, clubhouse)
+            for idx in indices_to_connect:
+                if idx in G and not G.has_edge(clubhouse_node, idx):
+                    try:
+                        ax = float(G.nodes[idx]["x"])
+                        ay = float(G.nodes[idx]["y"])
+                        d = _haversine_m(clubhouse.longitude, clubhouse.latitude, ax, ay)
+                        G.add_edge(clubhouse_node, idx, length=float(d), clubhouse_link=True)
+                    except Exception:
+                        # Best-effort: skip if node lacks coordinates
+                        continue
 
     # Save pickle
     if save_graph:

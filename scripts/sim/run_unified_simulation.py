@@ -599,8 +599,12 @@ def _write_order_logs_csv(sim_result: Dict[str, Any], save_path: Path) -> None:
             # Determine placed location as golfer hole number at order time if available
             placed_location = ""
             try:
-                # use the hole from the orders list/stats
-                placed_location = stats.get("hole_num") or o.get("hole_num") or ""
+                # Use placed hole if available from stats, else original order hole
+                placed_location = (
+                    stats.get("placed_hole_num")
+                    or o.get("hole_num")
+                    or placed.get("location", "")
+                )
             except Exception:
                 placed_location = placed.get("location", "")
 
@@ -1184,7 +1188,7 @@ def _generate_delivery_orders_with_pass_boost(
     base_prob_per_9: float,
     crossings_data: Optional[Dict[str, Any]] = None,
     rng_seed: Optional[int] = None,
-    minutes_per_hole: int = 12,
+    course_dir: Optional[str] = None,
     boost_per_nine: float = 0.10,
 ) -> List[DeliveryOrder]:
     """Generate delivery orders with a +10% per-nine boost when bev-cart passes occur.
@@ -1226,6 +1230,14 @@ def _generate_delivery_orders_with_pass_boost(
     def clamp01(x: float) -> float:
         return max(0.0, min(1.0, float(x)))
 
+    # Determine node count to map elapsed minutes → node index (1 minute per node)
+    try:
+        total_nodes = len(_load_holes_connected_points(course_dir)) if course_dir else 0
+    except Exception:
+        total_nodes = 0
+    total_nodes = int(total_nodes) if total_nodes and total_nodes > 0 else 18 * 12  # fallback
+    nodes_per_hole = max(1.0, float(total_nodes) / 18.0)
+
     orders: List[DeliveryOrder] = []
     for group in groups or []:
         group_id = int(group.get("group_id", 0))
@@ -1239,7 +1251,11 @@ def _generate_delivery_orders_with_pass_boost(
         # Front nine draw
         if random.random() < p_front:
             hole_front = int(random.randint(1, 9))
-            order_time_front_s = tee_time_s + (hole_front - 1) * minutes_per_hole * 60
+            # Map hole to a representative node index within that hole's node range
+            start_node = int(round((hole_front - 1) * nodes_per_hole))
+            end_node = int(round(hole_front * nodes_per_hole)) - 1
+            node_idx = start_node if end_node < start_node else random.randint(start_node, end_node)
+            order_time_front_s = tee_time_s + int(node_idx) * 60
             orders.append(
                 DeliveryOrder(
                     order_id=None,
@@ -1253,7 +1269,10 @@ def _generate_delivery_orders_with_pass_boost(
         # Back nine draw
         if random.random() < p_back:
             hole_back = int(random.randint(10, 18))
-            order_time_back_s = tee_time_s + (hole_back - 1) * minutes_per_hole * 60
+            start_node = int(round((hole_back - 1) * nodes_per_hole))
+            end_node = int(round(hole_back * nodes_per_hole)) - 1
+            node_idx = start_node if end_node < start_node else random.randint(start_node, end_node)
+            order_time_back_s = tee_time_s + int(node_idx) * 60
             orders.append(
                 DeliveryOrder(
                     order_id=None,
@@ -1302,7 +1321,7 @@ def _generate_delivery_orders_by_hour_distribution(
     total_orders: int,
     service_open_hhmm: str,
     service_close_hhmm: str,
-    minutes_per_hole: float,
+    course_dir: Optional[str] = None,
     rng_seed: Optional[int] = None,
 ) -> List[DeliveryOrder]:
     """Generate delivery orders by hourly percentage distribution.
@@ -1342,9 +1361,18 @@ def _generate_delivery_orders_by_hour_distribution(
     fractions = [pct for _, pct in hour_items]
     counts = _distribute_counts_by_fraction(total_orders, fractions)
 
+    # Derive nodes-per-hole from holes_connected to map time → node index (1 min per node)
+    try:
+        total_nodes = len(_load_holes_connected_points(course_dir)) if course_dir else 0
+    except Exception:
+        total_nodes = 18 * 12
+    total_nodes = int(total_nodes) if total_nodes and total_nodes > 0 else 18 * 12
+    nodes_per_hole = max(1, int(round(float(total_nodes) / 18.0)))
+
     def group_active_at(ts_s: int) -> List[Dict[str, Any]]:
         active: List[Dict[str, Any]] = []
-        play_seconds = max(1, int(minutes_per_hole * 18 * 60))
+        # 1 node per minute → approximate total round minutes = total_nodes
+        play_seconds = max(1, int(total_nodes * 60))
         for g in groups or []:
             start = int(g.get("tee_time_s", 0))
             end = start + play_seconds
@@ -1354,8 +1382,9 @@ def _generate_delivery_orders_by_hour_distribution(
 
     def infer_hole_for_group_at_time(g: Dict[str, Any], ts_s: int) -> int:
         start = int(g.get("tee_time_s", 0))
-        delta = max(0, ts_s - start)
-        hole = 1 + int(delta // int(max(1, minutes_per_hole * 60)))
+        delta_min = max(0, int((ts_s - start) // 60))
+        node_idx = delta_min
+        hole = 1 + int(node_idx // nodes_per_hole)
         return max(1, min(18, hole))
 
     orders: List[DeliveryOrder] = []
@@ -1624,7 +1653,8 @@ def _run_mode_simple_nodes(args: argparse.Namespace) -> None:
                         streams[rid].append({"timestamp": ts, "longitude": lon, "latitude": lat})
 
         # Persist unified coordinates for the viewer/tools
-        write_unified_coordinates_csv(streams, run_dir / "coordinates.csv")
+        if not getattr(args, "no_coordinates", False):
+            write_unified_coordinates_csv(streams, run_dir / "coordinates.csv")
 
         # Minimal run metadata
         meta = {
@@ -1801,7 +1831,8 @@ def _run_bev_with_groups_once(
     baseline_s = int(first_tee_s)
     # Keep absolute timestamps but drop any points prior to first tee time
     tracks_clipped = _clip_streams_at_baseline(tracks, baseline_s)
-    write_unified_coordinates_csv(tracks_clipped, run_dir / "coordinates.csv")
+    if not getattr(args, "no_coordinates", False):
+        write_unified_coordinates_csv(tracks_clipped, run_dir / "coordinates.csv")
 
     # Visualization for cart
     if bev_points and not no_visualization:
@@ -1967,7 +1998,8 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
 
                             baseline_s = _min_timestamp(points_by_id)
                             streams_clipped = _clip_streams_at_baseline(points_by_id, baseline_s)
-                            write_unified_coordinates_csv(streams_clipped, run_dir / "coordinates.csv")
+                            if not getattr(args, "no_coordinates", False):
+                                write_unified_coordinates_csv(streams_clipped, run_dir / "coordinates.csv")
                     except Exception as e:  # noqa: BLE001
                         logger.warning("Failed to write combined coordinates CSV: %s", e)
 
@@ -2065,16 +2097,24 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
                             with timed_visualization("delivery_heatmap"):
                                 try:
                                     heatmap_file = run_dir / "delivery_heatmap.png"
-                                    # Format single-golfer results for heatmap function
+                                    # Format single-golfer results for heatmap function using outbound drive time
+                                    trip_to = results.get('trip_to_golfer') or {}
+                                    drive_time_s = trip_to.get('time_s') if isinstance(trip_to, dict) else None
+                                    delivery_stats = (
+                                        [{
+                                            'order_id': 'order_1',
+                                            'delivery_time_s': float(drive_time_s),
+                                        }]
+                                        if isinstance(drive_time_s, (int, float)) else []
+                                    )
                                     heatmap_results = {
                                         'orders': [{
                                             'hole_num': results.get('order_hole', 1),
-                                            'total_completion_time_s': results.get('total_service_time_s', 0),
                                             'order_id': 'order_1',
                                             'golfer_group_id': 1,
-                                            'order_time_s': results.get('order_time_s', 0)
+                                            'order_time_s': results.get('order_time_s', 0),
                                         }],
-                                        'delivery_stats': []
+                                        'delivery_stats': delivery_stats,
                                     }
                                     course_name = Path(args.course_dir).name.replace("_", " ").title()
                                     create_course_heatmap(
@@ -2106,7 +2146,8 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
         logger.warning("Failed to write single-golfer summary: %s", e)
 
     # Generate executive summary using Google Gemini
-    _generate_executive_summary(output_root)
+    if not getattr(args, "skip_executive_summary", False):
+        _generate_executive_summary(output_root)
 
     # Optional: open React viewer after single simulation series
     if int(args.num_runs) == 1 and getattr(args, "open_viewer", False):
@@ -2166,7 +2207,8 @@ def _run_mode_bev_carts(args: argparse.Namespace) -> None:
         (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
     
     # Generate executive summary using Google Gemini
-    _generate_executive_summary(output_root)
+    if not getattr(args, "skip_executive_summary", False):
+        _generate_executive_summary(output_root)
     
     # Optionally open viewer when only one run and requested
     if int(args.num_runs) == 1 and getattr(args, "open_viewer", False):
@@ -2267,8 +2309,9 @@ def _run_mode_bev_with_golfers(args: argparse.Namespace) -> None:
             write_phase3_summary(phase3_summary_rows, output_root)
     
     # Generate executive summary using Google Gemini
-    with timed_operation("generate_executive_summary"):
-        _generate_executive_summary(output_root)
+    if not getattr(args, "skip_executive_summary", False):
+        with timed_operation("generate_executive_summary"):
+            _generate_executive_summary(output_root)
     
     # Optionally open viewer when only one run and requested
     if int(args.num_runs) == 1 and getattr(args, "open_viewer", False):
@@ -2357,7 +2400,8 @@ def _run_mode_golfers_only(args: argparse.Namespace) -> None:
         (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
     
     # Generate executive summary using Google Gemini
-    _generate_executive_summary(output_root)
+    if not getattr(args, "skip_executive_summary", False):
+        _generate_executive_summary(output_root)
     
     logger.info("Complete. Results saved to: %s", output_root)
 
@@ -2449,6 +2493,7 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
             num_runners=int(args.num_runners),
             runner_speed_mps=effective_runner_speed,
             prep_time_min=int(args.prep_time),
+            groups=groups,
         )
 
         # Generate orders according to configured mode and feed into shared queue
@@ -2456,14 +2501,14 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
         orders_all: List[DeliveryOrder] = []
         if groups:
             if use_hourly:
-                # Use hourly distribution: draw total orders directly from config and randomize within hour windows
+                # Use hourly distribution within the declared service window
                 orders_all = _generate_delivery_orders_by_hour_distribution(
                     groups=groups,
                     hourly_distribution=hourly_dist,
                     total_orders=int(getattr(sim_config, "delivery_total_orders", 0)),
                     service_open_hhmm=str(sim_config.delivery_service_hours.get("open_time", "10:00")),
                     service_close_hhmm=str(sim_config.delivery_service_hours.get("close_time", "19:00")),
-                    minutes_per_hole=float(12.0),
+                    course_dir=args.course_dir,
                     rng_seed=args.random_seed,
                 )
             else:
@@ -2473,13 +2518,64 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                     base_prob_per_9=float(delivery_order_probability),
                     crossings_data=crossings,
                     rng_seed=args.random_seed,
+                    course_dir=args.course_dir,
                 )
-            # Restrict order placement to service open window
-            # Include orders placed before service opens (they will be queued at open),
-            # but exclude orders after close.
+            # Enforce: orders cannot be placed before service opens
+            # If clamped forward to open time, recompute the hole based on node index progression (1 min per node)
+            group_by_id: Dict[int, Dict[str, Any]] = {int(g.get("group_id")): g for g in (groups or [])}
+            # Precompute node→hole mapping using holes_connected path length
+            try:
+                total_nodes = len(_load_holes_connected_points(args.course_dir))
+            except Exception:
+                total_nodes = 18 * 12
+            nodes_per_hole = max(1.0, float(total_nodes) / 18.0)
+            for o in orders_all:
+                try:
+                    if int(getattr(o, "order_time_s", 0)) < int(service.service_open_s):
+                        o.order_time_s = int(service.service_open_s)
+                    # Recompute hole based on node index at this timestamp
+                    gid = int(getattr(o, "golfer_group_id", 0) or 0)
+                    g = group_by_id.get(gid)
+                    if g is not None:
+                        start = int(g.get("tee_time_s", 0))
+                        ts_s = int(getattr(o, "order_time_s", 0))
+                        delta_min = max(0, int((ts_s - start) // 60))
+                        node_idx = delta_min
+                        hole = 1 + int(node_idx // int(nodes_per_hole))
+                        o.hole_num = int(max(1, min(18, hole)))
+                except Exception:
+                    # Best-effort; leave original hole_num if anything goes wrong
+                    pass
+            # Apply blocking if specified (block orders up to a certain hole)
+            block_up_to_hole = getattr(args, "block_up_to_hole", 0)
+            block_holes_10_12 = getattr(args, "block_holes_10_12", False)
+            
+            if block_up_to_hole > 0:
+                logger.info("Blocking delivery orders up to hole %d", block_up_to_hole)
+                original_count = len(orders_all)
+                orders_all = [
+                    o for o in orders_all
+                    if int(getattr(o, "hole_num", 0)) > block_up_to_hole
+                ]
+                blocked_count = original_count - len(orders_all)
+                logger.info("After blocking up to hole %d: %d orders remaining (blocked %d orders)", 
+                           block_up_to_hole, len(orders_all), blocked_count)
+            
+            if block_holes_10_12:
+                logger.info("Blocking delivery orders for holes 10, 11, and 12")
+                original_count = len(orders_all)
+                orders_all = [
+                    o for o in orders_all
+                    if int(getattr(o, "hole_num", 0)) not in [10, 11, 12]
+                ]
+                blocked_count = original_count - len(orders_all)
+                logger.info("After blocking holes 10-12: %d orders remaining (blocked %d orders)", 
+                           len(orders_all), blocked_count)
+            
+            # Restrict order placement to [open, close]
             orders = [
                 o for o in orders_all
-                if int(getattr(o, "order_time_s", 0)) <= service.service_close_s
+                if int(service.service_open_s) <= int(getattr(o, "order_time_s", 0)) <= int(service.service_close_s)
             ]
 
         def order_arrival_process():  # simpy process
@@ -2824,7 +2920,8 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 except Exception:
                     baseline_s = 0
                 streams_clipped = _clip_streams_at_baseline(streams, baseline_s)
-                write_unified_coordinates_csv(streams_clipped, run_path / "coordinates.csv")
+                if not getattr(args, "no_coordinates", False):
+                    write_unified_coordinates_csv(streams_clipped, run_path / "coordinates.csv")
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to write animation coordinates CSV: %s", e)
         # Order logs CSV
@@ -2926,7 +3023,8 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
     (output_dir / "summary.md").write_text("\n".join(lines), encoding="utf-8")
 
     # Generate executive summary using Google Gemini
-    _generate_executive_summary(output_dir)
+    if not getattr(args, "skip_executive_summary", False):
+        _generate_executive_summary(output_dir)
 
     # Optionally open viewer when only one run and requested
     if int(args.num_runs) == 1 and getattr(args, "open_viewer", False):
@@ -3032,6 +3130,7 @@ def _run_mode_optimize_runners(args: argparse.Namespace) -> None:
                 num_runners=int(num_runners),
                 runner_speed_mps=float(args.runner_speed),
                 prep_time_min=int(args.prep_time),
+                groups=[dict(g) for g in groups_master],
             )
 
             # Generate orders deterministically per run index, with bev-cart pass boost
@@ -3200,6 +3299,7 @@ def _run_mode_optimize_runners(args: argparse.Namespace) -> None:
                 num_runners=int(recommendation),
                 runner_speed_mps=float(args.runner_speed),
                 prep_time_min=int(args.prep_time),
+                groups=[dict(g) for g in groups_master],
             )
 
             # Generate orders with bev-cart pass boost for heatmap
@@ -3258,7 +3358,8 @@ def _run_mode_optimize_runners(args: argparse.Namespace) -> None:
             logger.warning("Failed to create optimization heatmap: %s", e)
 
     # Generate executive summary using Google Gemini
-    _generate_executive_summary(output_dir)
+    if not getattr(args, "skip_executive_summary", False):
+        _generate_executive_summary(output_dir)
 
     if recommendation is not None:
         logger.info("Recommended number of runners: %d", recommendation)
@@ -3353,6 +3454,10 @@ def main() -> None:
         parser.add_argument("--no-visualization", action="store_true", help="Skip creating visualizations")
         # Override probability of order per 9 holes for bev cart sales (0..1)
         parser.add_argument("--bev-order-prob", type=float, default=None, help="Override bev-cart order probability per 9 holes (0..1)")
+        parser.add_argument("--block-up-to-hole", type=int, default=0, help="Block delivery orders up to this hole number (0 = no blocking)")
+        parser.add_argument("--block-holes-10-12", action="store_true", help="Block delivery orders for holes 10, 11, and 12")
+        parser.add_argument("--skip-executive-summary", action="store_true", help="Skip generation of executive summary to speed up execution")
+
 
         args = parser.parse_args()
         init_logging(args.log_level)

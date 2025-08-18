@@ -385,7 +385,6 @@ def _run_synchronized_simulation(
         pass_order_probability=float(sim_cfg.bev_cart_order_probability),
         price_per_order=float(sim_cfg.bev_cart_avg_order_usd),
         minutes_between_holes=2.0,
-        minutes_per_hole=8.0,  # Use synchronized timing
         golfer_points=golfer_points,
     )
     
@@ -396,7 +395,6 @@ def _run_synchronized_simulation(
         golfer_points=golfer_points,
         proximity_threshold_m=100.0,
         min_pass_interval_s=1200,
-        minutes_per_hole=8.0,
     )
     
     return {

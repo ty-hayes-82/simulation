@@ -352,6 +352,8 @@ class MultiRunnerDeliveryService:
     activity_log: List[Dict] = field(default_factory=list)
     delivery_stats: List[Dict] = field(default_factory=list)
     failed_orders: List[DeliveryOrder] = field(default_factory=list)
+    # Optional: pass golfer groups so we can predict current hole at departure
+    groups: Optional[List[Dict[str, Any]]] = None
 
     # Shared queue implemented using a SimPy Store for incoming orders
     order_store: Optional[simpy.Store] = None
@@ -369,6 +371,13 @@ class MultiRunnerDeliveryService:
     # Internal per-runner state
     runner_locations: List[str] = field(default_factory=list)
     runner_busy: List[bool] = field(default_factory=list)
+    # Derived helpers for prediction
+    _tee_time_by_group: Dict[int, int] = field(default_factory=dict)
+    _nodes_per_hole: int = 12
+    # Connected points from holes_connected and hole line geometries for prediction/mapping
+    _loop_points: List[Tuple[float, float]] = field(default_factory=list)
+    _loop_holes: List[Optional[int]] = field(default_factory=list)
+    _hole_lines: Dict[int, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.prep_time_s = int(self.prep_time_min) * 60
@@ -384,6 +393,40 @@ class MultiRunnerDeliveryService:
             self.env.process(self._runner_loop(idx))
         # Start dispatcher process to assign orders to runners with priority by index
         self.env.process(self._dispatch_loop())
+        # Build lookup maps if groups provided
+        try:
+            if self.groups:
+                self._tee_time_by_group = {
+                    int(g.get("group_id")): int(g.get("tee_time_s", 0))
+                    for g in self.groups
+                    if g is not None and g.get("group_id") is not None
+                }
+        except Exception:
+            self._tee_time_by_group = {}
+        # Estimate nodes-per-hole from holes_connected.geojson (1 min per node pacing)
+        try:
+            import json as _json
+            path = Path(self.course_dir) / "geojson" / "generated" / "holes_connected.geojson"
+            total_nodes = 0
+            if path.exists():
+                gj = _json.loads(path.read_text(encoding="utf-8"))
+                total_nodes = len([
+                    f for f in (gj.get("features") or [])
+                    if (f.get("geometry") or {}).get("type") == "Point"
+                ])
+            self._nodes_per_hole = max(1, int(round(float(total_nodes or (18 * 12)) / 18.0)))
+        except Exception:
+            self._nodes_per_hole = 12
+
+        # Load holes_connected points (idx network) and hole line geometries for mapping and prediction
+        try:
+            self._loop_points, self._loop_holes = self._load_connected_points()
+        except Exception:
+            self._loop_points, self._loop_holes = [], []
+        try:
+            self._hole_lines = self._load_hole_lines()
+        except Exception:
+            self._hole_lines = {}
 
     def _dispatch_loop(self):  # simpy process
         """Assign incoming orders to available runners with deterministic tie-breaking.
@@ -631,12 +674,75 @@ class MultiRunnerDeliveryService:
         order.prep_completed_time = self.env.now
         self.log_activity("prep_complete", f"{runner_label} completed prep for Order {order.order_id}", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
 
-        # Use enhanced routing to get actual delivery paths for visualization
-        delivery_route_data = self._calculate_enhanced_delivery_route(order.hole_num)
-        delivery_distance_m = delivery_route_data["delivery_distance_m"]
-        delivery_time_s = delivery_route_data["delivery_time_s"]
-        trip_to_golfer = delivery_route_data.get("trip_to_golfer")
-        trip_back = delivery_route_data.get("trip_back")
+        # Predict an intercept hole considering prep time, runner travel time, and golfer progression
+        target_hole = self._choose_intercept_hole(order)
+
+        # Predict precise delivery coordinates using cart graph and hole lines
+        predicted_coords: Optional[Tuple[float, float]] = None
+        try:
+            from .engine import predict_optimal_delivery_location, enhanced_delivery_routing
+            predicted_coords = predict_optimal_delivery_location(
+                order_hole=int(order.hole_num),
+                prep_time_min=float(self.prep_time_s) / 60.0,
+                travel_time_s=0.0,
+                hole_lines=self._hole_lines,
+                course_dir=self.course_dir,
+                runner_speed_mps=float(self.runner_speed_mps),
+                order_time_s=float(getattr(order, "order_time_s", self.env.now) or self.env.now),
+                clubhouse_lonlat=self.clubhouse_coords,
+            )
+        except Exception:
+            predicted_coords = None
+
+        trip_to_golfer = None
+        trip_back = None
+        delivery_distance_m = 0.0
+        delivery_time_s = 0.0
+        delivered_hole_num = int(target_hole)
+        try:
+            if predicted_coords and predicted_coords[0] != 0 and predicted_coords[1] != 0:
+                # Route to predicted coords using enhanced graph
+                from .engine import enhanced_delivery_routing
+                import pickle
+                cart_graph = None
+                try:
+                    with open((Path(self.course_dir) / "pkl" / "cart_graph.pkl"), "rb") as f:
+                        cart_graph = pickle.load(f)
+                except Exception:
+                    cart_graph = None
+                if cart_graph is not None:
+                    trip_to_golfer = enhanced_delivery_routing(
+                        cart_graph, self.clubhouse_coords, predicted_coords, self.runner_speed_mps
+                    )
+                    trip_back = enhanced_delivery_routing(
+                        cart_graph, predicted_coords, self.clubhouse_coords, self.runner_speed_mps
+                    )
+                    delivery_distance_m = float(trip_to_golfer.get("length_m", 0.0) + trip_back.get("length_m", 0.0))
+                    delivery_time_s = float(trip_to_golfer.get("time_s", 0.0))
+                    # Map predicted coords to nearest hole via holes_connected idx network
+                    delivered_hole_num = self._nearest_hole_from_coords(predicted_coords[0], predicted_coords[1]) or delivered_hole_num
+                else:
+                    # Fallback to hole-based enhanced routing
+                    delivery_route_data = self._calculate_enhanced_delivery_route(target_hole)
+                    delivery_distance_m = delivery_route_data["delivery_distance_m"]
+                    delivery_time_s = delivery_route_data["delivery_time_s"]
+                    trip_to_golfer = delivery_route_data.get("trip_to_golfer")
+                    trip_back = delivery_route_data.get("trip_back")
+                    delivered_hole_num = int(target_hole)
+            else:
+                # Fallback when prediction not available
+                delivery_route_data = self._calculate_enhanced_delivery_route(target_hole)
+                delivery_distance_m = delivery_route_data["delivery_distance_m"]
+                delivery_time_s = delivery_route_data["delivery_time_s"]
+                trip_to_golfer = delivery_route_data.get("trip_to_golfer")
+                trip_back = delivery_route_data.get("trip_back")
+                delivered_hole_num = int(target_hole)
+        except Exception:
+            # As a last resort, fall back to simple delivery details
+            distance_m, time_s = self._calculate_delivery_details(int(target_hole))
+            delivery_distance_m = float(distance_m)
+            delivery_time_s = float(time_s)
+            delivered_hole_num = int(target_hole)
         
         # Final pre-departure timeout check
         if (self.env.now - placed_time) >= self.queue_timeout_s:
@@ -654,21 +760,31 @@ class MultiRunnerDeliveryService:
             return
 
         order.delivery_started_time = self.env.now
-        self.log_activity("delivery_start", f"{runner_label} departing to Hole {order.hole_num} ({delivery_distance_m:.0f}m, {delivery_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
+        self.log_activity("delivery_start", f"{runner_label} departing to Hole {delivered_hole_num} ({delivery_distance_m:.0f}m, {delivery_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
         yield self.env.timeout(delivery_time_s)
         order.delivered_time = self.env.now
-        self.runner_locations[runner_index] = f"hole_{order.hole_num}"
+        self.runner_locations[runner_index] = f"hole_{delivered_hole_num}"
 
         placed_time = order.order_placed_time if order.order_placed_time is not None else order.delivered_time
         order.total_completion_time_s = order.delivered_time - placed_time
         return_time_s = self._calculate_return_time(self.runner_locations[runner_index])
         total_drive_time_s = delivery_time_s + return_time_s
-        self.log_activity("delivery_complete", f"{runner_label} delivered Order {order.order_id} to Hole {order.hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
+        self.log_activity("delivery_complete", f"{runner_label} delivered Order {order.order_id} to Hole {delivered_hole_num} (Total completion: {order.total_completion_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
+
+        # Immediately return to clubhouse after delivery so next order does not inherit the return as queue wait
+        if return_time_s > 0:
+            self.log_activity("returning", f"{runner_label} returning to clubhouse from {self.runner_locations[runner_index]} ({return_time_s/60:.1f} min)", runner_id=runner_label, order_id=order.order_id, location=self.runner_locations[runner_index])
+            yield self.env.timeout(return_time_s)
+            self.runner_locations[runner_index] = "clubhouse"
+            self.log_activity("arrived_clubhouse", f"{runner_label} arrived at clubhouse after delivering Order {order.order_id}", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
         order.status = "processed"
         delivery_stats_entry = {
             "order_id": order.order_id,
             "golfer_group_id": order.golfer_group_id,
-            "hole_num": order.hole_num,
+            # Delivered hole (predicted at departure)
+            "hole_num": int(delivered_hole_num),
+            # Original placed hole for reference
+            "placed_hole_num": int(order.hole_num),
             "order_time_s": order.order_time_s,
             "queue_delay_s": order.queue_delay_s,
             "prep_time_s": self.prep_time_s,
@@ -685,10 +801,65 @@ class MultiRunnerDeliveryService:
             delivery_stats_entry["trip_to_golfer"] = trip_to_golfer
         if trip_back:
             delivery_stats_entry["trip_back"] = trip_back
+        if predicted_coords:
+            delivery_stats_entry["predicted_delivery_location"] = [float(predicted_coords[0]), float(predicted_coords[1])]
             
         self.delivery_stats.append(delivery_stats_entry)
         # Mark runner available for next assignment
         self.runner_busy[runner_index] = False
+
+    def _choose_intercept_hole(self, order: DeliveryOrder) -> int:
+        """
+        Choose an intercept hole ahead of the golfer based on:
+        - Current golfer progression from tee time (1 minute per node pacing)
+        - Runner outbound travel time to each candidate hole
+        - Aim to minimize the mismatch between runner arrival and golfer arrival at the hole
+
+        Always clamps to at least the placed hole; favors arriving slightly before golfer.
+        """
+        placed_hole = int(getattr(order, "hole_num", 1) or 1)
+        nodes_per_hole = max(1, int(self._nodes_per_hole))
+
+        # Estimate golfer's current progress (in minutes) since tee at departure time
+        current_delta_min = 0
+        try:
+            if self._tee_time_by_group:
+                gtee = int(self._tee_time_by_group.get(int(order.golfer_group_id), 0))
+                current_delta_min = max(0, int((self.env.now - gtee) // 60))
+        except Exception:
+            current_delta_min = 0
+
+        # Start considering holes from the max of placed hole and current progress-derived hole
+        progress_hole = 1 + int(current_delta_min // nodes_per_hole)
+        start_hole = max(placed_hole, max(1, min(18, progress_hole)))
+
+        best_hole = start_hole
+        best_score = float("inf")
+
+        for candidate in range(start_hole, 19):
+            try:
+                # Runner travel time to candidate hole (minutes)
+                _, travel_time_s = self._calculate_delivery_details(candidate)
+                runner_time_min = max(0.0, float(travel_time_s) / 60.0)
+
+                # Golfer time remaining (minutes) until candidate hole from current progress
+                golfer_arrival_min = (candidate - 1) * nodes_per_hole
+                golfer_time_remaining_min = max(0, int(golfer_arrival_min - current_delta_min))
+
+                # Penalize arriving after the golfer more heavily
+                lateness = max(0.0, runner_time_min - float(golfer_time_remaining_min))
+                earliness = max(0.0, float(golfer_time_remaining_min) - runner_time_min)
+                # Weight late arrivals 3x compared to earliness
+                score = (3.0 * lateness) + (1.0 * earliness)
+
+                if score < best_score - 1e-6:
+                    best_score = score
+                    best_hole = candidate
+            except Exception:
+                continue
+
+        # Ensure within [1, 18]
+        return int(max(1, min(18, best_hole)))
 
     def _calculate_return_time(self, runner_location: str) -> float:
         if runner_location == "clubhouse":
@@ -717,6 +888,86 @@ class MultiRunnerDeliveryService:
             distance_m = 1000.0
         travel_time_s = distance_m / max(self.runner_speed_mps, 0.1)
         return distance_m, travel_time_s
+
+    def _load_connected_points(self) -> tuple[List[Tuple[float, float]], List[Optional[int]]]:
+        """Load per-minute loop points and hole labels from holes_connected.geojson for hole mapping."""
+        import json
+        coords: List[Tuple[float, float]] = []
+        hole_nums: List[Optional[int]] = []
+        path = Path(self.course_dir) / "geojson" / "generated" / "holes_connected.geojson"
+        if not path.exists():
+            return [], []
+        data = json.loads(path.read_text(encoding="utf-8"))
+        features = data.get("features", []) if isinstance(data, dict) else []
+        for feat in features:
+            if not isinstance(feat, dict):
+                continue
+            geom = feat.get("geometry") or {}
+            if geom.get("type") != "Point":
+                continue
+            coords_xy = geom.get("coordinates") or []
+            if not isinstance(coords_xy, (list, tuple)) or len(coords_xy) < 2:
+                continue
+            lon = float(coords_xy[0]); lat = float(coords_xy[1])
+            props = feat.get("properties") or {}
+            hn = props.get("hole_number") or props.get("hole") or props.get("hole_num") or props.get("current_hole")
+            try:
+                hole_num = int(hn) if hn is not None else None
+            except Exception:
+                hole_num = None
+            coords.append((lon, lat))
+            hole_nums.append(hole_num)
+        return coords, hole_nums
+
+    def _load_hole_lines(self) -> Dict[int, Any]:
+        """Load hole LineString geometries keyed by hole number."""
+        from ..viz.matplotlib_viz import load_course_geospatial_data
+        hole_lines: Dict[int, Any] = {}
+        course_data = load_course_geospatial_data(self.course_dir)
+        holes_gdf = course_data.get("holes")
+        if holes_gdf is None:
+            return {}
+        for _, hole in holes_gdf.iterrows():
+            hole_ref = hole.get("ref", str(hole.name + 1))
+            try:
+                hole_id = int(hole_ref)
+            except Exception:
+                continue
+            geom = hole.geometry
+            if geom is not None:
+                hole_lines[hole_id] = geom
+        return hole_lines
+
+    @staticmethod
+    def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+        import math
+        phi1 = math.radians(lat1); phi2 = math.radians(lat2)
+        dphi = math.radians(lat2 - lat1); dlambda = math.radians(lon2 - lon1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return 6371000.0 * c
+
+    def _nearest_hole_from_coords(self, lon: float, lat: float) -> Optional[int]:
+        """Map a coordinate to the nearest hole using holes_connected point index mapping.
+
+        Falls back to simple vacancy if labels are missing.
+        """
+        if not self._loop_points:
+            return None
+        best_idx = -1
+        best_d = float("inf")
+        for idx, (px, py) in enumerate(self._loop_points):
+            d = self._haversine_m(lon, lat, px, py)
+            if d < best_d:
+                best_d = d
+                best_idx = idx
+        if best_idx < 0:
+            return None
+        try:
+            hn = self._loop_holes[best_idx] if best_idx < len(self._loop_holes) else None
+            return int(hn) if hn is not None else None
+        except Exception:
+            return None
 
     def _calculate_enhanced_delivery_route(self, hole_num: int) -> Dict:
         """Calculate enhanced delivery route with actual path data for visualization."""
@@ -802,7 +1053,7 @@ class MultiRunnerDeliveryService:
             logger.warning("Failed to get hole location for hole %d: %s", hole_num, e)
             return None
 
-def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: float, rng_seed: Optional[int] = None) -> List[DeliveryOrder]:
+def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: float, rng_seed: Optional[int] = None, *, course_dir: Optional[str] = None) -> List[DeliveryOrder]:
     """Generate delivery orders on a per-group, per-9-holes basis.
 
     Semantics:
@@ -822,7 +1073,18 @@ def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: fl
         random.seed(rng_seed)
 
     orders: List[DeliveryOrder] = []
-    minutes_per_hole = 12
+    # Derive node-based pacing from holes_connected.geojson (1 min per node)
+    try:
+        from pathlib import Path
+        import json as _json
+        if course_dir:
+            data = _json.loads((Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson").read_text(encoding="utf-8"))
+            total_nodes = len([f for f in (data.get("features") or []) if (f.get("geometry") or {}).get("type") == "Point"]) or 18 * 12
+        else:
+            total_nodes = 18 * 12
+    except Exception:
+        total_nodes = 18 * 12
+    nodes_per_hole = max(1, int(round(float(total_nodes) / 18.0)))
 
     for group in groups:
         group_id = group["group_id"]
@@ -831,7 +1093,8 @@ def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: fl
         # Front nine (holes 1..9)
         if random.random() < order_probability_per_9_holes:
             hole_front = int(random.randint(1, 9))
-            order_time_front_s = tee_time_s + (hole_front - 1) * minutes_per_hole * 60
+            start_node = int(round((hole_front - 1) * nodes_per_hole))
+            order_time_front_s = tee_time_s + start_node * 60
             orders.append(
                 DeliveryOrder(
                     order_id=None,
@@ -845,7 +1108,8 @@ def simulate_golfer_orders(groups: List[Dict], order_probability_per_9_holes: fl
         # Back nine (holes 10..18)
         if random.random() < order_probability_per_9_holes:
             hole_back = int(random.randint(10, 18))
-            order_time_back_s = tee_time_s + (hole_back - 1) * minutes_per_hole * 60
+            start_node = int(round((hole_back - 1) * nodes_per_hole))
+            order_time_back_s = tee_time_s + start_node * 60
             orders.append(
                 DeliveryOrder(
                     order_id=None,

@@ -66,7 +66,7 @@ def _generate_smooth_runner_coordinates(
     travel_time_s: float,
     runner_coordinates: List[Dict],
     runner_id: str = 'runner_1',
-    coordinate_interval_s: int = 1
+    coordinate_interval_s: int = 60
 ) -> None:
     """
     Generate smooth GPS coordinates for runner movement between two points.
@@ -78,7 +78,7 @@ def _generate_smooth_runner_coordinates(
         travel_time_s: Total travel time in seconds
         runner_coordinates: List to append coordinates to
         runner_id: Runner identifier
-        coordinate_interval_s: Interval between GPS points (default 1 second for smooth animation)
+        coordinate_interval_s: Interval between GPS points (default 60 seconds, React app handles smoothing)
     """
     if travel_time_s <= 0:
         return
@@ -108,7 +108,7 @@ def _generate_smooth_runner_path_coordinates(
     total_travel_time_s: float,
     runner_coordinates: List[Dict],
     runner_id: str = 'runner_1',
-    coordinate_interval_s: int = 1
+    coordinate_interval_s: int = 60
 ) -> None:
     """
     Generate smooth GPS coordinates for runner movement along a path of nodes.
@@ -120,7 +120,7 @@ def _generate_smooth_runner_path_coordinates(
         total_travel_time_s: Total travel time in seconds
         runner_coordinates: List to append coordinates to
         runner_id: Runner identifier
-        coordinate_interval_s: Interval between GPS points (default 1 second for smooth animation)
+        coordinate_interval_s: Interval between GPS points (default 60 seconds, React app handles smoothing)
     """
     if len(nodes) < 2:
         return
@@ -1356,8 +1356,8 @@ def run_improved_single_golfer_simulation(
 
         # Generate smooth golfer coordinates at higher frequency for better animation
         if track_coordinates and golfer_coordinates is not None:
-            # Generate coordinates at 10-second intervals for smooth animation
-            coordinate_interval_s = 10  # 10-second intervals for golfer movement
+            # Generate coordinates at 60-second intervals (1 per minute), let React app handle smoothing
+            coordinate_interval_s = 60  # 60-second intervals for golfer movement
             
             for idx, (lon, lat) in enumerate(minute_points):
                 if current_time_s <= order_time_s < current_time_s + max(1, int(time_quantum_s)):
@@ -1377,21 +1377,31 @@ def run_improved_single_golfer_simulation(
                     next_lon, next_lat = minute_points[idx + 1]
                     
                     # Generate coordinates at regular intervals within this minute
-                    num_intervals = max(1, int(max(1, int(time_quantum_s)) / coordinate_interval_s))
-                    for i in range(num_intervals + 1):  # +1 to include end point
-                        fraction = i / num_intervals if num_intervals > 0 else 0
-                        interp_lon, interp_lat = _interpolate_between_points(
-                            (lon, lat), (next_lon, next_lat), fraction
-                        )
-                        
-                        timestamp = minute_start_time + int(i * coordinate_interval_s)
+                    # When coordinate_interval_s >= time_quantum_s, just add the current point
+                    if coordinate_interval_s >= max(1, int(time_quantum_s)):
                         golfer_coordinates.append({
                             'golfer_id': 'golfer_1',
-                            'latitude': interp_lat,
-                            'longitude': interp_lon,
-                            'timestamp': timestamp,
+                            'latitude': lat,
+                            'longitude': lon,
+                            'timestamp': minute_start_time,
                             'type': 'golfer',
                         })
+                    else:
+                        num_intervals = max(1, int(max(1, int(time_quantum_s)) / coordinate_interval_s))
+                        for i in range(num_intervals):  # Removed +1 to avoid overlap
+                            fraction = i / num_intervals if num_intervals > 0 else 0
+                            interp_lon, interp_lat = _interpolate_between_points(
+                                (lon, lat), (next_lon, next_lat), fraction
+                            )
+                            
+                            timestamp = minute_start_time + int(i * coordinate_interval_s)
+                            golfer_coordinates.append({
+                                'golfer_id': 'golfer_1',
+                                'latitude': interp_lat,
+                                'longitude': interp_lon,
+                                'timestamp': timestamp,
+                                'type': 'golfer',
+                            })
                 else:
                     # Last point - just add the final position
                     golfer_coordinates.append({
@@ -1567,7 +1577,7 @@ def run_improved_single_golfer_simulation(
                     total_travel_time_s=trip_to_golfer["time_s"],
                     runner_coordinates=runner_coordinates,
                     runner_id='runner_1',
-                    coordinate_interval_s=1  # 1-second intervals for smooth animation
+                    coordinate_interval_s=60  # 60-second intervals, let React app handle smoothing
                 )
             
             # Simulate the actual travel time
@@ -1597,7 +1607,7 @@ def run_improved_single_golfer_simulation(
                     total_travel_time_s=trip_back["time_s"],
                     runner_coordinates=runner_coordinates,
                     runner_id='runner_1',
-                    coordinate_interval_s=1  # 1-second intervals for smooth animation
+                    coordinate_interval_s=60  # 60-second intervals, let React app handle smoothing
                 )
             
             # Simulate the actual travel time

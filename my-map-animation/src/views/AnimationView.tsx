@@ -1,6 +1,6 @@
 import * as React from 'react';
 import {useState, useEffect, useRef} from 'react';
-import {Map} from 'react-map-gl/mapbox';
+import {Map, Source, Layer} from 'react-map-gl/mapbox';
 import type {LayerProps} from 'react-map-gl/mapbox';
 import Papa from 'papaparse';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -87,17 +87,7 @@ const DEFAULT_COLORS = [
   '#fd79a8', '#e17055', '#00b894', '#0984e3'
 ];
 
-const createPointLayer = (id: string, color: string, config?: AppConfig): LayerProps => ({
-  id: id,
-  type: 'circle',
-  paint: {
-    'circle-radius': (config?.display.golferMarkers.radius ?? 9),
-    'circle-color': color,
-    'circle-stroke-width': config?.display.golferMarkers.strokeWidth || 3,
-    'circle-stroke-color': config?.display.golferMarkers.strokeColor || '#ffffff',
-    'circle-stroke-opacity': config?.display.golferMarkers.strokeOpacity || 0.8
-  }
-});
+// createPointLayer helper kept previously is unused; removing to satisfy linter
 
 function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
   const t2 = t * t;
@@ -157,7 +147,8 @@ function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easin
 }
 
 function calculateVelocity(point1: Coordinate, point2: Coordinate): number {
-  const timeDiff = point2.timestamp - point1.timestamp;
+  // timestamps are in minutes; convert to seconds for m/s
+  const timeDiff = (point2.timestamp - point1.timestamp) * 60;
   if (timeDiff <= 0) return 0;
   const lat1 = point1.latitude * Math.PI / 180;
   const lat2 = point2.latitude * Math.PI / 180;
@@ -283,15 +274,11 @@ function calculateBounds(entitiesData: EntityData[]) {
 }
 
 function ControlPanel({ 
-  trackersData, isLoading, center, elapsedTime, currentTimeOfDay, originalMinTimestamp, trackerPositions
+  trackersData, isLoading, center
 }: {
   trackersData: EntityData[];
   isLoading: boolean;
   center: [number, number];
-  elapsedTime: number;
-  currentTimeOfDay: string;
-  originalMinTimestamp: number;
-  trackerPositions: { [key: string]: Coordinate | null };
 }) {
   const totalWaypoints = trackersData.reduce((sum, tracker) => sum + tracker.coordinates.length, 0);
   return (
@@ -301,7 +288,6 @@ function ControlPanel({
         <>
           <p style={{ margin: '0 0 8px 0' }}>Following path with {totalWaypoints} total waypoints</p>
           <p style={{ margin: '0 0 8px 0', fontSize: 12 }}>Center: ({center[1].toFixed(4)}, {center[0].toFixed(4)})</p>
-          <p style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 'bold', color: '#2c5aa0' }}>Current Time: {currentTimeOfDay}</p>
         </>
       )}
     </div>
@@ -310,7 +296,7 @@ function ControlPanel({
 
 const DEFAULT_CONFIG: AppConfig = {
   data: { csvFileName: '/golfer_coordinates.csv', cartPathFileName: '/cart_paths.geojson', coordinatesDir: '/coordinates' },
-  animation: { speedMultiplier: 250, defaultMapStyle: 'satellite-streets', smoothing: { enabled: true, easing: 'catmull-rom', frameRate: 60 } },
+  animation: { speedMultiplier: 200, defaultMapStyle: 'satellite-streets', smoothing: { enabled: true, easing: 'catmull-rom', frameRate: 60 } },
   mapStyles: { 'satellite-streets': { name: 'Satellite with Streets', url: 'mapbox://styles/mapbox/satellite-streets-v12', description: 'Satellite imagery with roads and labels' } },
   entityTypes: { 'golfer': { name: 'Golfer', color: '#007cbf', description: 'Golf players' }, 'bev-cart': { name: 'Beverage Cart', color: '#ff6b6b', description: 'Beverage service' }, 'runner': { name: 'Runner', color: '#FF8B00', description: 'Runners on course' }},
   display: { golferTrails: { width: 2, opacity: 0.6 }, golferMarkers: { radius: 9, strokeWidth: 3, strokeColor: '#ffffff', strokeOpacity: 0.8 } },
@@ -325,23 +311,27 @@ export default function AnimationView() {
   const [isLoading, setIsLoading] = useState(true);
   const [pathBounds, setPathBounds] = useState({ center: [0, 0] as [number, number], zoom: 2 });
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [currentTimeOfDay, setCurrentTimeOfDay] = useState<string>('00:00:00');
   const [originalMinTimestamp, setOriginalMinTimestamp] = useState<number>(0);
   const [animationDuration, setAnimationDuration] = useState<number>(0);
   // Animation timing is integrated incrementally to allow live speed changes without jumps
-  const [animationStartTime, setAnimationStartTime] = useState<number | null>(0); // retained for backward-compat but not used
+  const [animationStartTime, setAnimationStartTime] = useState<number | null>(null); // retained for backward-compat but not used
   const [sourcesReady, setSourcesReady] = useState<boolean>(false);
+  const [styleReady, setStyleReady] = useState<boolean>(false);
   const mapRef = useRef<any>(null);
   const lastUiUpdateRef = useRef<number>(0);
   const uiUpdateIntervalMs = 200;
-  const smoothingCacheRef = useRef<{ [name: string]: SmoothingData }>({});
+  // Smoothing cache not needed for linear interpolation example-style animation
   const sourcesInitializedRef = useRef<boolean>(false);
-  const initialSourceDataRef = useRef<{ [sourceId: string]: any }>({});
-  // Live speed control
-  const [speedMultiplier, setSpeedMultiplier] = useState<number>(DEFAULT_CONFIG.animation.speedMultiplier);
+  // removed unused initialSourceDataRef to satisfy linter
+  const trackersGeoJsonRef = useRef<any>({ type: 'FeatureCollection', features: [] });
+  const styleReadyRef = useRef<boolean>(false);
+  // Fixed optimal speed for smooth animation
+  const speedMultiplier = DEFAULT_CONFIG.animation.speedMultiplier;
   const speedRef = useRef<number>(DEFAULT_CONFIG.animation.speedMultiplier);
   const simulatedElapsedRef = useRef<number>(0);
   const lastRealTimeSecRef = useRef<number>(0);
+  // Easing selection state
+  const [currentEasing, setCurrentEasing] = useState<'linear' | 'cubic' | 'quart' | 'sine' | 'catmull-rom'>('catmull-rom');
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -352,7 +342,6 @@ export default function AnimationView() {
         setConfig(configData);
         setCurrentMapStyle(configData.animation.defaultMapStyle);
         if (typeof configData.animation?.speedMultiplier === 'number' && isFinite(configData.animation.speedMultiplier)) {
-          setSpeedMultiplier(configData.animation.speedMultiplier);
           speedRef.current = configData.animation.speedMultiplier;
         }
       } catch (error) {
@@ -399,27 +388,25 @@ export default function AnimationView() {
             const allTimestamps = coords.map(c => c.timestamp);
             const minTimestamp = Math.min(...allTimestamps);
             const maxTimestamp = Math.max(...allTimestamps);
-            const duration = maxTimestamp - minTimestamp;
+            const duration = (maxTimestamp - minTimestamp) / 60; // minutes
             setOriginalMinTimestamp(minTimestamp);
             setAnimationDuration(duration);
-            const trackersArray: EntityData[] = Object.entries(trackerGroups).map(([trackerId, coordinates]) => {
-              const sortedCoords = coordinates
-                .sort((a, b) => a.timestamp - b.timestamp)
-                .map(coord => ({ ...coord, timestamp: coord.timestamp - minTimestamp }));
-              const entityType = sortedCoords[0]?.type || 'golfer';
-              return { name: trackerId, coordinates: sortedCoords, type: entityType, color: config.entityTypes[entityType]?.color || config.golferColors[0] };
-            });
+                         const trackersArray: EntityData[] = Object.entries(trackerGroups).map(([trackerId, coordinates]) => {
+               const sortedCoords = coordinates
+                 .sort((a, b) => a.timestamp - b.timestamp)
+                 .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) / 60 })); // minutes
+               
+               // For golfers, use every 3rd point to make easing more visible
+               let filteredCoords = sortedCoords;
+               if (sortedCoords[0]?.type === 'golfer') {
+                 filteredCoords = sortedCoords.filter((_, index) => index % 3 === 0);
+               }
+               
+               const entityType = filteredCoords[0]?.type || 'golfer';
+               return { name: trackerId, coordinates: filteredCoords, type: entityType, color: config.entityTypes[entityType]?.color || config.golferColors[0] };
+             });
             setTrackersData(trackersArray);
-            const newSmoothingCache: { [name: string]: SmoothingData } = {};
-            for (const tracker of trackersArray) {
-              const times = tracker.coordinates.map(c => c.timestamp);
-              const lat = tracker.coordinates.map(c => c.latitude);
-              const lng = tracker.coordinates.map(c => c.longitude);
-              const dLat = computePchipTangents(lat, times);
-              const dLng = computePchipTangents(lng, times);
-              newSmoothingCache[tracker.name] = { times, lat, lng, dLat, dLng };
-            }
-            smoothingCacheRef.current = newSmoothingCache;
+            // No smoothing precompute needed
             const bounds = calculateBounds(trackersArray);
             setPathBounds(bounds);
             setIsLoading(false);
@@ -435,131 +422,78 @@ export default function AnimationView() {
   }, [config]);
 
   useEffect(() => {
-    if (isLoading || trackersData.length === 0) return;
-    const initializeSources = () => {
-      const map = mapRef.current?.getMap?.();
-      if (!map || sourcesInitializedRef.current) {
-        // Even if sources are not initialized, allow animation to proceed
-        setSourcesReady(true);
-        return;
-      }
-      trackersData.forEach((tracker) => {
-        const sourceId = `tracker-${tracker.name}`;
-        const initial = tracker.coordinates[0];
-        if (!initial) return;
-        const initialData = { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [initial.longitude, initial.latitude] } };
-        initialSourceDataRef.current[sourceId] = initialData;
-        if (!map.getSource(sourceId)) {
-          map.addSource(sourceId, { type: 'geojson', data: initialData });
-          if (!map.getLayer(sourceId)) {
-            const layerConfig = createPointLayer(sourceId, tracker.color, config);
-            map.addLayer({ ...layerConfig, source: sourceId });
-            setTimeout(() => { try { if (map.getLayer(sourceId)) { map.moveLayer(sourceId); } } catch {} }, 100);
-          }
-        }
+    if (!styleReady || isLoading || trackersData.length === 0 || sourcesInitializedRef.current) return;
+    // Build initial FeatureCollection with first point of each tracker, include color for data-driven styling
+    const features: any[] = [];
+    trackersData.forEach(tracker => {
+      const p = tracker.coordinates[0];
+      if (!p) return;
+      features.push({
+        type: 'Feature',
+        properties: { id: tracker.name, color: tracker.color },
+        geometry: { type: 'Point', coordinates: [p.longitude, p.latitude] }
       });
-      sourcesInitializedRef.current = true;
-      setSourcesReady(true);
-    };
-    if (mapRef.current?.getMap?.()?.isStyleLoaded?.()) initializeSources(); else {
-      const map = mapRef.current?.getMap?.();
-      if (map) { map.on('styledata', initializeSources); return () => map.off('styledata', initializeSources); }
-    }
-  }, [trackersData, config, isLoading]);
+    });
+    trackersGeoJsonRef.current = { type: 'FeatureCollection', features };
+    sourcesInitializedRef.current = true;
+    setSourcesReady(true);
+  }, [isLoading, trackersData, styleReady]);
 
+  // Simple animation loop matching react-map-gl example
   useEffect(() => {
     if (isLoading || trackersData.length === 0) return;
-    if (!animationStartTime) { setAnimationStartTime(Date.now()); return; }
+    
+    let animationId: number;
+    let startTime = Date.now();
+    
     const animate = () => {
-      const currentTime = Date.now();
-      const realElapsed = (currentTime - animationStartTime) / 1000;
-      const simulatedElapsed = realElapsed * config.animation.speedMultiplier;
+      const elapsed = (Date.now() - startTime) * speedMultiplier / 1000; // seconds
+      const elapsedMinutes = elapsed / 60; // convert to minutes
+      
       const map = mapRef.current?.getMap?.();
-      const newPositions: { [key: string]: Coordinate | null } = {};
-      
-      trackersData.forEach((tracker) => {
-        let position: Coordinate | null = null;
-        const smoothingConfig = config.animation.smoothing;
-
-        if (smoothingConfig?.enabled) {
-          switch (smoothingConfig.easing) {
-            case 'catmull-rom':
-              position = getCatmullRomPositionOnPath(tracker.coordinates, simulatedElapsed);
-              break;
-            case 'pchip': {
-              const data = smoothingCacheRef.current[tracker.name];
-              if (data) {
-                const p = getPchipPosition(data, simulatedElapsed);
-                if (p) {
-                  position = { golfer_id: tracker.name, latitude: p.lat, longitude: p.lng, timestamp: simulatedElapsed, type: tracker.type };
-                }
-              }
-              break;
-            }
-            case 'adaptive': {
-              let easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic';
-              for (let i = 0; i < tracker.coordinates.length - 1; i++) {
-                const current = tracker.coordinates[i];
-                const next = tracker.coordinates[i + 1];
-                if (simulatedElapsed >= current.timestamp && simulatedElapsed <= next.timestamp) {
-                  const velocity = calculateVelocity(current, next);
-                  easing = getAdaptiveEasing(velocity);
-                  break;
-                }
-              }
-              position = getPositionOnPath(tracker.coordinates, simulatedElapsed, easing);
-              break;
-            }
-            default:
-              position = getPositionOnPath(tracker.coordinates, simulatedElapsed, smoothingConfig.easing as any);
-          }
-        }
-
-        if (!position) {
-            position = getPositionOnPath(tracker.coordinates, simulatedElapsed, 'linear');
-        }
-
-        newPositions[tracker.name] = position;
-        if (map && position) {
-          const sourceId = `tracker-${tracker.name}`;
-          const src: any = map.getSource(sourceId);
-          if (src && typeof src.setData === 'function') {
-            src.setData({ type: 'Feature', geometry: { type: 'Point', coordinates: [position.longitude, position.latitude] } });
-          }
-        }
-      });
-      
-      if (!lastUiUpdateRef.current || (currentTime - lastUiUpdateRef.current) >= uiUpdateIntervalMs) {
-        lastUiUpdateRef.current = currentTime;
-        setTrackerPositions(newPositions);
-        setElapsedTime(Math.floor(simulatedElapsed));
-        const currentSimulationTimestamp = originalMinTimestamp + simulatedElapsed;
-        setCurrentTimeOfDay(timestampToTimeOfDay(currentSimulationTimestamp, config.animation.startingHour || 0));
+      if (!map) {
+        animationId = requestAnimationFrame(animate);
+        return;
       }
-      requestAnimationFrame(animate);
+      
+      const features: any[] = [];
+      
+             trackersData.forEach((tracker) => {
+         let position: Coordinate | null;
+         if (currentEasing === 'catmull-rom') {
+           position = getCatmullRomPositionOnPath(tracker.coordinates, elapsedMinutes);
+         } else {
+           position = getPositionOnPath(tracker.coordinates, elapsedMinutes, currentEasing);
+         }
+         if (position) {
+           features.push({
+             type: 'Feature',
+             properties: { id: tracker.name, color: tracker.color },
+             geometry: { type: 'Point', coordinates: [position.longitude, position.latitude] }
+           });
+         }
+       });
+      
+      // Update GeoJSON source
+      const source = map.getSource('trackers');
+      if (source && typeof source.setData === 'function') {
+        source.setData({ type: 'FeatureCollection', features });
+      }
+      
+      setElapsedTime(elapsedMinutes);
+      animationId = requestAnimationFrame(animate);
     };
-    const animationId = requestAnimationFrame(animate);
-    const currentMapRef = mapRef.current;
+    
+    animationId = requestAnimationFrame(animate);
+    
     return () => {
-      cancelAnimationFrame(animationId);
-      if (sourcesInitializedRef.current) {
-        const map = currentMapRef?.getMap?.();
-        if (map) {
-          trackersData.forEach((tracker) => {
-            const sourceId = `tracker-${tracker.name}`;
-            try { if (map.getLayer(sourceId)) map.removeLayer(sourceId); if (map.getSource(sourceId)) map.removeSource(sourceId); } catch {}
-          });
-        }
-        sourcesInitializedRef.current = false;
+      if (animationId) {
+        cancelAnimationFrame(animationId);
       }
-      // Reset integrator on unmount/reload of animation loop
-      lastRealTimeSecRef.current = 0;
-      simulatedElapsedRef.current = 0;
     };
-  }, [isLoading, trackersData, config, originalMinTimestamp, sourcesReady]);
+  }, [isLoading, trackersData, speedMultiplier, currentEasing]);
 
-  // Keep ref in sync for animation loop without re-creating it
-  useEffect(() => { speedRef.current = speedMultiplier; }, [speedMultiplier]);
+
 
   const getInitialViewState = () => {
     if (isLoading || (pathBounds.center[0] === 0 && pathBounds.center[1] === 0)) {
@@ -580,21 +514,22 @@ export default function AnimationView() {
 
   return (
     <div style={{ width: '100vw', height: '100vh' }}>
-      {/* Speed control panel */}
-      <div style={{ position: 'absolute', top: 56, left: 10, zIndex: 11, background: 'rgba(255,255,255,0.95)', padding: '8px 10px', borderRadius: 6, boxShadow: '0 2px 4px rgba(0,0,0,0.2)', minWidth: 260 }}>
+      {/* Easing Control Panel */}
+      <div style={{ position: 'absolute', top: 56, left: 10, zIndex: 11, background: 'rgba(255,255,255,0.95)', padding: '8px 10px', borderRadius: 6, boxShadow: '0 2px 4px rgba(0,0,0,0.2)', minWidth: 220 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <label htmlFor="speed-slider" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Speed</label>
-          <input
-            id="speed-slider"
-            type="range"
-            min={25}
-            max={1000}
-            step={25}
-            value={speedMultiplier}
-            onChange={(e) => setSpeedMultiplier(Number(e.target.value))}
-            style={{ width: 140 }}
-          />
-          <span style={{ fontSize: 12, color: '#333', width: 44, textAlign: 'right' }}>{(speedMultiplier).toFixed(0)}x</span>
+          <label htmlFor="easing-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Easing</label>
+          <select
+            id="easing-select"
+            value={currentEasing}
+            onChange={(e) => setCurrentEasing(e.target.value as 'linear' | 'cubic' | 'quart' | 'sine' | 'catmull-rom')}
+            style={{ width: 140, padding: '4px', borderRadius: 4, border: '1px solid #ccc', fontSize: 12 }}
+          >
+            <option value="linear">Linear</option>
+            <option value="cubic">Cubic</option>
+            <option value="quart">Quart</option>
+            <option value="sine">Sine</option>
+            <option value="catmull-rom">Catmull-Rom</option>
+          </select>
         </div>
       </div>
       <Map
@@ -602,18 +537,46 @@ export default function AnimationView() {
         initialViewState={getInitialViewState()}
         mapStyle={(config.mapStyles[currentMapStyle]?.url) || (config.mapStyles[config.animation.defaultMapStyle]?.url)}
         mapboxAccessToken={MAPBOX_TOKEN}
-        terrain={{ source: 'mapbox-dem', exaggeration: 1.5 }}
+        reuseMaps
+        onLoad={(e) => {
+          // Ensure DEM source exists before enabling terrain
+          try {
+            const map = e.target as any;
+            if (!map.getSource('mapbox-dem')) {
+              map.addSource('mapbox-dem', {
+                type: 'raster-dem',
+                url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+                tileSize: 512,
+                maxzoom: 14
+              });
+            }
+            map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+          } catch {}
+          styleReadyRef.current = true;
+          setStyleReady(true);
+        }}
       >
-        {/* Animated points sources are added imperatively */}
+        {/* Declarative source/layer for trackers; data updated imperatively each frame for performance */}
+        {sourcesReady && (
+          <Source id="trackers" type="geojson" data={trackersGeoJsonRef.current}>
+            <Layer
+              id="trackers-points"
+              type="circle"
+              paint={{
+                'circle-radius': (config?.display.golferMarkers.radius ?? 9),
+                'circle-color': ['get', 'color'],
+                'circle-stroke-width': config?.display.golferMarkers.strokeWidth || 3,
+                'circle-stroke-color': config?.display.golferMarkers.strokeColor || '#ffffff',
+                'circle-stroke-opacity': config?.display.golferMarkers.strokeOpacity || 0.8
+              }}
+            />
+          </Source>
+        )}
       </Map>
       <ControlPanel 
         trackersData={trackersData}
         isLoading={isLoading}
         center={pathBounds.center}
-        elapsedTime={elapsedTime}
-        currentTimeOfDay={currentTimeOfDay}
-        originalMinTimestamp={originalMinTimestamp}
-        trackerPositions={trackerPositions}
       />
     </div>
   );

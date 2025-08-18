@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 """
-Generate three simple tracks at 1-minute cadence using hole geometries:
-- Golfer: holes 1→18, 12 minutes per hole, 2 minutes transfer between holes
-- Beverage cart: holes 18→1, same timing but reverse order
+Generate three simple tracks at 1-minute cadence using generated course nodes:
+- Golfer: forward over geojson/generated/holes_connected.geojson Point nodes (idx ascending)
+- Beverage cart: reverse over the same nodes (idx descending)
 - Cart path coverage: iterate cart path graph nodes in index order (no timing guarantees)
 
 Outputs JSON files under outputs/simple_tracks/ with identical schema for golfer and bev-cart.
@@ -30,73 +30,61 @@ def _interpolate_along_linestring(line: LineString, fraction: float) -> Tuple[fl
     return (pt.x, pt.y)
 
 
-def load_hole_lines(course_dir: str) -> Dict[int, LineString]:
-    holes_path = Path(course_dir) / "geojson" / "holes.geojson"
-    gdf = gpd.read_file(holes_path).to_crs(4326)
-    hole_lines: Dict[int, LineString] = {}
+def load_holes_connected_points(course_dir: str) -> List[Tuple[int, float, float]]:
+    """Load (idx, lon, lat) from geojson/generated/holes_connected.geojson Point features.
+
+    Falls back to deriving from the first LineString vertices if Point features are absent.
+    """
+    path = Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson"
+    gdf = gpd.read_file(path).to_crs(4326)
+    pts: List[Tuple[int, float, float]] = []
     for _, row in gdf.iterrows():
-        ref = row.get("hole", row.get("ref"))
-        try:
-            hole_num = int(ref)
-        except (TypeError, ValueError):
+        if row.geometry is None:
             continue
-        if row.geometry.geom_type == "LineString":
-            hole_lines[hole_num] = row.geometry
-    return hole_lines
+        if getattr(row.geometry, "geom_type", None) == "Point" and ("idx" in row):
+            try:
+                idx = int(row["idx"])  # type: ignore[index]
+            except Exception:
+                continue
+            pts.append((idx, float(row.geometry.x), float(row.geometry.y)))
+    if not pts:
+        # Fallback: use the first LineString's vertices if Points not present
+        line_rows = gdf[gdf.geometry.type == "LineString"]
+        if not line_rows.empty:
+            coords = list(line_rows.iloc[0].geometry.coords)
+            pts = [(i, float(lon), float(lat)) for i, (lon, lat) in enumerate(coords)]
+    pts.sort(key=lambda t: t[0])
+    return pts
 
 
-def build_minute_points(
-    lines_in_order: List[Tuple[int, LineString]],
-    minutes_per_hole: int = 12,
-    minutes_between_holes: int = 2,
+def build_minute_points_from_connected(
+    ordered_points: List[Tuple[int, float, float]],
+    *, point_type: str,
 ) -> List[Dict]:
+    """Create one GPS point per minute from a sequence of connected nodes.
+
+    Assumes 1 node == 1 minute progression. Labels with 'type' passed in.
+    """
     points: List[Dict] = []
     current_time_s = 0
-    for idx, (hole, line) in enumerate(lines_in_order):
-        # Hole play minutes
-        for m in range(minutes_per_hole):
-            frac = 0.0 if m == 0 and len(points) == 0 else (m / max(minutes_per_hole - 1, 1))
-            lon, lat = _interpolate_along_linestring(line, frac)
-            points.append(
-                {
-                    "timestamp": current_time_s,
-                    "longitude": lon,
-                    "latitude": lat,
-                    "current_hole": hole,
-                    "type": "hole",
-                }
-            )
-            current_time_s += 60
-        # Transfer between holes (2 minutes) except after last
-        if idx < len(lines_in_order) - 1:
-            this_end = Point(line.coords[-1])
-            next_line = lines_in_order[idx + 1][1]
-            next_start = Point(next_line.coords[0])
-            transfer = LineString([(this_end.x, this_end.y), (next_start.x, next_start.y)])
-            for m in range(minutes_between_holes):
-                frac = 0.0 if m == 0 else (m / max(minutes_between_holes - 1, 1))
-                lon, lat = _interpolate_along_linestring(transfer, frac)
-                points.append(
-                    {
-                        "timestamp": current_time_s,
-                        "longitude": lon,
-                        "latitude": lat,
-                        "current_hole": hole,
-                        "type": "transfer",
-                    }
-                )
-                current_time_s += 60
+    for _, lon, lat in ordered_points:
+        points.append(
+            {
+                "timestamp": current_time_s,
+                "longitude": lon,
+                "latitude": lat,
+                "type": point_type,
+            }
+        )
+        current_time_s += 60
     return points
 
 
 def generate_tracks(course_dir: str = "courses/pinetree_country_club") -> Dict[str, List[Dict]]:
-    hole_lines = load_hole_lines(course_dir)
-    ordered = [hole_lines[i] for i in sorted(hole_lines.keys()) if i in hole_lines]
-    ordered_pairs = [(i, hole_lines[i]) for i in sorted(hole_lines.keys())]
-    reverse_pairs = [(i, hole_lines[i]) for i in sorted(hole_lines.keys(), reverse=True)]
-
-    golfer_points = build_minute_points(ordered_pairs, minutes_per_hole=12, minutes_between_holes=2)
-    bev_points = build_minute_points(reverse_pairs, minutes_per_hole=12, minutes_between_holes=2)
+    # Use holes_connected.geojson nodes for both golfer and bev-cart tracks
+    connected = load_holes_connected_points(course_dir)
+    golfer_points = build_minute_points_from_connected(connected, point_type="golfer")
+    bev_points = build_minute_points_from_connected(list(reversed(connected)), point_type="bev_cart")
 
     # Cart path coverage (simple: dump node coordinates in sequence order)
     cart_points: List[Dict] = []

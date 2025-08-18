@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Route, Routes, NavLink } from 'react-router-dom';
 import AnimationView from './views/AnimationView';
+import AnimationViewDebug from './views/AnimationViewDebug';
 import HeatmapView from './views/HeatmapView';
 
 export default function App() {
@@ -33,6 +34,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<AnimationView />} />
         <Route path="/animation" element={<AnimationView />} />
+        <Route path="/debug" element={<AnimationViewDebug />} />
         <Route path="/heatmap" element={<HeatmapView />} />
       </Routes>
     </div>
