@@ -764,9 +764,7 @@ def _build_runner_action_segments(activity_logs: List[Dict[str, Any]]) -> List[D
                     }
                 )
                 delivery_start_s = None
-                # Immediately begin return drive at delivery completion
-                if return_start_s is None:
-                    return_start_s = ts
+                # Do not auto-start return drive; wait for explicit 'returning' event
 
             if "returning" in tag_l and return_start_s is None:
                 return_start_s = ts
@@ -2429,16 +2427,19 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 logger.warning("Failed to compute crossings for bev-cart pass boost: %s", e)
                 crossings = None
 
-        # Determine effective runner speed (config file vs command line)
-        # Use config value if available (already converted from mph to m/s by config loader)
-        if hasattr(sim_config, 'delivery_runner_speed_mps'):
-            effective_runner_speed = float(getattr(sim_config, 'delivery_runner_speed_mps', 6.0))
-            # Convert back to mph for logging
-            config_mph = effective_runner_speed / 0.44704
-            logger.info("Using runner speed from config: %.2f mph = %.3f m/s", config_mph, effective_runner_speed)
-        else:
+        # Determine effective runner speed with CLI precedence
+        if getattr(args, "runner_speed_mph", None) is not None:
+            effective_runner_speed = float(args.runner_speed_mph) * 0.44704
+            logger.info("Using runner speed from CLI: %.2f mph = %.3f m/s", float(args.runner_speed_mph), effective_runner_speed)
+        elif getattr(args, "runner_speed", None) is not None:
             effective_runner_speed = float(args.runner_speed)
-            logger.info("Using runner speed default: %.2f m/s", effective_runner_speed)
+            logger.info("Using runner speed from CLI: %.3f m/s (%.2f mph)", effective_runner_speed, (effective_runner_speed/0.44704))
+        elif hasattr(sim_config, 'delivery_runner_speed_mps'):
+            effective_runner_speed = float(getattr(sim_config, 'delivery_runner_speed_mps', 2.68))
+            logger.info("Using runner speed from config: %.2f mph = %.3f m/s", (effective_runner_speed/0.44704), effective_runner_speed)
+        else:
+            effective_runner_speed = 2.68
+            logger.info("Using runner speed default: %.3f m/s (%.2f mph)", effective_runner_speed, (effective_runner_speed/0.44704))
 
         # Use unified multi-runner service even for a single runner to allow custom order generation
         env = simpy.Environment()
@@ -2724,6 +2725,46 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                         })
                     t_cursor += per_seg
 
+            def _approximate_hole_location(hole_num: int) -> Optional[Tuple[float, float]]:
+                try:
+                    from golfsim.viz.matplotlib_viz import load_course_geospatial_data  # local import
+                    course_data_local = load_course_geospatial_data(args.course_dir)
+                    if 'holes' not in course_data_local:
+                        return None
+                    holes_gdf = course_data_local['holes']
+                    for _, hole in holes_gdf.iterrows():
+                        hole_ref = hole.get('ref', str(hole.name + 1))
+                        try:
+                            hid = int(hole_ref)
+                        except Exception:
+                            continue
+                        if hid == int(hole_num):
+                            if hole.geometry.geom_type == "LineString":
+                                midpoint = hole.geometry.interpolate(0.5, normalized=True)
+                                return (float(midpoint.x), float(midpoint.y))
+                            if hasattr(hole.geometry, 'centroid'):
+                                c = hole.geometry.centroid
+                                return (float(c.x), float(c.y))
+                    return None
+                except Exception:
+                    return None
+
+            def _interpolate_straight_line(start: Tuple[float, float], end: Tuple[float, float], start_ts: int, duration_s: float, runner_id: str) -> None:
+                if duration_s <= 0:
+                    return
+                steps = max(1, int(round(duration_s)))
+                for s in range(steps):
+                    frac = s / float(max(steps, 1))
+                    lon = start[0] + frac * (end[0] - start[0])
+                    lat = start[1] + frac * (end[1] - start[1])
+                    runner_points.append({
+                        "id": runner_id,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "timestamp": int(round(start_ts + s)),
+                        "type": "delivery_runner",
+                    })
+
             # Build runner points per delivery stat
             try:
                 for stat in sim_result.get("delivery_stats", []) or []:
@@ -2739,10 +2780,17 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                     start_ts = int(start_ts_by_order.get(oid, max(0, delivered_ts - int(to_time))))
                     # Outbound
                     pts_to = _coords_for_nodes(to_nodes)
-                    _interpolate_points(pts_to, start_ts, to_time, runner_id)
+                    if pts_to:
+                        _interpolate_points(pts_to, start_ts, to_time, runner_id)
+                    else:
+                        # Do not synthesize runner coordinates if routing nodes are missing
+                        logger.warning("Skipping outbound runner coordinates for order %s: no routing nodes", oid)
                     # Return
                     pts_back = _coords_for_nodes(back_nodes)
-                    _interpolate_points(pts_back, delivered_ts, back_time, runner_id)
+                    if pts_back:
+                        _interpolate_points(pts_back, delivered_ts, back_time, runner_id)
+                    else:
+                        logger.warning("Skipping return runner coordinates for order %s: no routing nodes", oid)
             except Exception as e:  # noqa: BLE001
                 logger.warning("Failed to synthesize runner coordinates: %s", e)
 
@@ -3271,8 +3319,14 @@ def main() -> None:
         parser.add_argument(
             "--runner-speed",
             type=float,
-            default=6.0,
-            help="Runner speed in m/s (all modes). Config allows mph but is converted during load.",
+            default=2.68,
+            help="Runner speed in m/s. CLI overrides config.",
+        )
+        parser.add_argument(
+            "--runner-speed-mph",
+            type=float,
+            default=None,
+            help="Runner speed in mph (convenience). If provided, overrides --runner-speed and config.",
         )
         parser.add_argument("--revenue-per-order", type=float, default=25.0, help="Revenue per successful order")
         parser.add_argument("--sla-minutes", type=int, default=30, help="SLA in minutes")
@@ -3342,11 +3396,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
-
-if __name__ == "__main__":
-    main()
-
-

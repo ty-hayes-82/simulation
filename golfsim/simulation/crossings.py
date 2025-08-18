@@ -431,6 +431,7 @@ def compute_crossings_minute_indexed(
         # Simulate minute steps from tee for up to one loop
         crossed = False
         crossings_list: List[Dict[str, Any]] = []
+        last_cross_min: Optional[int] = None
 
         max_minutes = num_nodes  # one loop
         for minute_offset in range(0, max_minutes + 1):
@@ -448,6 +449,9 @@ def compute_crossings_minute_indexed(
                 or g_idx == (b_idx_fwd + 1) % num_nodes
                 or (g_idx + 1) % num_nodes == b_idx_fwd
             ):
+                # De-duplicate near-identical crossings by enforcing a small spacing (e.g., 2 minutes)
+                if last_cross_min is not None and (minute_offset - last_cross_min) < 2:
+                    continue
                 hole_num: Optional[int] = None
                 if node_holes is not None and 0 <= g_idx < len(node_holes):
                     hole_num = node_holes[g_idx]
@@ -459,11 +463,12 @@ def compute_crossings_minute_indexed(
                         "timestamp": t,
                         "node_index": int(g_idx),
                         "hole": hole_num,
-                        "k_wraps": 0,
+                        # Approximate wrap count of beverage cart since start (minutes // loop minutes)
+                        "k_wraps": int(((t - bev_t0).total_seconds() // 60) // max(1, num_nodes)),
                     }
                 )
                 crossed = True
-                break  # first crossing only
+                last_cross_min = minute_offset
 
         groups_out.append(
             {

@@ -770,13 +770,8 @@ class MultiRunnerDeliveryService:
             }
             
         except Exception as e:
-            logger.warning("Enhanced routing failed for hole %d: %s. Falling back to simple calculation.", hole_num, e)
-            # Fall back to simple calculation on any error
-            distance_m, travel_time_s = self._calculate_delivery_details(hole_num)
-            return {
-                "delivery_distance_m": distance_m,
-                "delivery_time_s": travel_time_s,
-            }
+            # Fail loudly: enhanced routing is required for delivery timing
+            raise RuntimeError(f"Enhanced routing failed for hole {hole_num}: {e}")
 
     def _get_hole_location(self, hole_num: int) -> Optional[Tuple[float, float]]:
         """Get the coordinates for a hole based on course geospatial data."""

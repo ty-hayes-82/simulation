@@ -1107,43 +1107,26 @@ def iterative_convergence_prediction(
 
     current_prediction = minute_points[delivery_minute]
 
-    # Load cart graph for accurate routing (try to load, fallback if fails)
-    cart_graph = None
-    try:
-        import pickle
-        from pathlib import Path
-
-        cart_graph_path = Path(course_dir) / "pkl" / "cart_graph.pkl"
-        if cart_graph_path.exists():
-            with open(cart_graph_path, 'rb') as f:
-                cart_graph = pickle.load(f)
-    except Exception:
-        pass  # Will use fallback distance calculations
+    # Load cart graph for accurate routing; required
+    import pickle
+    from pathlib import Path
+    cart_graph_path = Path(course_dir) / "pkl" / "cart_graph.pkl"
+    if not cart_graph_path.exists():
+        raise FileNotFoundError(
+            f"Cart graph not found at {cart_graph_path}. Build it with scripts/routing/build_cart_network_from_holes_connected.py"
+        )
+    with open(cart_graph_path, 'rb') as f:
+        cart_graph = pickle.load(f)
 
     # ITERATIVE REFINEMENT
     iteration_history = []
 
     for iteration in range(max_iterations):
-        # Calculate actual travel time to current prediction
-        if cart_graph is not None:
-            try:
-                # Use accurate cart graph routing
-                route_result = enhanced_delivery_routing(
-                    cart_graph, clubhouse_lonlat, current_prediction, runner_speed_mps
-                )
-                actual_travel_time_s = route_result["time_s"]
-            except Exception:
-                # Fallback to distance-based calculation
-                dx = (current_prediction[0] - clubhouse_lonlat[0]) * 111139
-                dy = (current_prediction[1] - clubhouse_lonlat[1]) * 111139
-                distance = math.sqrt(dx**2 + dy**2)
-                actual_travel_time_s = (distance * 1.4) / runner_speed_mps  # routing factor
-        else:
-            # Fallback distance calculation
-            dx = (current_prediction[0] - clubhouse_lonlat[0]) * 111139
-            dy = (current_prediction[1] - clubhouse_lonlat[1]) * 111139
-            distance = math.sqrt(dx**2 + dy**2)
-            actual_travel_time_s = (distance * 1.4) / runner_speed_mps
+        # Calculate actual travel time to current prediction via routing; fail if not possible
+        route_result = enhanced_delivery_routing(
+            cart_graph, clubhouse_lonlat, current_prediction, runner_speed_mps
+        )
+        actual_travel_time_s = route_result["time_s"]
 
         # Calculate when delivery will actually occur
         actual_delivery_time_s = order_time_s + prep_time_s + actual_travel_time_s
@@ -1492,14 +1475,11 @@ def run_improved_single_golfer_simulation(
             yield env.timeout(busy_delay_s)
             order_data['runner_busy_delay_s'] = busy_delay_s
 
-        # IMPROVEMENT 2: Estimate travel time and predict golfer position using enhanced routing
-        try:
-            initial_route = enhanced_delivery_routing(
-                cart_graph, optimal_start, order_location, runner_speed_mps
-            )
-            estimated_travel_time = initial_route["time_s"]
-        except Exception:
-            estimated_travel_time = 300  # 5 min fallback
+        # IMPROVEMENT 2: Estimate travel time strictly via cart-path routing (fail loudly if unavailable)
+        initial_route = enhanced_delivery_routing(
+            cart_graph, optimal_start, order_location, runner_speed_mps
+        )
+        estimated_travel_time = initial_route["time_s"]
 
         # IMPROVED: Predict optimal delivery location using iterative convergence method
         if order_hole is not None and hole_lines:

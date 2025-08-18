@@ -24,9 +24,8 @@ def nearest_node(G: nx.Graph, lon: float, lat: float):
     nearest = None
     target = Point(lon, lat)
 
-    # Iterate in deterministic order
-    for node in sorted(G.nodes()):
-        node_data = G.nodes[node]
+    # Iterate without sorting to avoid mixed-type comparison (int vs tuple)
+    for node, node_data in G.nodes(data=True):
         x = node_data.get("x")
         y = node_data.get("y")
         if x is None or y is None:

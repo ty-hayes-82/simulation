@@ -109,9 +109,12 @@ def calculate_bev_cart_metrics(
     )
     
     # Coverage metrics
+    # Unique holes tells where the cart reached at least once across the day
     holes_covered = _calculate_holes_covered(coordinates)
-    holes_covered_per_hour = holes_covered / service_hours if service_hours > 0 else 0.0
-    minutes_per_hole_per_cart = (service_hours * 60) / holes_covered if holes_covered > 0 else 0.0
+    # Actual pace: count hole transitions across the whole service window
+    holes_traversed = _calculate_hole_traversals(coordinates)
+    holes_covered_per_hour = (holes_traversed / service_hours) if service_hours > 0 else 0.0
+    minutes_per_hole_per_cart = ((service_hours * 60) / holes_traversed) if holes_traversed > 0 else 0.0
     
     # Additional metrics for batch processing
     tips_per_order = total_tips / total_orders if total_orders > 0 else 0.0
@@ -169,6 +172,39 @@ def _calculate_holes_covered(coordinates: List[Dict[str, Any]]) -> int:
             holes_covered.add(int(hole))
     
     return len(holes_covered)
+
+
+def _calculate_hole_traversals(coordinates: List[Dict[str, Any]]) -> int:
+    """Count the number of hole-to-hole transitions the cart actually made.
+
+    Robust to missing/None hole labels by skipping them. Consecutive samples on the
+    same hole are collapsed; only changes contribute to traversal count.
+
+    Returns the number of transitions (e.g., 18 traversals per full loop), which can
+    be used to derive holes/hour and minutes/hole independent of service window length.
+    """
+    if not coordinates:
+        return 0
+
+    last_hole: Optional[int] = None
+    traversals: int = 0
+    for coord in coordinates:
+        hole_val = coord.get("current_hole") or coord.get("hole")
+        try:
+            hole = int(hole_val) if hole_val is not None else None
+        except Exception:
+            hole = None
+        if hole is None:
+            # Skip unlabeled points
+            continue
+        if last_hole is None:
+            last_hole = hole
+            continue
+        if hole != last_hole:
+            traversals += 1
+            last_hole = hole
+
+    return traversals
 
 
 def _calculate_customer_order_counts(sales_data: List[Dict[str, Any]]) -> Dict[int, int]:

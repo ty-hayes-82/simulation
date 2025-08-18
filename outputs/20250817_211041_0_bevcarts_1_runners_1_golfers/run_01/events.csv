@@ -1,0 +1,20 @@
+simulation_id,ID,timestamp,timestamp_s,action,node_id,hole,ttl_amt,type,order_id,runner_id,cart_id,group_id,latitude,longitude,status,details
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,07:00,0,service_closed,,,,delivery_runner,,runner_1,,,,,,runner_1 waiting 180 minutes until opening
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,golf_group_1,09:00:00,7200,tee_off,,1,,golfer_group,,,,1,,,,
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,order_001,09:00:00,7200,order_placed,,1,,order,001,,,1,,,processed,
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,10:00,10800,service_opened,,,,delivery_runner,,runner_1,,,,,,runner_1 started shift
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,10:00,10800,order_received,,,,delivery_runner,001,,,,,,,New order from Group 1 on Hole 1
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,10:00,10800,order_assigned,,,,delivery_runner,001,runner_1,,,,,,Assigned Order 001 to runner_1
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,10:00,10800,prep_start,,,,delivery_runner,001,runner_1,,,,,,runner_1 started prep for Order 001 (Hole 1)
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,10:10,11400,prep_complete,,,,delivery_runner,001,runner_1,,,,,,runner_1 completed prep for Order 001
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,10:10,11400,delivery_start,,,,delivery_runner,001,runner_1,,,,,,"runner_1 departing to Hole 1 (473m, 1.5 min)"
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,10:11,11488,delivery_complete,,,,delivery_runner,001,runner_1,,,,,,runner_1 delivered Order 001 to Hole 1 (Total completion: 11.5 min)
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,order_002,12:00:00,18000,order_placed,,16,,order,002,,,1,,,processed,
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,12:00,18000,order_received,,,,delivery_runner,002,,,,,,,New order from Group 1 on Hole 16
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,12:00,18000,order_assigned,,,,delivery_runner,002,runner_1,,,,,,Assigned Order 002 to runner_1
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,12:00,18000,returning,,,,delivery_runner,002,runner_1,,,,,,runner_1 returning to clubhouse from hole_1 (2.5 min)
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,12:02,18149,arrived_clubhouse,,,,delivery_runner,002,runner_1,,,,,,runner_1 arrived at clubhouse to prepare Order 002
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,12:02,18149,prep_start,,,,delivery_runner,002,runner_1,,,,,,runner_1 started prep for Order 002 (Hole 16)
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,12:12,18749,prep_complete,,,,delivery_runner,002,runner_1,,,,,,runner_1 completed prep for Order 002
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,12:12,18749,delivery_start,,,,delivery_runner,002,runner_1,,,,,,"runner_1 departing to Hole 16 (907m, 2.8 min)"
+20250817_211041_0_bevcarts_1_runners_1_golfers_run_01,runner_1,12:15,18918,delivery_complete,,,,delivery_runner,002,runner_1,,,,,,runner_1 delivered Order 002 to Hole 16 (Total completion: 15.3 min)
