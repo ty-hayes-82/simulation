@@ -313,6 +313,8 @@ export default function AnimationView() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [originalMinTimestamp, setOriginalMinTimestamp] = useState<number>(0);
   const [animationDuration, setAnimationDuration] = useState<number>(0);
+  const [availableSimulations, setAvailableSimulations] = useState<SimulationInfo[]>([]);
+  const [selectedSimulationId, setSelectedSimulationId] = useState<string | null>(null);
   // Animation timing is integrated incrementally to allow live speed changes without jumps
   const [animationStartTime, setAnimationStartTime] = useState<number | null>(null); // retained for backward-compat but not used
   const [sourcesReady, setSourcesReady] = useState<boolean>(false);
@@ -351,20 +353,38 @@ export default function AnimationView() {
     loadConfig();
   }, []);
 
+  // Load manifest and expose simulations for selection
   useEffect(() => {
-    const loadSimulations = async () => {
+    const loadManifest = async () => {
       try {
         const cacheBuster = `?t=${Date.now()}`;
         const response = await fetch(`${config.data.coordinatesDir}/manifest.json${cacheBuster}`);
-        let csvPath = config.data.csvFileName;
         if (response.ok) {
           const manifest: SimulationManifest = await response.json();
-          const defaultId = manifest.defaultSimulation || manifest.simulations[0]?.id;
-          const selected = manifest.simulations.find(s => s.id === defaultId);
-          if (selected) csvPath = `${config.data.coordinatesDir}/${selected.filename}`;
+          setAvailableSimulations(manifest.simulations || []);
+          const defaultId = manifest.defaultSimulation || manifest.simulations[0]?.id || null;
+          setSelectedSimulationId(defaultId);
+        } else {
+          // Fallback: use single CSV path from config
+          setAvailableSimulations([{ id: 'single', name: 'Single CSV', filename: config.data.csvFileName.replace(`${config.data.coordinatesDir}/`, ''), description: '' } as any]);
+          setSelectedSimulationId('single');
         }
-        const csvPathWithCache = `${csvPath}?t=${Date.now()}`;
-        const csvResp = await fetch(csvPathWithCache);
+      } catch {
+        // ignore
+      }
+    };
+    loadManifest();
+  }, [config]);
+
+  // Load coordinates for the selected simulation
+  useEffect(() => {
+    const loadSelectedSimulation = async () => {
+      if (!selectedSimulationId) return;
+      try {
+        const selected = availableSimulations.find(s => s.id === selectedSimulationId);
+        const filename = selected ? selected.filename : config.data.csvFileName.replace(`${config.data.coordinatesDir}/`, '');
+        const csvPath = `${config.data.coordinatesDir}/${filename}`;
+        const csvResp = await fetch(`${csvPath}?t=${Date.now()}`);
         const csvText = await csvResp.text();
         Papa.parse(csvText, {
           header: true,
@@ -391,22 +411,18 @@ export default function AnimationView() {
             const duration = (maxTimestamp - minTimestamp) / 60; // minutes
             setOriginalMinTimestamp(minTimestamp);
             setAnimationDuration(duration);
-                         const trackersArray: EntityData[] = Object.entries(trackerGroups).map(([trackerId, coordinates]) => {
-               const sortedCoords = coordinates
-                 .sort((a, b) => a.timestamp - b.timestamp)
-                 .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) / 60 })); // minutes
-               
-               // For golfers, use every 3rd point to make easing more visible
-               let filteredCoords = sortedCoords;
-               if (sortedCoords[0]?.type === 'golfer') {
-                 filteredCoords = sortedCoords.filter((_, index) => index % 3 === 0);
-               }
-               
-               const entityType = filteredCoords[0]?.type || 'golfer';
-               return { name: trackerId, coordinates: filteredCoords, type: entityType, color: config.entityTypes[entityType]?.color || config.golferColors[0] };
-             });
+            const trackersArray: EntityData[] = Object.entries(trackerGroups).map(([trackerId, coordinates]) => {
+              const sortedCoords = coordinates
+                .sort((a, b) => a.timestamp - b.timestamp)
+                .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) / 60 })); // minutes
+              let filteredCoords = sortedCoords;
+              if (sortedCoords[0]?.type === 'golfer') {
+                filteredCoords = sortedCoords.filter((_, index) => index % 3 === 0);
+              }
+              const entityType = filteredCoords[0]?.type || 'golfer';
+              return { name: trackerId, coordinates: filteredCoords, type: entityType, color: config.entityTypes[entityType]?.color || config.golferColors[0] };
+            });
             setTrackersData(trackersArray);
-            // No smoothing precompute needed
             const bounds = calculateBounds(trackersArray);
             setPathBounds(bounds);
             setIsLoading(false);
@@ -418,8 +434,8 @@ export default function AnimationView() {
         setIsLoading(false);
       }
     };
-    loadSimulations();
-  }, [config]);
+    loadSelectedSimulation();
+  }, [selectedSimulationId, availableSimulations, config]);
 
   useEffect(() => {
     if (!styleReady || isLoading || trackersData.length === 0 || sourcesInitializedRef.current) return;
@@ -516,6 +532,20 @@ export default function AnimationView() {
     <div style={{ width: '100vw', height: '100vh' }}>
       {/* Easing Control Panel */}
       <div style={{ position: 'absolute', top: 56, left: 10, zIndex: 11, background: 'rgba(255,255,255,0.95)', padding: '8px 10px', borderRadius: 6, boxShadow: '0 2px 4px rgba(0,0,0,0.2)', minWidth: 220 }}>
+        {/* Simulation selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <label htmlFor="sim-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Simulation</label>
+          <select
+            id="sim-select"
+            value={selectedSimulationId || ''}
+            onChange={(e) => setSelectedSimulationId(e.target.value)}
+            style={{ width: 280, padding: '4px', borderRadius: 4, border: '1px solid #ccc', fontSize: 12 }}
+          >
+            {availableSimulations.map((sim) => (
+              <option key={sim.id} value={sim.id}>{sim.name}</option>
+            ))}
+          </select>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <label htmlFor="easing-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Easing</label>
           <select

@@ -46,6 +46,8 @@ class SimulationConfig:
     delivery_total_orders: int = 10
     # New: orders that are not taken out for delivery within N minutes should fail
     minutes_for_delivery_order_failure: int = 60
+    # Optional: defer initial order arrivals past service open to avoid unrealistic spikes
+    delivery_opening_ramp_minutes: int = 0
 
     @staticmethod
     def from_dict(data: Dict) -> "SimulationConfig":
@@ -115,6 +117,7 @@ class SimulationConfig:
             bev_cart_order_probability_per_9_holes=float(data.get("bev_cart_order_probability_per_9_holes", 0.35)),
             delivery_total_orders=int(data.get("delivery_total_orders", 10)),
             minutes_for_delivery_order_failure=int(data.get("minutes_for_delivery_order_failure", 60)),
+            delivery_opening_ramp_minutes=int(data.get("delivery_opening_ramp_minutes", 0)),
         )
         return cfg
 

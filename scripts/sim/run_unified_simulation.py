@@ -1190,6 +1190,8 @@ def _generate_delivery_orders_with_pass_boost(
     rng_seed: Optional[int] = None,
     course_dir: Optional[str] = None,
     boost_per_nine: float = 0.10,
+    service_open_s: Optional[int] = None,
+    opening_ramp_minutes: int = 0,
 ) -> List[DeliveryOrder]:
     """Generate delivery orders with a +10% per-nine boost when bev-cart passes occur.
 
@@ -1256,6 +1258,14 @@ def _generate_delivery_orders_with_pass_boost(
             end_node = int(round(hole_front * nodes_per_hole)) - 1
             node_idx = start_node if end_node < start_node else random.randint(start_node, end_node)
             order_time_front_s = tee_time_s + int(node_idx) * 60
+            # Enforce service open time if provided
+            if isinstance(service_open_s, (int, float)) and order_time_front_s < int(service_open_s):
+                if int(opening_ramp_minutes) > 0:
+                    import random as _r
+                    ramp_end = int(service_open_s) + int(opening_ramp_minutes) * 60
+                    order_time_front_s = int(_r.uniform(int(service_open_s), ramp_end - 1))
+                else:
+                    order_time_front_s = int(service_open_s)
             orders.append(
                 DeliveryOrder(
                     order_id=None,
@@ -1273,6 +1283,14 @@ def _generate_delivery_orders_with_pass_boost(
             end_node = int(round(hole_back * nodes_per_hole)) - 1
             node_idx = start_node if end_node < start_node else random.randint(start_node, end_node)
             order_time_back_s = tee_time_s + int(node_idx) * 60
+            # Enforce service open time if provided
+            if isinstance(service_open_s, (int, float)) and order_time_back_s < int(service_open_s):
+                if int(opening_ramp_minutes) > 0:
+                    import random as _r
+                    ramp_end = int(service_open_s) + int(opening_ramp_minutes) * 60
+                    order_time_back_s = int(_r.uniform(int(service_open_s), ramp_end - 1))
+                else:
+                    order_time_back_s = int(service_open_s)
             orders.append(
                 DeliveryOrder(
                     order_id=None,
@@ -1321,6 +1339,7 @@ def _generate_delivery_orders_by_hour_distribution(
     total_orders: int,
     service_open_hhmm: str,
     service_close_hhmm: str,
+    opening_ramp_minutes: int = 0,
     course_dir: Optional[str] = None,
     rng_seed: Optional[int] = None,
 ) -> List[DeliveryOrder]:
@@ -1396,6 +1415,10 @@ def _generate_delivery_orders_by_hour_distribution(
             continue
         for _ in range(int(cnt)):
             t = int(random.uniform(start_s, end_s - 1))
+            # Apply opening ramp: clamp any orders earlier than open + ramp to a uniformly
+            # distributed time within the ramp window to avoid a spike at exact opening.
+            if t < (open_s + int(opening_ramp_minutes) * 60):
+                t = int(random.uniform(open_s, min(open_s + int(opening_ramp_minutes) * 60, end_s - 1)))
             elig = group_active_at(t)
             if elig:
                 g = random.choice(elig)
@@ -1831,8 +1854,7 @@ def _run_bev_with_groups_once(
     baseline_s = int(first_tee_s)
     # Keep absolute timestamps but drop any points prior to first tee time
     tracks_clipped = _clip_streams_at_baseline(tracks, baseline_s)
-    if not getattr(args, "no_coordinates", False):
-        write_unified_coordinates_csv(tracks_clipped, run_dir / "coordinates.csv")
+    write_unified_coordinates_csv(tracks_clipped, run_dir / "coordinates.csv")
 
     # Visualization for cart
     if bev_points and not no_visualization:
@@ -2438,8 +2460,9 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
         # Decide order generation mode
         hourly_dist = getattr(sim_config, "delivery_hourly_distribution", None)
         use_hourly = isinstance(hourly_dist, dict) and len(hourly_dist) > 0
-        # Calculate base probability from total orders and number of groups (fallback mode)
-        delivery_order_probability = _calculate_delivery_order_probability_per_9_holes(sim_config.delivery_total_orders, len(groups))
+        # Total orders override (for hourly mode) and base probability for legacy mode
+        requested_total_orders = int(args.delivery_total_orders) if getattr(args, "delivery_total_orders", None) is not None else int(getattr(sim_config, "delivery_total_orders", 0))
+        delivery_order_probability = _calculate_delivery_order_probability_per_9_holes(requested_total_orders, len(groups))
 
         # Compute crossings to detect bev-cart passes for boost
         crossings = None
@@ -2505,9 +2528,10 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 orders_all = _generate_delivery_orders_by_hour_distribution(
                     groups=groups,
                     hourly_distribution=hourly_dist,
-                    total_orders=int(getattr(sim_config, "delivery_total_orders", 0)),
+                    total_orders=int(requested_total_orders),
                     service_open_hhmm=str(sim_config.delivery_service_hours.get("open_time", "10:00")),
                     service_close_hhmm=str(sim_config.delivery_service_hours.get("close_time", "19:00")),
+                    opening_ramp_minutes=int(getattr(sim_config, "delivery_opening_ramp_minutes", 0)),
                     course_dir=args.course_dir,
                     rng_seed=args.random_seed,
                 )
@@ -2519,6 +2543,8 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                     crossings_data=crossings,
                     rng_seed=args.random_seed,
                     course_dir=args.course_dir,
+                    service_open_s=int(service.service_open_s),
+                    opening_ramp_minutes=int(getattr(sim_config, "delivery_opening_ramp_minutes", 0)),
                 )
             # Enforce: orders cannot be placed before service opens
             # If clamped forward to open time, recompute the hole based on node index progression (1 min per node)
@@ -2532,7 +2558,14 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
             for o in orders_all:
                 try:
                     if int(getattr(o, "order_time_s", 0)) < int(service.service_open_s):
-                        o.order_time_s = int(service.service_open_s)
+                        # If configured, spread early orders across an opening ramp window
+                        opening_ramp_min = int(getattr(sim_config, "delivery_opening_ramp_minutes", 0))
+                        if opening_ramp_min > 0:
+                            import random as _r
+                            ramp_end_s = int(service.service_open_s) + opening_ramp_min * 60
+                            o.order_time_s = int(_r.uniform(int(service.service_open_s), ramp_end_s - 1))
+                        else:
+                            o.order_time_s = int(service.service_open_s)
                     # Recompute hole based on node index at this timestamp
                     gid = int(getattr(o, "golfer_group_id", 0) or 0)
                     g = group_by_id.get(gid)
@@ -2657,11 +2690,16 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                     if getattr(args, "bev_order_prob", None) is not None
                     else float(getattr(sim_config, "bev_cart_order_probability_per_9_holes", 0.35))
                 )
+                # Determine bev-cart price: prefer course config unless CLI explicitly overrides
+                cfg_bev_price = float(getattr(sim_config, "bev_cart_avg_order_usd", 12.0))
+                arg_bev_price = float(getattr(args, "avg_order_usd", cfg_bev_price))
+                # If CLI equals its default (12.0) but config differs, use config
+                effective_bev_price = cfg_bev_price if (abs(arg_bev_price - 12.0) < 1e-9 and abs(cfg_bev_price - 12.0) > 1e-9) else arg_bev_price
                 bev_sales_result = simulate_beverage_cart_sales(
                     course_dir=args.course_dir,
                     groups=groups,
                     pass_order_probability=float(bev_order_probability),
-                    price_per_order=float(getattr(args, "avg_order_usd", 12.0)),
+                    price_per_order=float(effective_bev_price),
                     minutes_between_holes=2.0,
                     minutes_per_hole=None,
                     golfer_points=golfer_points,
@@ -2938,12 +2976,17 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
 
         # Generate metrics using integrated approach (both bev cart and delivery if present)
         try:
+            # Determine revenue per order for delivery metrics: prefer config unless CLI explicitly set differently
+            cfg_revenue_per_order = float(getattr(sim_config, 'delivery_avg_order_usd', 25.0))
+            arg_revenue_per_order = float(getattr(args, 'revenue_per_order', cfg_revenue_per_order))
+            effective_revenue_per_order = cfg_revenue_per_order if (arg_revenue_per_order == 25.0 and abs(cfg_revenue_per_order - 25.0) > 1e-6) else arg_revenue_per_order
+
             bev_metrics, delivery_metrics = generate_and_save_metrics(
                 simulation_result=sim_result,
                 output_dir=run_path,
                 run_suffix=f"_run_{run_idx:02d}",
                 simulation_id=f"delivery_dynamic_{run_idx:02d}",
-                revenue_per_order=float(args.revenue_per_order),
+                revenue_per_order=float(effective_revenue_per_order),
                 sla_minutes=int(args.sla_minutes),
                 runner_id="runner_1" if int(args.num_runners) == 1 else f"{int(args.num_runners)}_runners",
                 service_hours=float(args.service_hours),
@@ -3139,6 +3182,8 @@ def _run_mode_optimize_runners(args: argparse.Namespace) -> None:
                 base_prob_per_9=float(delivery_order_probability),
                 crossings_data=crossings_opt,
                 rng_seed=(args.random_seed or 0) + run_idx,
+                service_open_s=int(service.service_open_s),
+                opening_ramp_minutes=int(getattr(sim_config, "delivery_opening_ramp_minutes", 0)),
             )
             # Restrict order placement to service open window
             orders = [
@@ -3429,7 +3474,7 @@ def main() -> None:
             default=None,
             help="Runner speed in mph (convenience). If provided, overrides --runner-speed and config.",
         )
-        parser.add_argument("--revenue-per-order", type=float, default=25.0, help="Revenue per successful order")
+        parser.add_argument("--revenue-per-order", type=float, default=25.0, help="Revenue per successful order (defaults to course config if different)")
         parser.add_argument("--sla-minutes", type=int, default=30, help="SLA in minutes")
         parser.add_argument("--service-hours", type=float, default=10.0, help="Active service hours for runner (metrics scaling)")
         parser.add_argument("--num-runners", type=int, default=1, help="Number of delivery runners (1 for single-runner, >1 enables multi-runner shared queue)")
@@ -3457,6 +3502,8 @@ def main() -> None:
         parser.add_argument("--block-up-to-hole", type=int, default=0, help="Block delivery orders up to this hole number (0 = no blocking)")
         parser.add_argument("--block-holes-10-12", action="store_true", help="Block delivery orders for holes 10, 11, and 12")
         parser.add_argument("--skip-executive-summary", action="store_true", help="Skip generation of executive summary to speed up execution")
+        # Allow overriding total number of delivery orders for hourly-distribution mode
+        parser.add_argument("--delivery-total-orders", type=int, default=None, help="Override total number of delivery orders (defaults to course config)")
 
 
         args = parser.parse_args()

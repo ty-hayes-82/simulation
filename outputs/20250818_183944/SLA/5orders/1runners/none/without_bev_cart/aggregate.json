@@ -1,0 +1,70 @@
+{
+  "optimization_type": "SLA",
+  "order_count": 5,
+  "runner_count": 1,
+  "blocking": "none",
+  "bev_cart": "without_bev_cart",
+  "delivery": {
+    "runs": 1,
+    "per_run": [
+      {
+        "on_time_rate": 0.6,
+        "failed_rate": 0.0,
+        "queue_wait_avg": 16.260416666666668,
+        "delivery_cycle_time_avg": 28.16206821140604,
+        "delivery_cycle_time_p90": 48.84985480499141,
+        "revenue_per_round": 27.77777777777778,
+        "runner_utilization_driving_pct": 34.53411580194104,
+        "total_orders": 10,
+        "successful_orders": 10
+      }
+    ],
+    "metrics": {
+      "on_time_rate": {
+        "mean": 0.6,
+        "min": 0.6,
+        "max": 0.6
+      },
+      "failed_rate": {
+        "mean": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "queue_wait_avg": {
+        "mean": 16.260416666666668,
+        "min": 16.260416666666668,
+        "max": 16.260416666666668
+      },
+      "delivery_cycle_time_avg": {
+        "mean": 28.16206821140604,
+        "min": 28.16206821140604,
+        "max": 28.16206821140604
+      },
+      "delivery_cycle_time_p90": {
+        "mean": 48.84985480499141,
+        "min": 48.84985480499141,
+        "max": 48.84985480499141
+      },
+      "revenue_per_round": {
+        "mean": 27.77777777777778,
+        "min": 27.77777777777778,
+        "max": 27.77777777777778
+      },
+      "runner_utilization_driving_pct": {
+        "mean": 34.53411580194104,
+        "min": 34.53411580194104,
+        "max": 34.53411580194104
+      },
+      "total_orders": {
+        "mean": 10.0,
+        "min": 10.0,
+        "max": 10.0
+      },
+      "successful_orders": {
+        "mean": 10.0,
+        "min": 10.0,
+        "max": 10.0
+      }
+    }
+  }
+}
