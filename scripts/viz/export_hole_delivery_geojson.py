@@ -120,7 +120,7 @@ def main() -> None:
     with args.output.open("w", encoding="utf-8") as f:
         json.dump(feature_collection, f)
 
-    print(f"✓ Exported hole delivery GeoJSON to: {args.output}")
+    print(f"Exported hole delivery GeoJSON to: {args.output}")
 
 
 if __name__ == "__main__":

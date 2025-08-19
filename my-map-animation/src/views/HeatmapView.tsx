@@ -19,8 +19,9 @@ interface AppConfig {
 }
 
 const DEFAULT_CONFIG: AppConfig = {
-  animation: { defaultMapStyle: 'light' },
+  animation: { defaultMapStyle: 'outdoors' },
   mapStyles: {
+    'outdoors': { name: 'Golf Course Terrain Pro', url: 'mapbox://styles/mapbox/outdoors-v12', description: 'Perfect for golf - vivid hillshading shows elevation changes, natural features like water hazards, and soft contrasting colors highlight course terrain' },
     'light': { name: 'Scorecard View', url: 'mapbox://styles/mapbox/light-v11', description: 'Clean, minimal style perfect for course layout overview' },
     'satellite-streets': { name: 'Satellite with Streets', url: 'mapbox://styles/mapbox/satellite-streets-v12', description: 'Satellite imagery with roads and labels' }
   }
@@ -28,7 +29,7 @@ const DEFAULT_CONFIG: AppConfig = {
 
 export default function HeatmapView() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
-  const [currentMapStyle, setCurrentMapStyle] = useState<string>('light');
+  const [currentMapStyle, setCurrentMapStyle] = useState<string>('outdoors');
   const [holesGeojson, setHolesGeojson] = useState<any | null>(null);
   const [holesMinTime, setHolesMinTime] = useState<number>(0);
   const [holesMaxTime, setHolesMaxTime] = useState<number>(1);
@@ -40,8 +41,8 @@ export default function HeatmapView() {
         const resp = await fetch(`/config.json?t=${Date.now()}`);
         const cfg: AppConfig = await resp.json();
         setConfig(cfg);
-        // Prefer Scorecard (light) style by default for Heatmap view if available
-        const preferred = (cfg.mapStyles && cfg.mapStyles['light']) ? 'light' : cfg.animation.defaultMapStyle;
+        // Prefer Golf Course Terrain Pro (outdoors) style by default for Heatmap view if available
+        const preferred = (cfg.mapStyles && cfg.mapStyles['outdoors']) ? 'outdoors' : cfg.animation.defaultMapStyle;
         setCurrentMapStyle(preferred);
       } catch {}
     };
@@ -139,22 +140,61 @@ export default function HeatmapView() {
         )}
         {holesGeojson && (
           <Layer
-            id="holes-labels"
+            id="holes-circle-border"
             source="holes"
             type="symbol"
+            filter={['>', ['get', 'count'], 0] as any}
             layout={{
-              'text-field': [
-                'concat',
-                'H ', ['to-string', ['get', 'hole']], '\n',
-                ['to-string', ['/', ['round', ['*', ['get', 'avg_time'], 10]], 10]], ' min (',
-                ['to-string', ['get', 'count']], ')'
-              ] as any,
-              'text-size': 12,
+              'text-field': '●',
+              'text-size': 36,
               'text-allow-overlap': true,
               'text-justify': 'center',
               'text-anchor': 'center'
             }}
-            paint={{ 'text-color': '#111111', 'text-halo-color': '#ffffff', 'text-halo-width': 1.2 }}
+            paint={{ 
+              'text-color': '#666666'
+            }}
+          />
+        )}
+        {holesGeojson && (
+          <Layer
+            id="holes-circles"
+            source="holes"
+            type="symbol"
+            filter={['>', ['get', 'count'], 0] as any}
+            layout={{
+              'text-field': '●',
+              'text-size': 32,
+              'text-allow-overlap': true,
+              'text-justify': 'center',
+              'text-anchor': 'center'
+            }}
+            paint={{ 
+              'text-color': '#ffffff'
+            }}
+          />
+        )}
+        {holesGeojson && (
+          <Layer
+            id="holes-labels"
+            source="holes"
+            type="symbol"
+            filter={['>', ['get', 'count'], 0] as any}
+            layout={{
+              'text-field': ['to-string', ['get', 'count']] as any,
+              'text-size': 14,
+              'text-allow-overlap': true,
+              'text-justify': 'center',
+              'text-anchor': 'center'
+            }}
+            paint={{ 
+              'text-color': [
+                'case',
+                ['>', ['get', 'avg_time'], (holesMinTime + holesMaxTime) / 2],
+                '#ffffff',  // White text for darker red backgrounds
+                '#333333'   // Dark text for lighter/white backgrounds
+              ] as any
+            }}
           />
         )}
         {hoverInfo && (

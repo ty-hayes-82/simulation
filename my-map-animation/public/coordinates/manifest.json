@@ -2,16 +2,10 @@
   "simulations": [
     {
       "id": "coordinates",
-      "name": "Local: GPS Coordinates",
+      "name": "Delivery-Runner Simulation",
       "filename": "coordinates.csv",
-      "description": "250 coordinate points"
-    },
-    {
-      "id": "sim_01_coordinates",
-      "name": "Other Simulations: sim_01 | GPS Coordinates",
-      "filename": "sim_01_coordinates.csv",
-      "description": "333 coordinate points"
+      "description": "Delivery runner simulation (1 runner)"
     }
   ],
-  "defaultSimulation": "sim_01_coordinates"
+  "defaultSimulation": "coordinates"
 }

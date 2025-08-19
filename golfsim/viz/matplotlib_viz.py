@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import pickle
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -574,6 +574,158 @@ def render_beverage_cart_plot(
             fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
         plt.close(fig)
 
+
+def render_bev_cart_crossings(
+    course_dir: str | Path,
+    crossings_data: Optional[Dict[str, Any]],
+    sales_result: Optional[Dict[str, Any]],
+    save_path: str | Path,
+    bev_points: Optional[List[Dict]] = None,
+    title: str = "Beverage Cart Passes",
+) -> None:
+    """Render a map of beverage cart/golfer crossings with sale markers.
+
+    - Green dot: crossing where a sale occurred
+    - Red dot: crossing with no sale
+
+    Uses node_index from crossings_data to locate each crossing on
+    holes_connected.geojson. Optionally overlays the bev-cart path.
+    """
+    with timed_visualization("bev_cart_crossings_plot"):
+        course_dir = Path(course_dir)
+        save_path = Path(save_path)
+
+        course_data = load_course_geospatial_data(course_dir)
+
+        # Prepare nodes from holes_connected to place crossing points
+        nodes_lonlat: List[Tuple[float, float]] = []
+        try:
+            # Import locally to avoid viz<->simulation circular deps at module import time
+            from ..simulation.crossings import load_nodes_geojson_with_holes  # type: ignore
+            nodes_path = course_dir / "geojson" / "generated" / "holes_connected.geojson"
+            if nodes_path.exists():
+                nodes, _node_holes = load_nodes_geojson_with_holes(str(nodes_path))
+                # load_nodes_geojson_with_holes returns (lat, lon) tuples
+                nodes_lonlat = [(lon, lat) for (lat, lon) in nodes]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to load holes_connected nodes for crossings viz: %s", e)
+
+        with timed_visualization("create_matplotlib_figure"):
+            fig, ax = plt.subplots(figsize=(10, 8))
+
+            # Course for context
+            plot_course_features(ax, course_data, include_holes=True, include_greens=True)
+
+            # Optional: overlay beverage cart path for context
+            if bev_points:
+                try:
+                    lons = [p.get("longitude") for p in bev_points if p.get("longitude") is not None]
+                    lats = [p.get("latitude") for p in bev_points if p.get("latitude") is not None]
+                    if len(lons) > 1:
+                        ax.plot(lons, lats, color="purple", linewidth=2, alpha=0.5, label="Beverage Cart", zorder=4)
+                except Exception:
+                    pass
+
+            # Build sale lookup keyed by (group_id, hole_num, t_quant)
+            sale_keys = set()
+            bev_start_base_s: Optional[int] = None
+            if isinstance(sales_result, dict):
+                try:
+                    meta = sales_result.get("metadata", {}) or {}
+                    bev_start_base_s = int(meta.get("service_start_s")) if meta.get("service_start_s") is not None else None
+                except Exception:
+                    bev_start_base_s = None
+                try:
+                    for s in sales_result.get("sales", []) or []:
+                        gid = int(s.get("group_id")) if s.get("group_id") is not None else None
+                        hole = int(s.get("hole_num")) if s.get("hole_num") is not None else None
+                        ts7 = int(s.get("timestamp_s")) if s.get("timestamp_s") is not None else None
+                        if gid is None or hole is None or ts7 is None:
+                            continue
+                        if bev_start_base_s is not None:
+                            t_norm = ts7 - bev_start_base_s
+                        else:
+                            t_norm = ts7  # best-effort
+                        # Quantize to nearest minute to allow for minor discrepancies
+                        t_q = int(round(float(t_norm) / 60.0) * 60)
+                        sale_keys.add((gid, hole, t_q))
+                except Exception:
+                    pass
+
+            # Plot crossings as red/green dots
+            num_sales = 0
+            num_cross = 0
+            if isinstance(crossings_data, dict):
+                try:
+                    groups = crossings_data.get("groups", []) or []
+                    # Attempt to infer bev start baseline from crossings if not present in sales metadata
+                    if bev_start_base_s is None and crossings_data.get("bev_start") is not None:
+                        try:
+                            t = crossings_data.get("bev_start")
+                            # seconds since 7am baseline
+                            bev_start_base_s = (t.hour - 7) * 3600 + t.minute * 60 + t.second  # type: ignore[attr-defined]
+                        except Exception:
+                            bev_start_base_s = None
+
+                    for g in groups:
+                        gid = int(g.get("group", 0) or 0)
+                        for cr in g.get("crossings", []) or []:
+                            idx = cr.get("node_index")
+                            t_cross = cr.get("t_cross_s")
+                            hole = cr.get("hole")
+                            if idx is None or not isinstance(idx, int) or idx < 0:
+                                continue
+                            # Get lon/lat for node index
+                            if nodes_lonlat and 0 <= idx < len(nodes_lonlat):
+                                lon, lat = nodes_lonlat[idx]
+                            else:
+                                # If nodes are unavailable, skip plotting this crossing
+                                continue
+
+                            num_cross += 1
+                            sold_here = False
+                            try:
+                                if bev_start_base_s is not None and isinstance(t_cross, (int, float)):
+                                    t_q = int(round(float(t_cross) / 60.0) * 60)
+                                    sold_here = (gid, int(hole) if hole is not None else -1, t_q) in sale_keys
+                            except Exception:
+                                sold_here = False
+
+                            if sold_here:
+                                num_sales += 1
+                                ax.scatter([lon], [lat], c="#2ca02c", s=30, marker='o', label=None, zorder=5)
+                            else:
+                                ax.scatter([lon], [lat], c="#d62728", s=30, marker='o', label=None, zorder=5)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Failed plotting crossings: %s", e)
+
+            # Legend handles
+            from matplotlib.lines import Line2D
+            legend_elems = [
+                Line2D([0], [0], marker='o', color='w', label='Sale', markerfacecolor='#2ca02c', markersize=8),
+                Line2D([0], [0], marker='o', color='w', label='No sale', markerfacecolor='#d62728', markersize=8),
+            ]
+            ax.legend(handles=legend_elems, loc='upper right')
+
+            # Bounds and styling
+            lon_min, lon_max, lat_min, lat_max = calculate_course_bounds(course_data)
+            ax.set_xlim(lon_min, lon_max)
+            ax.set_ylim(lat_min, lat_max)
+            ax.set_xlabel('Longitude')
+            ax.set_ylabel('Latitude')
+            ax.xaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=False))
+            ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=False))
+            ax.ticklabel_format(style='plain', axis='both', useOffset=False)
+            ax.set_aspect('equal', adjustable='box')
+            if title:
+                ax.set_title(f"{title} — Crossings: {num_cross}, Sales: {num_sales}")
+            ax.grid(True, alpha=0.2)
+
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.tight_layout()
+        with timed_file_io("save_png", str(save_path.name)):
+            fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
 
 def _find_nearest_cart_node(cart_graph, target_coords):
     """Find the nearest node in the cart graph to the target coordinates."""

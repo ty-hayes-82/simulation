@@ -393,50 +393,62 @@ def _generate_standardized_output_name(
     tee_scenario: str = None,
     hole: int = None,
 ) -> str:
-    """Generate standardized output directory name in format:
-    {timestamp}_{#}bevcarts_{#}runners_{teetime_scenario if applicable}
-    
-    Note: Golfer counts are excluded when tee_scenario is specified to avoid redundancy.
+    """Generate standardized, mode-specific output directory names.
+
+    Examples:
+      - bev-carts:         {timestamp}_bevcart_only_{carts}_carts
+      - bev-with-golfers:  {timestamp}_bev_with_golfers_{carts}_carts_{groups}_groups[_scenario]
+      - delivery-runner:   {timestamp}_delivery_runner_{runners}_runners[_scenario][_groups_groups]
+      - golfers-only:      {timestamp}_golfers_only_{groups}_groups
+      - single-golfer:     {timestamp}_single_golfer_[hole{N}|randomhole]
     """
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Build the standardized name
-    parts = [ts]
-    
-    # Add beverage carts count
-    if num_bev_carts > 0:
-        parts.append(f"{num_bev_carts}_bevcarts")
-    else:
-        parts.append("0_bevcarts")
-    
-    # Add runners count
-    if num_runners > 0:
-        parts.append(f"{num_runners}_runners")
-    else:
-        parts.append("0_runners")
-    
-    # Add golfers count only if no tee scenario is specified
-    # (tee scenarios already imply golfer presence, so we don't need to count them)
-    if tee_scenario and tee_scenario.lower() not in {"none", "manual"}:
-        # Skip golfer count when using tee scenario
-        pass
-    else:
-        # Add golfers count only for manual/random scenarios
-        if num_golfers > 0:
-            parts.append(f"{num_golfers}_golfers")
+    mode_key = str(mode or "").lower()
+
+    # bev-cart only
+    if mode_key == "bev-carts":
+        parts = [ts, "bevcart_only"]
+        if num_bev_carts > 0:
+            parts.append(f"{int(num_bev_carts)}_carts")
+        return "_".join(parts)
+
+    # bev with golfers
+    if mode_key == "bev-with-golfers":
+        parts = [ts, "bev_with_golfers", f"{max(1, int(num_bev_carts))}_carts", f"{int(num_golfers)}_groups"]
+        if tee_scenario and tee_scenario.lower() not in {"none", "manual"}:
+            parts.append(tee_scenario)
+        return "_".join(parts)
+
+    # delivery runner
+    if mode_key == "delivery-runner":
+        parts = [ts, "delivery_runner", f"{int(num_runners)}_runners"]
+        if tee_scenario and tee_scenario.lower() not in {"none", "manual"}:
+            parts.append(tee_scenario)
+        if int(num_golfers) > 0:
+            parts.append(f"{int(num_golfers)}_groups")
+        return "_".join(parts)
+
+    # golfers only
+    if mode_key == "golfers-only":
+        parts = [ts, "golfers_only", f"{int(num_golfers)}_groups"]
+        return "_".join(parts)
+
+    # single golfer
+    if mode_key == "single-golfer":
+        parts = [ts, "single_golfer"]
+        if hole is not None:
+            parts.append(f"hole{hole}")
         else:
-            parts.append("0_golfers")
-    
-    # Add tee scenario if applicable
+            parts.append("randomhole")
+        return "_".join(parts)
+
+    # Fallback generic
+    parts = [ts, f"{int(num_bev_carts)}_bevcarts", f"{int(num_runners)}_runners", f"{int(num_golfers)}_golfers"]
     if tee_scenario and tee_scenario.lower() not in {"none", "manual"}:
         parts.append(tee_scenario)
-    
-    # Add hole info for single-golfer mode
     if hole is not None:
         parts.append(f"hole{hole}")
-    elif mode == "single-golfer":
-        parts.append("randomhole")
-    
     return "_".join(parts)
 
 
@@ -621,12 +633,18 @@ def _write_order_logs_csv(sim_result: Dict[str, Any], save_path: Path) -> None:
                     except Exception:
                         placed_ts_str = ""
 
-            # Convert queue length to 1-based position if present
+            # Determine queue value: prefer explicit orders_in_queue; else infer from queue_delay
             q_raw = placed.get("orders_in_queue")
+            queue_pos = 0
             try:
-                queue_pos = (int(q_raw) + 1) if q_raw is not None else None
+                if q_raw is not None:
+                    queue_pos = max(0, int(q_raw))
+                else:
+                    # Fallback: if there was a positive queue delay for this order, mark as 1
+                    qd = float(stats.get("queue_delay_s", 0) or 0)
+                    queue_pos = 1 if qd > 0 else 0
             except Exception:
-                queue_pos = None
+                queue_pos = 0
 
             row = {
                 "order_id": oid,
@@ -921,6 +939,183 @@ def _write_runner_action_log(activity_logs: List[Dict[str, Any]], save_path: Pat
         for seg in segments:
             writer.writerow({k: seg.get(k) for k in fieldnames})
 
+
+def _generate_simulation_metrics_json(
+    sim_result: Dict[str, Any], 
+    save_path: Path, 
+    service_hours: float = 10.0,
+    sla_minutes: int = 30,
+    revenue_per_order: float = 25.0,
+    avg_bev_order_value: float = 12.0
+) -> None:
+    """Generate standardized metrics JSON file for map animation display.
+    
+    Creates a unified metrics file containing delivery and bev-cart metrics
+    that can be consumed by the React map animation app.
+    """
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize metrics structure
+    metrics = {
+        "deliveryMetrics": None,
+        "bevCartMetrics": None,
+        "hasRunners": False,
+        "hasBevCart": False
+    }
+    
+    # Extract delivery metrics if runners are present
+    delivery_stats = sim_result.get("delivery_stats", []) or []
+    activity_log = sim_result.get("activity_log", []) or []
+    orders = sim_result.get("orders", []) or []
+    failed_orders = sim_result.get("failed_orders", []) or []
+    
+    if delivery_stats or activity_log or orders:
+        metrics["hasRunners"] = True
+        
+        # Calculate delivery metrics
+        total_orders = len(orders)
+        successful_deliveries = len(delivery_stats)
+        failed_count = len(failed_orders)
+        
+        # Calculate average order time and on-time percentage
+        if delivery_stats:
+            completion_times = [float(d.get("total_completion_time_s", 0)) for d in delivery_stats]
+            avg_order_time_s = sum(completion_times) / len(completion_times) if completion_times else 0
+            avg_order_time_min = avg_order_time_s / 60.0
+            
+            # On-time percentage (within SLA)
+            sla_seconds = sla_minutes * 60
+            on_time_count = sum(1 for t in completion_times if t <= sla_seconds)
+            on_time_rate = (on_time_count / len(completion_times)) * 100.0 if completion_times else 0.0
+            
+            # Calculate P90 delivery cycle time
+            completion_times_sorted = sorted(completion_times)
+            p90_index = int(0.9 * len(completion_times_sorted)) if completion_times_sorted else 0
+            delivery_cycle_p90 = completion_times_sorted[p90_index] / 60.0 if completion_times_sorted else 0.0
+        else:
+            avg_order_time_min = 0.0
+            on_time_rate = 0.0
+            delivery_cycle_p90 = 0.0
+        
+        # Calculate queue wait time consistent with delivery_runner_metrics
+        # 1) Prefer explicit queue_delay_s from delivery_stats
+        queue_delays_min: List[float] = []  # type: ignore[name-defined]
+        try:
+            from typing import List as _List  # to satisfy static analyzers
+            for stat in delivery_stats:
+                qd = float(stat.get("queue_delay_s", 0) or 0)
+                if qd > 0:
+                    queue_delays_min.append(qd / 60.0)
+        except Exception:
+            queue_delays_min = []
+        if queue_delays_min:
+            avg_queue_wait = sum(queue_delays_min) / max(len(queue_delays_min), 1)
+        else:
+            # 2) Fallback: estimate from any 'queue_status' activity log entries
+            queue_depths = []
+            for entry in activity_log:
+                if 'queue_status' in str(entry.get('activity_type', '')):
+                    desc = str(entry.get('description', ''))
+                    if 'orders waiting' in desc:
+                        try:
+                            depth = int(desc.split()[0])
+                            queue_depths.append(depth)
+                        except Exception:
+                            continue
+            avg_depth = (sum(queue_depths) / len(queue_depths)) if queue_depths else 0.0
+            avg_queue_wait = avg_depth * 15.0  # minutes per order in queue
+        
+        # Calculate orders and revenue per runner-hour using actual active hours when available
+        try:
+            # Prefer accurate active hours from delivery metrics module when possible
+            from golfsim.analysis.delivery_runner_metrics import _calculate_actual_active_hours as _calc_active_hours  # local import
+            active_hours = float(_calc_active_hours(activity_log, float(service_hours)))
+        except Exception:
+            # Fallback to approximate from activity log (service_opened -> last activity), capped by service_hours
+            try:
+                service_start = None
+                last_ts = None
+                for a in activity_log:
+                    ts = int(a.get("timestamp_s", 0) or 0)
+                    if a.get("activity_type", "") == "service_opened" and service_start is None:
+                        service_start = ts
+                    if last_ts is None or ts > last_ts:
+                        last_ts = ts
+                if service_start is not None and last_ts is not None and last_ts >= service_start:
+                    active_hours = min((last_ts - service_start) / 3600.0, float(service_hours))
+                else:
+                    active_hours = float(service_hours)
+            except Exception:
+                active_hours = float(service_hours)
+
+        active_hours = max(active_hours, 0.1)  # avoid divide-by-zero
+        orders_per_runner_hour = successful_deliveries / active_hours
+        total_revenue = successful_deliveries * revenue_per_order
+        revenue_per_runner_hour = total_revenue / active_hours
+        
+        metrics["deliveryMetrics"] = {
+            "orderCount": total_orders,
+            "revenue": total_revenue,
+            "avgOrderTime": round(avg_order_time_min, 1),
+            "onTimeRate": round(on_time_rate, 1),
+            "failedOrderCount": failed_count,
+            "queueWaitAvg": round(avg_queue_wait, 1),
+            "deliveryCycleTimeP90": round(delivery_cycle_p90, 1),
+            "ordersPerRunnerHour": round(orders_per_runner_hour, 2),
+            "revenuePerRunnerHour": round(revenue_per_runner_hour, 2)
+        }
+    
+    # Extract bev-cart metrics if present (only for true bev-cart simulations)
+    bev_points = sim_result.get("bev_points", []) or []
+    sales_result = sim_result.get("sales_result", {}) or {}
+    sim_type = str(sim_result.get("simulation_type", ""))
+    
+    # Treat bev cart as present only when simulation type is bev-related or there are actual sales
+    sales_list = sales_result.get("sales") if isinstance(sales_result, dict) else None
+    has_real_bev_sim = ("bev" in sim_type) or (isinstance(sales_list, list) and len(sales_list) > 0)
+
+    if has_real_bev_sim:
+        metrics["hasBevCart"] = True
+        
+        sales = sales_result.get("sales", []) or []
+        total_bev_orders = len(sales)
+        total_bev_revenue = float(sales_result.get("revenue", 0.0))
+        
+        # Calculate average order value
+        avg_order_value = (total_bev_revenue / total_bev_orders) if total_bev_orders > 0 else 0.0
+        
+        # Calculate revenue per bevcart-hour
+        service_hours_actual = max(service_hours, 1.0)
+        revenue_per_bevcart_hour = total_bev_revenue / service_hours_actual
+        
+        # Try to get groups passed from crossings data if available
+        total_groups_passed = 0
+        crossings = sim_result.get("crossings")
+        if isinstance(crossings, dict) and crossings.get("groups"):
+            # Count groups that had at least one crossing
+            for group_data in crossings["groups"]:
+                if group_data.get("crossings"):
+                    total_groups_passed += 1
+        
+        # Estimate delivery orders placed (orders that resulted in sales)
+        total_delivery_orders_placed = total_bev_orders  # For bev cart, orders and sales are the same
+        
+        metrics["bevCartMetrics"] = {
+            "totalOrders": total_bev_orders,
+            "totalGroupsPassed": total_groups_passed,
+            "avgOrderValue": round(avg_order_value, 2),
+            "totalDeliveryOrdersPlaced": total_delivery_orders_placed,
+            "revenuePerBevcartHour": round(revenue_per_bevcart_hour, 2)
+        }
+    
+    # Write metrics JSON file
+    try:
+        with save_path.open("w", encoding="utf-8") as f:
+            json.dump(metrics, f, indent=2)
+        logger.debug("Generated simulation metrics JSON: %s", save_path)
+    except Exception as e:
+        logger.warning("Failed to write simulation metrics JSON: %s", e)
+
 def _events_from_activity_log(
     activity_log: List[Dict[str, Any]],
     simulation_id: str,
@@ -1142,6 +1337,215 @@ def _events_from_orders_list(orders: List[Dict[str, Any]] | None, simulation_id:
     return events
 
 
+def _copy_to_public_coordinates(
+    run_dir: Path, 
+    simulation_id: str, 
+    mode: str, 
+    golfer_group_count: int,
+    description: str = None
+) -> None:
+    """Copy simulation files to public/coordinates/ directory for single golfer group simulations.
+    
+    This enables the React map animation to automatically display new simulation results.
+    """
+    # Only copy for single golfer group simulations
+    if golfer_group_count != 1:
+        return
+        
+    try:
+        # Define target directories - use React app's public folder
+        react_public_dir = Path("my-map-animation") / "public"
+        public_coords_dir = react_public_dir / "coordinates"
+        public_coords_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Also copy to simulation public for compatibility
+        sim_public_coords_dir = Path("public") / "coordinates"
+        sim_public_coords_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Source files to copy
+        source_coords = run_dir / "coordinates.csv"
+        source_metrics = run_dir / "simulation_metrics.json"
+        
+        # Target filenames for React app
+        react_coords = public_coords_dir / "coordinates.csv"
+        react_metrics = public_coords_dir / "simulation_metrics.json"
+        
+        # Target filenames for simulation public (compatibility)
+        sim_coords = sim_public_coords_dir / "coordinates.csv"
+        sim_metrics = sim_public_coords_dir / "simulation_metrics.json"
+        
+        # Copy coordinates file to both locations
+        if source_coords.exists():
+            import shutil
+            shutil.copy2(source_coords, react_coords)
+            shutil.copy2(source_coords, sim_coords)
+            logger.info("Copied coordinates to React app: %s", react_coords)
+            logger.info("Copied coordinates to public directory: %s", sim_coords)
+        else:
+            logger.warning("Source coordinates file not found: %s", source_coords)
+            return
+            
+        # Copy metrics file to both locations
+        if source_metrics.exists():
+            import shutil
+            shutil.copy2(source_metrics, react_metrics)
+            shutil.copy2(source_metrics, sim_metrics)
+            logger.info("Copied metrics to React app: %s", react_metrics)
+            logger.info("Copied metrics to public directory: %s", sim_metrics)
+            
+        # Update manifest.json for React app
+        react_manifest_path = public_coords_dir / "manifest.json"
+        # Also update manifest for simulation public (compatibility)  
+        sim_manifest_path = sim_public_coords_dir / "manifest.json"
+        
+        # Count coordinate points for description
+        coord_count = 0
+        try:
+            with source_coords.open("r", encoding="utf-8") as f:
+                coord_count = sum(1 for line in f) - 1  # Subtract header
+        except Exception:
+            coord_count = 0
+            
+        # Create or update manifest
+        manifest_data = {
+            "simulations": [{
+                "id": "coordinates",
+                "name": f"{mode.title()} Simulation",
+                "filename": "coordinates.csv",
+                "description": description or f"{coord_count} coordinate points"
+            }],
+            "defaultSimulation": "coordinates"
+        }
+        
+        # Write manifest to both locations
+        for manifest_path in [react_manifest_path, sim_manifest_path]:
+            try:
+                with manifest_path.open("w", encoding="utf-8") as f:
+                    json.dump(manifest_data, f, indent=2)
+                logger.info("Updated manifest: %s", manifest_path)
+            except Exception as e:
+                logger.warning("Failed to update manifest %s: %s", manifest_path, e)
+            
+        # Auto-export and copy hole delivery times GeoJSON for React heatmap
+        try:
+            logger.info("Auto-exporting hole delivery times GeoJSON for React heatmap...")
+            
+            # Run the export script to generate updated GeoJSON
+            import subprocess
+            export_script = Path("scripts") / "viz" / "export_hole_delivery_geojson.py"
+            
+            if export_script.exists():
+                # Use the run directory as the output directory for the export script
+                result = subprocess.run(
+                    [sys.executable, str(export_script), "--output-dir", str(run_dir)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60  # 1 minute timeout
+                )
+                
+                if result.returncode == 0:
+                    logger.info("Successfully generated updated hole_delivery_times.geojson")
+                    
+                    # The export script already writes to my-map-animation/public/hole_delivery_times.geojson
+                    # Copy it to simulation public for compatibility/backup
+                    geojson_source = react_public_dir / "hole_delivery_times.geojson"
+                    geojson_target = Path("public") / "hole_delivery_times.geojson"
+                    
+                    if geojson_source.exists():
+                        import shutil
+                        # Ensure target directory exists
+                        geojson_target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(geojson_source, geojson_target)
+                        logger.info("Copied hole_delivery_times.geojson to simulation public: %s", geojson_target)
+                        logger.info("React app can now read updated heatmap data from: %s", geojson_source)
+                    else:
+                        logger.warning("Generated GeoJSON file not found: %s", geojson_source)
+                else:
+                    logger.warning("Failed to export hole delivery GeoJSON: %s", result.stderr.strip())
+            else:
+                logger.warning("Export script not found: %s", export_script)
+                
+        except Exception as e:
+            logger.warning("Failed to auto-export hole delivery GeoJSON: %s", e)
+        
+        logger.info("Single golfer group simulation files copied to React app public folder for immediate access")
+        
+    except Exception as e:
+        logger.warning("Failed to copy simulation to public coordinates: %s", e)
+
+
+def _copy_public_outputs_to_subfolder(subfolder: str = "bevcart_only") -> None:
+    """Duplicate current public outputs into a subfolder under public/.
+
+    Copies:
+      - public/coordinates/{coordinates.csv, simulation_metrics.json, manifest.json}
+      - public/hole_delivery_times.geojson
+
+    into:
+      - public/<subfolder>/coordinates/
+      - public/<subfolder>/hole_delivery_times.geojson
+    """
+    try:
+        from pathlib import Path as _Path
+        import shutil as _shutil
+
+        base_public = _Path("public")
+        target_root = base_public / subfolder
+
+        coords_src_dir = base_public / "coordinates"
+        coords_dst_dir = target_root / "coordinates"
+        coords_dst_dir.mkdir(parents=True, exist_ok=True)
+
+        for name in ["coordinates.csv", "simulation_metrics.json", "manifest.json"]:
+            src = coords_src_dir / name
+            if src.exists():
+                _shutil.copy2(src, coords_dst_dir / name)
+
+        geo_src = base_public / "hole_delivery_times.geojson"
+        if geo_src.exists():
+            target_root.mkdir(parents=True, exist_ok=True)
+            _shutil.copy2(geo_src, target_root / "hole_delivery_times.geojson")
+
+        logger.info("Copied public outputs into subfolder: %s", target_root)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to copy public outputs to subfolder %s: %s", subfolder, e)
+
+
+def _copy_bevcart_outputs_to_subfolder(run_dir: Path, output_root: Path, subfolder: str = "bevcart_only") -> None:
+    """Copy typical beverage-cart run artifacts into a subfolder of the output root.
+
+    Copies from run_dir:
+      - bev_cart_coordinates.csv
+      - bev_cart_route.png
+      - events.csv
+      - stats.json
+      - bev_cart_metrics*.md (all carts)
+    into output_root/<subfolder>/
+    """
+    try:
+        import shutil as _shutil
+        target_dir = Path(output_root) / subfolder
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        candidates = [
+            "bev_cart_coordinates.csv",
+            "bev_cart_route.png",
+            "events.csv",
+            "stats.json",
+        ]
+        for name in candidates:
+            src = Path(run_dir) / name
+            if src.exists():
+                _shutil.copy2(src, target_dir / name)
+
+        # Copy all bev cart metrics markdown files
+        for md in Path(run_dir).glob("bev_cart_metrics*.md"):
+            _shutil.copy2(md, target_dir / md.name)
+
+        logger.info("Copied bev-cart outputs into subfolder: %s", target_dir)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to copy bev-cart outputs to subfolder %s: %s", subfolder, e)
+
 def _generate_executive_summary(output_root: Path) -> None:
     """Generate executive summary using Google Gemini for the simulation results."""
     try:
@@ -1250,56 +1654,46 @@ def _generate_delivery_orders_with_pass_boost(
         p_front = clamp01(base_prob_per_9 + (boost_per_nine if front_pass else 0.0))
         p_back = clamp01(base_prob_per_9 + (boost_per_nine if back_pass else 0.0))
 
-        # Front nine draw
-        if random.random() < p_front:
-            hole_front = int(random.randint(1, 9))
-            # Map hole to a representative node index within that hole's node range
-            start_node = int(round((hole_front - 1) * nodes_per_hole))
-            end_node = int(round(hole_front * nodes_per_hole)) - 1
-            node_idx = start_node if end_node < start_node else random.randint(start_node, end_node)
-            order_time_front_s = tee_time_s + int(node_idx) * 60
-            # Enforce service open time if provided
-            if isinstance(service_open_s, (int, float)) and order_time_front_s < int(service_open_s):
-                if int(opening_ramp_minutes) > 0:
-                    import random as _r
-                    ramp_end = int(service_open_s) + int(opening_ramp_minutes) * 60
-                    order_time_front_s = int(_r.uniform(int(service_open_s), ramp_end - 1))
-                else:
-                    order_time_front_s = int(service_open_s)
-            orders.append(
-                DeliveryOrder(
-                    order_id=None,
-                    golfer_group_id=group_id,
-                    golfer_id=f"G{group_id}",
-                    order_time_s=order_time_front_s,
-                    hole_num=hole_front,
+        # Front nine draw - only consider holes during service hours
+        hole_front = int(random.randint(1, 9))
+        # Map hole to a representative node index within that hole's node range
+        start_node = int(round((hole_front - 1) * nodes_per_hole))
+        end_node = int(round(hole_front * nodes_per_hole)) - 1
+        node_idx = start_node if end_node < start_node else random.randint(start_node, end_node)
+        order_time_front_s = tee_time_s + int(node_idx) * 60
+        
+        # Only place order if it would occur during service hours
+        if not isinstance(service_open_s, (int, float)) or order_time_front_s >= int(service_open_s):
+            if random.random() < p_front:
+                orders.append(
+                    DeliveryOrder(
+                        order_id=None,
+                        golfer_group_id=group_id,
+                        golfer_id=f"G{group_id}",
+                        order_time_s=order_time_front_s,
+                        hole_num=hole_front,
+                    )
                 )
-            )
 
-        # Back nine draw
-        if random.random() < p_back:
-            hole_back = int(random.randint(10, 18))
-            start_node = int(round((hole_back - 1) * nodes_per_hole))
-            end_node = int(round(hole_back * nodes_per_hole)) - 1
-            node_idx = start_node if end_node < start_node else random.randint(start_node, end_node)
-            order_time_back_s = tee_time_s + int(node_idx) * 60
-            # Enforce service open time if provided
-            if isinstance(service_open_s, (int, float)) and order_time_back_s < int(service_open_s):
-                if int(opening_ramp_minutes) > 0:
-                    import random as _r
-                    ramp_end = int(service_open_s) + int(opening_ramp_minutes) * 60
-                    order_time_back_s = int(_r.uniform(int(service_open_s), ramp_end - 1))
-                else:
-                    order_time_back_s = int(service_open_s)
-            orders.append(
-                DeliveryOrder(
-                    order_id=None,
-                    golfer_group_id=group_id,
-                    golfer_id=f"G{group_id}",
-                    order_time_s=order_time_back_s,
-                    hole_num=hole_back,
+        # Back nine draw - only consider holes during service hours
+        hole_back = int(random.randint(10, 18))
+        start_node = int(round((hole_back - 1) * nodes_per_hole))
+        end_node = int(round(hole_back * nodes_per_hole)) - 1
+        node_idx = start_node if end_node < start_node else random.randint(start_node, end_node)
+        order_time_back_s = tee_time_s + int(node_idx) * 60
+        
+        # Only place order if it would occur during service hours
+        if not isinstance(service_open_s, (int, float)) or order_time_back_s >= int(service_open_s):
+            if random.random() < p_back:
+                orders.append(
+                    DeliveryOrder(
+                        order_id=None,
+                        golfer_group_id=group_id,
+                        golfer_id=f"G{group_id}",
+                        order_time_s=order_time_back_s,
+                        hole_num=hole_back,
+                    )
                 )
-            )
 
     # Assign sequential IDs in chronological order
     orders.sort(key=lambda o: float(getattr(o, "order_time_s", 0.0)))
@@ -1859,6 +2253,21 @@ def _run_bev_with_groups_once(
     # Visualization for cart
     if bev_points and not no_visualization:
         render_beverage_cart_plot(bev_points, course_dir=course_dir, save_path=run_dir / "bev_cart_route.png")
+        # Crossings pass/sale scatter viz (if crossings and sales available)
+        try:
+            from golfsim.viz.matplotlib_viz import render_bev_cart_crossings  # local import
+            if crossings is not None:
+                crossings_viz_path = run_dir / "bev_cart_passes.png"
+                render_bev_cart_crossings(
+                    course_dir=course_dir,
+                    crossings_data=crossings,
+                    sales_result=sales_result,
+                    bev_points=bev_points,
+                    save_path=crossings_viz_path,
+                    title="Beverage Cart Passes (Green = Sale, Red = No Sale)",
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to create bev-cart crossings viz: %s", e)
     
     # Skip heatmap for bev-with-golfers mode to avoid empty visual noise
 
@@ -1908,6 +2317,25 @@ def _run_bev_with_groups_once(
             _write_event_log_csv(events, run_dir / "events.csv")
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to write events for bev-with-golfers run %d: %s", run_idx, e)
+
+    # Generate simulation metrics JSON for map animation
+    try:
+        sim_result_for_metrics: Dict[str, Any] = {
+            "bev_points": bev_points,
+            "sales_result": sales_result,
+            "golfer_points": golfer_points,
+            "simulation_type": "beverage_cart_with_golfers",
+            "crossings": crossings,
+        }
+        
+        _generate_simulation_metrics_json(
+            sim_result_for_metrics,
+            run_dir / "simulation_metrics.json",
+            service_hours=10.0,  # Standard bev cart service hours
+            avg_bev_order_value=float(avg_order_value)
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to write simulation metrics JSON: %s", e)
 
     # Metrics for the single cart using integrated approach
     try:
@@ -2051,6 +2479,36 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
                     except Exception as e:  # noqa: BLE001
                         logger.warning("Failed to write runner action log: %s", e)
 
+                # Generate simulation metrics JSON for map animation
+                with timed_file_io("write_simulation_metrics_json"):
+                    try:
+                        # Convert single-golfer results to simulation format for metrics extraction
+                        sim_result_for_metrics = {
+                            "delivery_stats": [{
+                                "order_id": "order_1",
+                                "total_completion_time_s": results.get("total_service_time_s", 0),
+                                "delivery_time_s": results.get("trip_to_golfer", {}).get("time_s", 0),
+                                "return_time_s": results.get("trip_back", {}).get("time_s", 0),
+                            }] if results.get("delivered_s") else [],
+                            "orders": [{
+                                "order_id": "order_1",
+                                "hole_num": results.get("order_hole"),
+                                "order_time_s": results.get("order_time_s", 0),
+                                "status": "delivered" if results.get("delivered_s") else "pending",
+                            }],
+                            "failed_orders": [] if results.get("delivered_s") else [{"order_id": "order_1", "reason": "simulation_error"}],
+                            "activity_log": results.get("activity_log", []),
+                        }
+                        _generate_simulation_metrics_json(
+                            sim_result_for_metrics,
+                            run_dir / "simulation_metrics.json",
+                            service_hours=float(getattr(args, "service_hours", 10.0)),
+                            sla_minutes=int(getattr(args, "sla_minutes", 30)),
+                            revenue_per_order=float(getattr(args, "revenue_per_order", 25.0))
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("Failed to write simulation metrics JSON: %s", e)
+
                 # Visualization
                 if not bool(getattr(args, "no_visualization", False)):
                     with timed_visualization("single_golfer_visualization"):
@@ -2153,6 +2611,21 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
                             logger.warning("Visualization step failed: %s", e)
 
                 # Removed per-run stats markdown output (stats_run_XX.md) as not valuable
+
+                # Copy to public coordinates for React viewer (single golfer = 1 group)
+                try:
+                    simulation_id = _build_simulation_id(output_root, i)
+                    hole_info = f" (Hole {args.hole})" if getattr(args, "hole", None) else ""
+                    description = f"Single golfer delivery simulation{hole_info}"
+                    _copy_to_public_coordinates(
+                        run_dir=run_dir,
+                        simulation_id=simulation_id,
+                        mode="single-golfer",
+                        golfer_group_count=1,
+                        description=description
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Failed to copy to public coordinates: %s", e)
 
                 # Collect for summary
                 all_runs.append(results)
@@ -2315,6 +2788,20 @@ def _run_mode_bev_with_golfers(args: argparse.Namespace) -> None:
         sim_result["bev_points"] = svc2.coordinates
         run_dir = output_root / f"sim_{i:02d}"
         save_phase3_output_files(sim_result, run_dir, include_stats=False)
+
+        # Copy to public coordinates for React viewer if single golfer group
+        try:
+            simulation_id = _build_simulation_id(output_root, i)
+            description = f"Beverage cart with golfers simulation ({len(groups)} group{'s' if len(groups) != 1 else ''})"
+            _copy_to_public_coordinates(
+                run_dir=run_dir,
+                simulation_id=simulation_id,
+                mode="bev-with-golfers",
+                golfer_group_count=len(groups),
+                description=description
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to copy to public coordinates: %s", e)
 
         phase3_summary_rows.append({
             "run_idx": i,
@@ -2974,6 +3461,28 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to write runner action log: %s", e)
 
+        # Generate simulation metrics JSON for map animation
+        try:
+            # Get effective revenue per order and service hours for metrics calculation
+            cfg_revenue_per_order = float(getattr(sim_config, 'delivery_avg_order_usd', 25.0))
+            arg_revenue_per_order = float(getattr(args, 'revenue_per_order', cfg_revenue_per_order))
+            effective_revenue_per_order = cfg_revenue_per_order if (arg_revenue_per_order == 25.0 and abs(cfg_revenue_per_order - 25.0) > 1e-6) else arg_revenue_per_order
+            
+            # Pass crossings data if available for bev-cart metrics
+            if 'crossings' in locals() and crossings:
+                sim_result["crossings"] = crossings
+            
+            _generate_simulation_metrics_json(
+                sim_result,
+                run_path / "simulation_metrics.json",
+                service_hours=float(args.service_hours),
+                sla_minutes=int(args.sla_minutes),
+                revenue_per_order=effective_revenue_per_order,
+                avg_bev_order_value=float(getattr(args, "avg_order_usd", 12.0))
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to write simulation metrics JSON: %s", e)
+
         # Generate metrics using integrated approach (both bev cart and delivery if present)
         try:
             # Determine revenue per order for delivery metrics: prefer config unless CLI explicitly set differently
@@ -3049,6 +3558,21 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
             logger.warning("Failed to write events for delivery-runner run %d: %s", run_idx, e)
 
         # Removed per-run stats markdown output (stats_run_XX.md) as not valuable
+
+        # Copy to public coordinates for React viewer if single golfer group
+        try:
+            simulation_id = _build_simulation_id(output_dir, run_idx)
+            runner_count = int(args.num_runners)
+            description = f"Delivery runner simulation ({runner_count} runner{'s' if runner_count != 1 else ''})"
+            _copy_to_public_coordinates(
+                run_dir=run_path,
+                simulation_id=simulation_id,
+                mode="delivery-runner",
+                golfer_group_count=len(groups),
+                description=description
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to copy to public coordinates: %s", e)
 
         all_runs.append({
             "run_idx": run_idx,
@@ -3422,14 +3946,7 @@ def main() -> None:
             description="Unified simulation runner for beverage carts and delivery runner",
         )
 
-        # Top-level mode selector
-        parser.add_argument(
-            "--mode",
-            type=str,
-            choices=["bev-carts", "bev-with-golfers", "golfers-only", "delivery-runner", "single-golfer", "optimize-runners", "simple-nodes"],
-            default="bev-carts",
-            help="Simulation mode",
-        )
+        # Mode is now inferred automatically from --num-carts and --num-runners (mutually exclusive)
 
         # Common
         parser.add_argument("--course-dir", default="courses/pinetree_country_club", help="Course directory")
@@ -3454,7 +3971,7 @@ def main() -> None:
         )
 
         # Beverage cart params
-        parser.add_argument("--num-carts", type=int, default=1, help="Number of carts for bev-carts mode")
+        parser.add_argument("--num-carts", type=int, default=0, help="Number of beverage carts to simulate (mutually exclusive with --num-runners)")
         parser.add_argument("--order-prob", type=float, default=0.4, help="[DEPRECATED] Use bev_cart_order_probability_per_9_holes in simulation_config.json")
         parser.add_argument("--avg-order-usd", type=float, default=12.0, help="Average order value in USD for bev-with-golfers")
         parser.add_argument("--random-seed", type=int, default=None, help="Optional RNG seed for bev-with-golfers runs and crossings")
@@ -3477,7 +3994,7 @@ def main() -> None:
         parser.add_argument("--revenue-per-order", type=float, default=25.0, help="Revenue per successful order (defaults to course config if different)")
         parser.add_argument("--sla-minutes", type=int, default=30, help="SLA in minutes")
         parser.add_argument("--service-hours", type=float, default=10.0, help="Active service hours for runner (metrics scaling)")
-        parser.add_argument("--num-runners", type=int, default=1, help="Number of delivery runners (1 for single-runner, >1 enables multi-runner shared queue)")
+        parser.add_argument("--num-runners", type=int, default=0, help="Number of delivery runners (mutually exclusive with --num-carts)")
         parser.add_argument("--no-bev-cart", action="store_true", help="[Deprecated] Use --with-bev-cart to enable. When set, forces bev-cart OFF even if --with-bev-cart provided")
         parser.add_argument("--with-bev-cart", action="store_true", help="Explicitly include a beverage cart in delivery-runner mode (enables bev-pass boost, bev GPS, and bev metrics)")
         parser.add_argument("--include-delivery-maps", action="store_true", help="Include delivery route maps (both individual and overall)")
@@ -3504,12 +4021,34 @@ def main() -> None:
         parser.add_argument("--skip-executive-summary", action="store_true", help="Skip generation of executive summary to speed up execution")
         # Allow overriding total number of delivery orders for hourly-distribution mode
         parser.add_argument("--delivery-total-orders", type=int, default=None, help="Override total number of delivery orders (defaults to course config)")
+        # Bev-cart-only shadow run and public duplication
+        parser.add_argument(
+            "--also-bevcart-only",
+            action="store_true",
+            help=(
+                "After the main run, execute a separate bev-cart-only simulation (1 cart, 0 runners, 0 golfers) "
+                "and duplicate public outputs into public/bevcart_only"
+            ),
+        )
 
 
         args = parser.parse_args()
         init_logging(args.log_level)
 
-    logger.info("Unified simulation runner starting. Mode: %s", args.mode)
+        # Determine mode from cart/runner counts
+        mode_str = None
+        carts = int(getattr(args, "num_carts", 0) or 0)
+        runners = int(getattr(args, "num_runners", 0) or 0)
+        if carts > 0 and runners > 0:
+            raise SystemExit("Mutually exclusive: specify either --num-carts > 0 (beverage cart) or --num-runners > 0 (delivery), not both.")
+        if carts > 0:
+            mode_str = "bev-with-golfers"
+        elif runners > 0:
+            mode_str = "delivery-runner"
+        else:
+            raise SystemExit("Nothing to simulate: set --num-carts > 0 for beverage cart or --num-runners > 0 for delivery runner.")
+
+    logger.info("Unified simulation runner starting. Mode: %s", mode_str)
     logger.info("Course: %s", args.course_dir)
     logger.info("Runs: %d", args.num_runs)
 
@@ -3517,27 +4056,65 @@ def main() -> None:
     if getattr(args, "regenerate_travel_times", False):
         _clear_cached_travel_times(args.course_dir)
 
-    if args.mode == "bev-carts":
-        _run_mode_bev_carts(args)
-    elif args.mode == "bev-with-golfers":
+    if mode_str == "bev-with-golfers":
         if int(args.num_carts) != 1:
             logger.warning("bev-with-golfers uses a single cart; forcing --num-carts=1")
         _run_mode_bev_with_golfers(args)
-    elif args.mode == "golfers-only":
-        _run_mode_golfers_only(args)
-    elif args.mode == "delivery-runner":
+        # Optional: run bev-cart-only shadow and duplicate public artifacts
+        if getattr(args, "also_bevcart_only", False):
+            try:
+                logger.info("Running additional bev-cart-only simulation (1 cart, 0 runners, 0 golfers) per --also-bevcart-only")
+                # Execute a small, single-run bev-cart-only to refresh public artifacts for cart-only
+                shadow_args = argparse.Namespace(**vars(args))
+                setattr(shadow_args, "num_carts", 1)
+                setattr(shadow_args, "num_runners", 0)
+                setattr(shadow_args, "groups_count", 0)
+                setattr(shadow_args, "num_runs", int(getattr(args, "num_runs", 1)))
+                # Capture output root before running to know where artifacts land
+                default_name = _generate_standardized_output_name(
+                    mode="bev-carts",
+                    num_bev_carts=1,
+                    num_runners=0,
+                    num_golfers=0,
+                    tee_scenario=None,
+                )
+                shadow_output_root = Path(getattr(shadow_args, "output_dir", None) or (Path("outputs") / default_name))
+                _run_mode_bev_carts(shadow_args)
+                # Copy bev-cart artifacts from sim_01 to subfolder inside that output root
+                _copy_bevcart_outputs_to_subfolder(shadow_output_root / "sim_01", shadow_output_root, "bevcart_only")
+                _copy_public_outputs_to_subfolder("bevcart_only")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Bev-cart-only shadow run failed: %s", e)
+    elif mode_str == "delivery-runner":
+        # Enforce mutual exclusivity even if flags suggest otherwise
+        if getattr(args, "with_bev_cart", False):
+            logger.warning("Ignoring --with-bev-cart because beverage carts and delivery staff are mutually exclusive in auto mode")
         _run_mode_delivery_runner(args)
-    elif args.mode == "single-golfer":
-        _run_mode_single_golfer(args)
-    elif args.mode == "optimize-runners":
-        _run_mode_optimize_runners(args)
-    elif args.mode == "simple-nodes":
-        _run_mode_simple_nodes(args)
-    else:
-        raise SystemExit(f"Unknown mode: {args.mode}")
+        # Optional: run bev-cart-only shadow and duplicate public artifacts
+        if getattr(args, "also_bevcart_only", False):
+            try:
+                logger.info("Running additional bev-cart-only simulation (1 cart, 0 runners, 0 golfers) per --also-bevcart-only")
+                shadow_args = argparse.Namespace(**vars(args))
+                setattr(shadow_args, "num_carts", 1)
+                setattr(shadow_args, "num_runners", 0)
+                setattr(shadow_args, "groups_count", 0)
+                setattr(shadow_args, "num_runs", int(getattr(args, "num_runs", 1)))
+                default_name = _generate_standardized_output_name(
+                    mode="bev-carts",
+                    num_bev_carts=1,
+                    num_runners=0,
+                    num_golfers=0,
+                    tee_scenario=None,
+                )
+                shadow_output_root = Path(getattr(shadow_args, "output_dir", None) or (Path("outputs") / default_name))
+                _run_mode_bev_carts(shadow_args)
+                _copy_bevcart_outputs_to_subfolder(shadow_output_root / "sim_01", shadow_output_root, "bevcart_only")
+                _copy_public_outputs_to_subfolder("bevcart_only")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Bev-cart-only shadow run failed: %s", e)
     
     # Log comprehensive performance summary
-    log_performance_summary(f"Simulation Performance Summary - {args.mode.upper()} Mode")
+    log_performance_summary(f"Simulation Performance Summary - {mode_str.upper()} Mode")
     
     # Clear visualization caches to free memory
     with timed_operation("cleanup_caches"):

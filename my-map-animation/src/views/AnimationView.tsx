@@ -44,16 +44,26 @@ interface EntityType {
   description: string;
 }
 
-interface SimulationInfo {
-  id: string;
-  name: string;
-  filename: string;
-  description: string;
+// Removed SimulationInfo and SimulationManifest interfaces - no longer needed
+
+interface DeliveryMetrics {
+  orderCount: number;
+  revenue: number;
+  avgOrderTime: number;
+  onTimeRate: number;
+  failedOrderCount: number;
+  queueWaitAvg: number;
+  deliveryCycleTimeP90: number;
+  ordersPerRunnerHour: number;
+  revenuePerRunnerHour: number;
 }
 
-interface SimulationManifest {
-  simulations: SimulationInfo[];
-  defaultSimulation: string;
+interface BevCartMetrics {
+  totalOrders: number;
+  totalGroupsPassed: number;
+  avgOrderValue: number;
+  totalDeliveryOrdersPlaced: number;
+  revenuePerBevcartHour: number;
 }
 
 interface AppConfig {
@@ -128,6 +138,15 @@ function timestampToTimeOfDay(timestamp: number, startingHour: number = 0): stri
   const minutes = Math.floor((timestamp % 3600) / 60);
   const seconds = Math.floor(timestamp % 60);
   return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function formatSimulationTime(elapsedMinutes: number, startingHour: number = 9): string {
+  // Round to nearest minute
+  const roundedMinutes = Math.floor(elapsedMinutes);
+  const totalHours = Math.floor(roundedMinutes / 60);
+  const currentHour = (startingHour + totalHours) % 24;
+  const minutes = Math.floor(roundedMinutes % 60);
+  return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
 }
 
 function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic'): Coordinate | null {
@@ -274,25 +293,126 @@ function calculateBounds(entitiesData: EntityData[]) {
 }
 
 function ControlPanel({ 
-  trackersData, isLoading, center
+  trackersData, isLoading, center, timestamp, deliveryMetrics, bevCartMetrics, hasRunners, hasBevCart
 }: {
   trackersData: EntityData[];
   isLoading: boolean;
   center: [number, number];
+  timestamp: string;
+  deliveryMetrics?: DeliveryMetrics | null;
+  bevCartMetrics?: BevCartMetrics | null;
+  hasRunners?: boolean;
+  hasBevCart?: boolean;
 }) {
   const totalWaypoints = trackersData.reduce((sum, tracker) => sum + tracker.coordinates.length, 0);
+  
   return (
-    <div style={{ position: 'absolute', top: 0, right: 0, maxWidth: 340, background: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.3)', padding: '12px 24px', margin: 20, fontSize: 13, lineHeight: 1.5, color: '#6b6b76', outline: 'none', borderRadius: 4 }}>
-      <h3 style={{ margin: '0 0 12px 0', color: '#333', textTransform: 'uppercase' }}>Path Animation Tracker</h3>
-      {isLoading ? (<p>Loading tracker coordinates...</p>) : (
+    <div style={{ position: 'absolute', top: 0, right: 0, maxWidth: 340, background: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.3)', padding: '12px 20px', margin: 20, fontSize: 12, lineHeight: 1.4, color: '#6b6b76', outline: 'none', borderRadius: 4 }}>
+      {/* Timestamp Display */}
+      <div style={{ textAlign: 'center', marginBottom: 16, padding: '8px 12px', background: '#f8f9fa', borderRadius: 4, border: '1px solid #e9ecef' }}>
+        <div style={{ fontSize: 18, fontWeight: 600, color: '#333', fontFamily: 'monospace' }}>
+          {timestamp}
+        </div>
+        <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>
+          Simulation Time
+        </div>
+      </div>
+
+      {isLoading ? (
+        <p>Loading simulation data...</p>
+      ) : (
         <>
-          <p style={{ margin: '0 0 8px 0' }}>Following path with {totalWaypoints} total waypoints</p>
-          <p style={{ margin: '0 0 8px 0', fontSize: 12 }}>Center: ({center[1].toFixed(4)}, {center[0].toFixed(4)})</p>
+          {/* Delivery Runner Metrics */}
+          {hasRunners && deliveryMetrics && (
+            <div style={{ marginBottom: 16 }}>
+              <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
+                Delivery Metrics
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 11 }}>
+                <div>Order Count: <strong>{deliveryMetrics.orderCount}</strong></div>
+                <div>Revenue: <strong>${deliveryMetrics.revenue.toFixed(0)}</strong></div>
+                <div>Avg Order Time: <strong>{deliveryMetrics.avgOrderTime.toFixed(1)}m</strong></div>
+                <div>On-Time %: <strong>{deliveryMetrics.onTimeRate.toFixed(1)}%</strong></div>
+                <div>Failed Orders: <strong>{deliveryMetrics.failedOrderCount}</strong></div>
+                <div>Queue Wait: <strong>{deliveryMetrics.queueWaitAvg.toFixed(1)}m</strong></div>
+                <div>Cycle Time (P90): <strong>{deliveryMetrics.deliveryCycleTimeP90.toFixed(1)}m</strong></div>
+                <div>Orders/Runner-Hr: <strong>{deliveryMetrics.ordersPerRunnerHour.toFixed(1)}</strong></div>
+                <div style={{ gridColumn: 'span 2' }}>Revenue/Runner-Hr: <strong>${deliveryMetrics.revenuePerRunnerHour.toFixed(0)}</strong></div>
+              </div>
+            </div>
+          )}
+
+          {/* Bev-Cart Metrics */}
+          {hasBevCart && bevCartMetrics && (
+            <div style={{ marginBottom: 16 }}>
+              <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
+                Bev-Cart Metrics
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 11 }}>
+                <div>Total Orders: <strong>{bevCartMetrics.totalOrders}</strong></div>
+                <div>Groups Passed: <strong>{bevCartMetrics.totalGroupsPassed}</strong></div>
+                <div>Avg Order Value: <strong>${bevCartMetrics.avgOrderValue.toFixed(0)}</strong></div>
+                <div>Delivery Orders: <strong>{bevCartMetrics.totalDeliveryOrdersPlaced}</strong></div>
+                <div style={{ gridColumn: 'span 2' }}>Revenue/Bevcart-Hr: <strong>${bevCartMetrics.revenuePerBevcartHour.toFixed(0)}</strong></div>
+              </div>
+            </div>
+          )}
+
+          {/* Technical Info */}
+          <div style={{ borderTop: '1px solid #e9ecef', paddingTop: 8, fontSize: 10, color: '#999' }}>
+            <div>Waypoints: {totalWaypoints.toLocaleString()}</div>
+            <div>Center: ({center[1].toFixed(4)}, {center[0].toFixed(4)})</div>
+          </div>
         </>
       )}
     </div>
   );
 }
+
+function ColorLegend({
+  config
+}: {
+  config: AppConfig;
+}) {
+  const legendItems = [
+    { type: 'golfer', name: 'Golfer', color: '#007cbf' },
+    { type: 'bev-cart', name: 'Beverage Cart', color: '#FF0000' },
+    { type: 'runner', name: 'Runner', color: '#FF8B00' }
+  ];
+
+  return (
+    <div style={{ 
+      position: 'absolute', 
+      bottom: 20, 
+      left: 20, 
+      background: 'rgba(255,255,255,0.95)', 
+      padding: '12px 16px', 
+      borderRadius: 6, 
+      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+      fontSize: 13,
+      fontFamily: 'Inter, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+    }}>
+      <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>
+        Entity Types
+      </h4>
+      {legendItems.map((item) => (
+        <div key={item.type} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <div style={{
+            width: 12,
+            height: 12,
+            borderRadius: '50%',
+            backgroundColor: item.color,
+            border: '2px solid #ffffff',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
+          }} />
+          <span style={{ color: '#333', fontSize: 12 }}>{item.name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
 
 const DEFAULT_CONFIG: AppConfig = {
   data: { csvFileName: '/golfer_coordinates.csv', cartPathFileName: '/cart_paths.geojson', coordinatesDir: '/coordinates' },
@@ -311,10 +431,16 @@ export default function AnimationView() {
   const [isLoading, setIsLoading] = useState(true);
   const [pathBounds, setPathBounds] = useState({ center: [0, 0] as [number, number], zoom: 2 });
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [displayedTimestamp, setDisplayedTimestamp] = useState<string>('00:00');
   const [originalMinTimestamp, setOriginalMinTimestamp] = useState<number>(0);
   const [animationDuration, setAnimationDuration] = useState<number>(0);
-  const [availableSimulations, setAvailableSimulations] = useState<SimulationInfo[]>([]);
-  const [selectedSimulationId, setSelectedSimulationId] = useState<string | null>(null);
+  
+  // Metrics loaded from simulation
+  const [deliveryMetrics, setDeliveryMetrics] = useState<DeliveryMetrics | null>(null);
+  const [bevCartMetrics, setBevCartMetrics] = useState<BevCartMetrics | null>(null);
+  const [hasRunners, setHasRunners] = useState<boolean>(false);
+  const [hasBevCart, setHasBevCart] = useState<boolean>(false);
+  // Simplified - no need for simulation selection since we only have one simulation
   // Animation timing is integrated incrementally to allow live speed changes without jumps
   const [animationStartTime, setAnimationStartTime] = useState<number | null>(null); // retained for backward-compat but not used
   const [sourcesReady, setSourcesReady] = useState<boolean>(false);
@@ -353,37 +479,11 @@ export default function AnimationView() {
     loadConfig();
   }, []);
 
-  // Load manifest and expose simulations for selection
+  // Load coordinates directly from the single simulation
   useEffect(() => {
-    const loadManifest = async () => {
+    const loadCoordinates = async () => {
       try {
-        const cacheBuster = `?t=${Date.now()}`;
-        const response = await fetch(`${config.data.coordinatesDir}/manifest.json${cacheBuster}`);
-        if (response.ok) {
-          const manifest: SimulationManifest = await response.json();
-          setAvailableSimulations(manifest.simulations || []);
-          const defaultId = manifest.defaultSimulation || manifest.simulations[0]?.id || null;
-          setSelectedSimulationId(defaultId);
-        } else {
-          // Fallback: use single CSV path from config
-          setAvailableSimulations([{ id: 'single', name: 'Single CSV', filename: config.data.csvFileName.replace(`${config.data.coordinatesDir}/`, ''), description: '' } as any]);
-          setSelectedSimulationId('single');
-        }
-      } catch {
-        // ignore
-      }
-    };
-    loadManifest();
-  }, [config]);
-
-  // Load coordinates for the selected simulation
-  useEffect(() => {
-    const loadSelectedSimulation = async () => {
-      if (!selectedSimulationId) return;
-      try {
-        const selected = availableSimulations.find(s => s.id === selectedSimulationId);
-        const filename = selected ? selected.filename : config.data.csvFileName.replace(`${config.data.coordinatesDir}/`, '');
-        const csvPath = `${config.data.coordinatesDir}/${filename}`;
+        const csvPath = `${config.data.coordinatesDir}/coordinates.csv`;
         const csvResp = await fetch(`${csvPath}?t=${Date.now()}`);
         const csvText = await csvResp.text();
         Papa.parse(csvText, {
@@ -434,8 +534,46 @@ export default function AnimationView() {
         setIsLoading(false);
       }
     };
-    loadSelectedSimulation();
-  }, [selectedSimulationId, availableSimulations, config]);
+    loadCoordinates();
+  }, [config]);
+
+  // Load simulation metrics
+  useEffect(() => {
+    const loadMetrics = async () => {
+      try {
+        const cacheBuster = `?t=${Date.now()}`;
+        const response = await fetch(`${config.data.coordinatesDir}/simulation_metrics.json${cacheBuster}`);
+        if (!response.ok) {
+          console.log('No simulation metrics found, using defaults');
+          return;
+        }
+        
+        const metricsData = await response.json();
+        
+        setHasRunners(metricsData.hasRunners || false);
+        setHasBevCart(metricsData.hasBevCart || false);
+        
+        if (metricsData.deliveryMetrics) {
+          setDeliveryMetrics(metricsData.deliveryMetrics);
+        }
+        
+        if (metricsData.bevCartMetrics) {
+          setBevCartMetrics(metricsData.bevCartMetrics);
+        }
+        
+        console.log('Loaded simulation metrics:', metricsData);
+      } catch (error) {
+        console.error('Error loading simulation metrics:', error);
+        // Set defaults if metrics loading fails
+        setHasRunners(false);
+        setHasBevCart(false);
+      }
+    };
+
+    if (config.data?.coordinatesDir) {
+      loadMetrics();
+    }
+  }, [config]);
 
   useEffect(() => {
     if (!styleReady || isLoading || trackersData.length === 0 || sourcesInitializedRef.current) return;
@@ -496,6 +634,12 @@ export default function AnimationView() {
         source.setData({ type: 'FeatureCollection', features });
       }
       
+      // Update the displayed timestamp every minute
+      const newTimestamp = formatSimulationTime(elapsedMinutes, config.animation.startingHour || 9);
+      if (newTimestamp !== displayedTimestamp) {
+        setDisplayedTimestamp(newTimestamp);
+      }
+      
       setElapsedTime(elapsedMinutes);
       animationId = requestAnimationFrame(animate);
     };
@@ -507,7 +651,7 @@ export default function AnimationView() {
         cancelAnimationFrame(animationId);
       }
     };
-  }, [isLoading, trackersData, speedMultiplier, currentEasing]);
+  }, [isLoading, trackersData, speedMultiplier, currentEasing, displayedTimestamp, config]);
 
 
 
@@ -532,20 +676,6 @@ export default function AnimationView() {
     <div style={{ width: '100vw', height: '100vh' }}>
       {/* Easing Control Panel */}
       <div style={{ position: 'absolute', top: 56, left: 10, zIndex: 11, background: 'rgba(255,255,255,0.95)', padding: '8px 10px', borderRadius: 6, boxShadow: '0 2px 4px rgba(0,0,0,0.2)', minWidth: 220 }}>
-        {/* Simulation selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-          <label htmlFor="sim-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Simulation</label>
-          <select
-            id="sim-select"
-            value={selectedSimulationId || ''}
-            onChange={(e) => setSelectedSimulationId(e.target.value)}
-            style={{ width: 280, padding: '4px', borderRadius: 4, border: '1px solid #ccc', fontSize: 12 }}
-          >
-            {availableSimulations.map((sim) => (
-              <option key={sim.id} value={sim.id}>{sim.name}</option>
-            ))}
-          </select>
-        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <label htmlFor="easing-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Easing</label>
           <select
@@ -607,7 +737,13 @@ export default function AnimationView() {
         trackersData={trackersData}
         isLoading={isLoading}
         center={pathBounds.center}
+        timestamp={displayedTimestamp}
+        deliveryMetrics={deliveryMetrics}
+        bevCartMetrics={bevCartMetrics}
+        hasRunners={hasRunners}
+        hasBevCart={hasBevCart}
       />
+      <ColorLegend config={config} />
     </div>
   );
 }

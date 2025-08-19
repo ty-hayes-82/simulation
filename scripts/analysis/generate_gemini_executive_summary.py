@@ -237,7 +237,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--model",
-        default="gemini-2.5-pro",
+        default="gemini-2.5-flash",
         help="Gemini model to use (falls back to available models)"
     )
     parser.add_argument(
