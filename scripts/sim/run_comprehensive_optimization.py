@@ -24,7 +24,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import subprocess
 import sys
 
@@ -33,7 +33,7 @@ from golfsim.config.loaders import load_simulation_config
 
 logger = get_logger(__name__)
 
-def _backup_and_modify_config(course_dir: str, bev_order_prob: float, delivery_total_orders: int) -> Path:
+def _backup_and_modify_config(course_dir: str, bev_order_prob: Optional[float], delivery_total_orders: Optional[int]) -> Path:
     """Backup original config and update JSON in-place with only the needed fields.
 
     Critical: Preserve existing fields like 'clubhouse' exactly as-is to avoid loader errors.
@@ -46,9 +46,10 @@ def _backup_and_modify_config(course_dir: str, bev_order_prob: float, delivery_t
         shutil.copy2(config_path, backup_path)
         logger.info("Backed up original config to: %s", backup_path)
 
-    # Load original JSON directly to preserve structure
+    # Load base JSON from backup if present (ensures pristine structure), else from current file
     try:
-        with config_path.open('r', encoding='utf-8') as f:
+        base_path = backup_path if backup_path.exists() else config_path
+        with base_path.open('r', encoding='utf-8') as f:
             config_json = json.load(f)
     except Exception as e:
         logger.error("Failed to read simulation_config.json: %s", e)
@@ -74,8 +75,8 @@ def _backup_and_modify_config(course_dir: str, bev_order_prob: float, delivery_t
 
     logger.info(
         "Modified config: bev_cart_order_probability_per_9_holes=%.2f, delivery_total_orders=%d",
-        bev_order_prob,
-        delivery_total_orders,
+        (bev_order_prob if bev_order_prob is not None else config_json.get('bev_cart_order_probability_per_9_holes', 0.0)), 
+        (delivery_total_orders if delivery_total_orders is not None else config_json.get('delivery_total_orders', 0)),
     )
     return backup_path
 
@@ -331,22 +332,37 @@ def main() -> int:
     backup_path = None
     
     try:
-        for bev_prob in bev_prob_list:
+        # In delivery-only SLA mode, do not vary bev probability; run once using existing bev prob
+        if args.sla_optimization and args.skip_bev_carts:
+            bev_prob_values = [None]  # do not touch bev prob
+        else:
+            bev_prob_values = bev_prob_list
+
+        for bev_prob in bev_prob_values:
             # Determine if we need to modify the config
-            if args.delivery_total_orders is not None or not args.sla_optimization:
-                # Backup and modify config with specified order count or default
-                order_count = args.delivery_total_orders if args.delivery_total_orders is not None else 20
-                backup_path = _backup_and_modify_config(args.course_dir, bev_prob, order_count)
-                logger.info("Setting delivery_total_orders to %d", order_count)
-            else:
-                # Use existing config
-                backup_path = None
+            if backup_path is None and (args.delivery_total_orders is not None or (bev_prob is not None and not args.skip_bev_carts)):
+                # Ensure we have a backup of the pristine config before any modifications
+                config_path = Path(args.course_dir) / "config" / "simulation_config.json"
+                backup_path = config_path.with_suffix('.json.backup')
+                if not backup_path.exists():
+                    shutil.copy2(config_path, backup_path)
+                    logger.info("Backed up original config to: %s", backup_path)
+
+            # Apply overrides selectively
+            if args.delivery_total_orders is not None or (bev_prob is not None and not args.skip_bev_carts):
+                order_count = args.delivery_total_orders
+                _backup_and_modify_config(args.course_dir, bev_prob if not args.skip_bev_carts else None, order_count)
+                if order_count is not None:
+                    logger.info("Setting delivery_total_orders to %d", order_count)
             
             for num_carts in bev_carts_list:
                 if args.skip_bev_carts:
                     continue
                     
-                config_name = f"{int(bev_prob*100)}p_{num_carts}bevcarts"
+                # Bevcart runs keep the bev prob label when applicable
+                config_name = (
+                    f"{int(bev_prob*100)}p_{num_carts}bevcarts" if bev_prob is not None else f"bevcarts_{num_carts}"
+                )
                 logger.info("Testing %s", config_name)
                 
                 # Create subdirectory for this configuration
@@ -387,7 +403,13 @@ def main() -> int:
                 for scenario in delivery_blocking_scenarios:
                     for num_runners in runner_counts:
                         for tee_scenario in tee_scenarios:
-                            config_name = f"{int(bev_prob*100)}p_delivery_{scenario['name']}_{num_runners}runners_{tee_scenario}"
+                            # For delivery-only runs, name by delivery order count when provided; otherwise keep bev prob label
+                            if args.delivery_total_orders is not None:
+                                config_name = f"{int(args.delivery_total_orders)}orders_delivery_{scenario['name']}_{num_runners}runners_{tee_scenario}"
+                            elif bev_prob is not None:
+                                config_name = f"{int(bev_prob*100)}p_delivery_{scenario['name']}_{num_runners}runners_{tee_scenario}"
+                            else:
+                                config_name = f"delivery_{scenario['name']}_{num_runners}runners_{tee_scenario}"
                             logger.info("Testing %s", config_name)
                             
                             # Create subdirectory for this configuration  
@@ -460,12 +482,12 @@ def main() -> int:
                                 logger.error("Failed to run delivery for %s: %s", config_name, e)
             
             # Restore config after each total_orders iteration (only if we backed it up)
-            if backup_path and not args.sla_optimization:
+            if backup_path:
                 _restore_config(args.course_dir, backup_path)
     
     finally:
         # Ensure config is restored (only if we backed it up)
-        if backup_path and not args.sla_optimization:
+        if backup_path:
             _restore_config(args.course_dir, backup_path)
     
     # Create appropriate summary
