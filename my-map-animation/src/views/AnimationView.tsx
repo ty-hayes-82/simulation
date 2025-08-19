@@ -152,22 +152,27 @@ function formatSimulationTime(elapsedMinutes: number, startingHour: number = 9):
 function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic'): Coordinate | null {
   if (coordinates.length === 0) return null;
   if (coordinates.length === 1) return coordinates[0];
+  
+  // elapsedTime is in minutes from animation loop, convert to seconds for timestamp matching
+  const elapsedSeconds = elapsedTime * 60;
+  
   for (let i = 0; i < coordinates.length - 1; i++) {
     const current = coordinates[i];
     const next = coordinates[i + 1];
-    if (elapsedTime >= current.timestamp && elapsedTime <= next.timestamp) {
+    if (elapsedSeconds >= current.timestamp && elapsedSeconds <= next.timestamp) {
       const segmentDuration = next.timestamp - current.timestamp;
-      const segmentProgress = segmentDuration > 0 ? (elapsedTime - current.timestamp) / segmentDuration : 0;
+      const segmentProgress = segmentDuration > 0 ? (elapsedSeconds - current.timestamp) / segmentDuration : 0;
       return interpolatePoint(current, next, segmentProgress, easing);
     }
   }
-  if (elapsedTime >= coordinates[coordinates.length - 1].timestamp) return coordinates[coordinates.length - 1];
+  if (elapsedSeconds >= coordinates[coordinates.length - 1].timestamp) return coordinates[coordinates.length - 1];
+  if (elapsedSeconds < coordinates[0].timestamp) return coordinates[0];
   return null;
 }
 
 function calculateVelocity(point1: Coordinate, point2: Coordinate): number {
-  // timestamps are in minutes; convert to seconds for m/s
-  const timeDiff = (point2.timestamp - point1.timestamp) * 60;
+  // timestamps are in seconds already
+  const timeDiff = point2.timestamp - point1.timestamp;
   if (timeDiff <= 0) return 0;
   const lat1 = point1.latitude * Math.PI / 180;
   const lat2 = point2.latitude * Math.PI / 180;
@@ -244,17 +249,20 @@ function getCatmullRomPositionOnPath(coordinates: Coordinate[], elapsedTime: num
     return coordinates.length === 1 ? coordinates[0] : null;
   }
 
+  // elapsedTime is in minutes from animation loop, convert to seconds for timestamp matching
+  const elapsedSeconds = elapsedTime * 60;
+
   let i = -1;
   // Find the current segment
   for (let j = 0; j < coordinates.length - 1; j++) {
-    if (elapsedTime >= coordinates[j].timestamp && elapsedTime <= coordinates[j + 1].timestamp) {
+    if (elapsedSeconds >= coordinates[j].timestamp && elapsedSeconds <= coordinates[j + 1].timestamp) {
       i = j;
       break;
     }
   }
 
   if (i === -1) {
-    if (elapsedTime < coordinates[0].timestamp) return coordinates[0];
+    if (elapsedSeconds < coordinates[0].timestamp) return coordinates[0];
     return coordinates[coordinates.length - 1];
   }
   
@@ -264,7 +272,7 @@ function getCatmullRomPositionOnPath(coordinates: Coordinate[], elapsedTime: num
   const p3 = i < coordinates.length - 2 ? coordinates[i + 2] : p2;
 
   const segmentDuration = p2.timestamp - p1.timestamp;
-  const t = segmentDuration > 0 ? (elapsedTime - p1.timestamp) / segmentDuration : 0;
+  const t = segmentDuration > 0 ? (elapsedSeconds - p1.timestamp) / segmentDuration : 0;
 
   const lat = catmullRom(p0.latitude, p1.latitude, p2.latitude, p3.latitude, t);
   const lng = catmullRom(p0.longitude, p1.longitude, p2.longitude, p3.longitude, t);
@@ -273,7 +281,7 @@ function getCatmullRomPositionOnPath(coordinates: Coordinate[], elapsedTime: num
     golfer_id: p1.golfer_id,
     latitude: lat,
     longitude: lng,
-    timestamp: elapsedTime,
+    timestamp: elapsedSeconds,
     type: p1.type,
     current_hole: p1.current_hole,
   };
@@ -416,7 +424,7 @@ function ColorLegend({
 
 const DEFAULT_CONFIG: AppConfig = {
   data: { csvFileName: '/golfer_coordinates.csv', cartPathFileName: '/cart_paths.geojson', coordinatesDir: '/coordinates' },
-  animation: { speedMultiplier: 200, defaultMapStyle: 'satellite-streets', smoothing: { enabled: true, easing: 'catmull-rom', frameRate: 60 } },
+  animation: { speedMultiplier: 250, defaultMapStyle: 'satellite-streets', smoothing: { enabled: true, easing: 'catmull-rom', frameRate: 60 } },
   mapStyles: { 'satellite-streets': { name: 'Satellite with Streets', url: 'mapbox://styles/mapbox/satellite-streets-v12', description: 'Satellite imagery with roads and labels' } },
   entityTypes: { 'golfer': { name: 'Golfer', color: '#007cbf', description: 'Golf players' }, 'bev-cart': { name: 'Beverage Cart', color: '#ff6b6b', description: 'Beverage service' }, 'runner': { name: 'Runner', color: '#FF8B00', description: 'Runners on course' }},
   display: { golferTrails: { width: 2, opacity: 0.6 }, golferMarkers: { radius: 9, strokeWidth: 3, strokeColor: '#ffffff', strokeOpacity: 0.8 } },
@@ -453,9 +461,9 @@ export default function AnimationView() {
   // removed unused initialSourceDataRef to satisfy linter
   const trackersGeoJsonRef = useRef<any>({ type: 'FeatureCollection', features: [] });
   const styleReadyRef = useRef<boolean>(false);
-  // Fixed optimal speed for smooth animation
-  const speedMultiplier = DEFAULT_CONFIG.animation.speedMultiplier;
+  // Speed control for smooth animation without resets
   const speedRef = useRef<number>(DEFAULT_CONFIG.animation.speedMultiplier);
+  const [currentSpeed, setCurrentSpeed] = useState<number>(DEFAULT_CONFIG.animation.speedMultiplier);
   const simulatedElapsedRef = useRef<number>(0);
   const lastRealTimeSecRef = useRef<number>(0);
   // Easing selection state
@@ -474,6 +482,7 @@ export default function AnimationView() {
         setCurrentMapStyle(configData.animation.defaultMapStyle);
         if (typeof configData.animation?.speedMultiplier === 'number' && isFinite(configData.animation.speedMultiplier)) {
           speedRef.current = configData.animation.speedMultiplier;
+          setCurrentSpeed(configData.animation.speedMultiplier);
         }
       } catch (error) {
         // use defaults
@@ -511,13 +520,13 @@ export default function AnimationView() {
             const allTimestamps = coords.map(c => c.timestamp);
             const minTimestamp = Math.min(...allTimestamps);
             const maxTimestamp = Math.max(...allTimestamps);
-            const duration = (maxTimestamp - minTimestamp) / 60; // minutes
+            const duration = (maxTimestamp - minTimestamp); // keep in seconds
             setOriginalMinTimestamp(minTimestamp);
-            setAnimationDuration(duration);
+            setAnimationDuration(duration / 60); // convert to minutes only for UI display
             const trackersArray: EntityData[] = Object.entries(trackerGroups).map(([trackerId, coordinates]) => {
               const sortedCoords = coordinates
                 .sort((a, b) => a.timestamp - b.timestamp)
-                .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) / 60 })); // minutes
+                .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) })); // keep in seconds, just normalize to start at 0
               let filteredCoords = sortedCoords;
               if (sortedCoords[0]?.type === 'golfer') {
                 filteredCoords = sortedCoords.filter((_, index) => index % 3 === 0);
@@ -596,15 +605,16 @@ export default function AnimationView() {
     setSourcesReady(true);
   }, [isLoading, trackersData, styleReady]);
 
-  // Simple animation loop matching react-map-gl example
+    // Animation loop with continuous timing (no resets)
   useEffect(() => {
     if (isLoading || trackersData.length === 0) return;
     
     let animationId: number;
     let startTime = Date.now();
+    let lastTimestampUpdate = 0; // Track when we last updated timestamp to avoid constant updates
     
     const animate = () => {
-      const elapsed = (Date.now() - startTime) * speedMultiplier / 1000; // seconds
+      const elapsed = (Date.now() - startTime) * speedRef.current / 1000; // seconds
       const elapsedMinutes = elapsed / 60; // convert to minutes
       
       const map = mapRef.current?.getMap?.();
@@ -615,21 +625,21 @@ export default function AnimationView() {
       
       const features: any[] = [];
       
-             trackersData.forEach((tracker) => {
-         let position: Coordinate | null;
-         if (currentEasing === 'catmull-rom') {
-           position = getCatmullRomPositionOnPath(tracker.coordinates, elapsedMinutes);
-         } else {
-           position = getPositionOnPath(tracker.coordinates, elapsedMinutes, currentEasing);
-         }
-         if (position) {
-           features.push({
-             type: 'Feature',
-             properties: { id: tracker.name, color: tracker.color },
-             geometry: { type: 'Point', coordinates: [position.longitude, position.latitude] }
-           });
-         }
-       });
+      trackersData.forEach((tracker) => {
+        let position: Coordinate | null;
+        if (currentEasing === 'catmull-rom') {
+          position = getCatmullRomPositionOnPath(tracker.coordinates, elapsedMinutes);
+        } else {
+          position = getPositionOnPath(tracker.coordinates, elapsedMinutes, currentEasing);
+        }
+        if (position) {
+          features.push({
+            type: 'Feature',
+            properties: { id: tracker.name, color: tracker.color },
+            geometry: { type: 'Point', coordinates: [position.longitude, position.latitude] }
+          });
+        }
+      });
       
       // Update GeoJSON source
       const source = map.getSource('trackers');
@@ -637,10 +647,12 @@ export default function AnimationView() {
         source.setData({ type: 'FeatureCollection', features });
       }
       
-      // Update the displayed timestamp every minute
-      const newTimestamp = formatSimulationTime(elapsedMinutes, config.animation.startingHour || 9);
-      if (newTimestamp !== displayedTimestamp) {
+      // Update the displayed timestamp only every few seconds to prevent constant rerenders
+      const now = Date.now();
+      if (now - lastTimestampUpdate > 2000) { // Update every 2 seconds instead of every frame
+        const newTimestamp = formatSimulationTime(elapsedMinutes, config.animation.startingHour || 9);
         setDisplayedTimestamp(newTimestamp);
+        lastTimestampUpdate = now;
       }
       
       setElapsedTime(elapsedMinutes);
@@ -654,7 +666,7 @@ export default function AnimationView() {
         cancelAnimationFrame(animationId);
       }
     };
-  }, [isLoading, trackersData, speedMultiplier, currentEasing, displayedTimestamp, config]);
+  }, [isLoading, trackersData, currentEasing]); // Removed problematic dependencies
 
 
 
@@ -677,22 +689,44 @@ export default function AnimationView() {
 
   return (
     <div style={{ width: '100vw', height: '100vh' }}>
-      {/* Easing Control Panel */}
-      <div style={{ position: 'absolute', top: 56, left: 10, zIndex: 11, background: 'rgba(255,255,255,0.95)', padding: '8px 10px', borderRadius: 6, boxShadow: '0 2px 4px rgba(0,0,0,0.2)', minWidth: 220 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <label htmlFor="easing-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Easing</label>
-          <select
-            id="easing-select"
-            value={currentEasing}
-            onChange={(e) => setCurrentEasing(e.target.value as 'linear' | 'cubic' | 'quart' | 'sine' | 'catmull-rom')}
-            style={{ width: 140, padding: '4px', borderRadius: 4, border: '1px solid #ccc', fontSize: 12 }}
-          >
-            <option value="linear">Linear</option>
-            <option value="cubic">Cubic</option>
-            <option value="quart">Quart</option>
-            <option value="sine">Sine</option>
-            <option value="catmull-rom">Catmull-Rom</option>
-          </select>
+      {/* Animation Control Panel */}
+      <div style={{ position: 'absolute', top: 56, left: 10, zIndex: 11, background: 'rgba(255,255,255,0.95)', padding: '12px', borderRadius: 6, boxShadow: '0 2px 4px rgba(0,0,0,0.2)', minWidth: 280 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Speed Control */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <label htmlFor="speed-control" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Speed</label>
+            <input
+              id="speed-control"
+              type="range"
+              min="0.1"
+              max="300"
+              step="1"
+              value={currentSpeed}
+              onChange={(e) => {
+                const newSpeed = parseFloat(e.target.value);
+                speedRef.current = newSpeed;
+                setCurrentSpeed(newSpeed);
+              }}
+              style={{ flex: 1 }}
+            />
+            <span style={{ fontSize: 11, color: '#666', minWidth: 30 }}>{currentSpeed.toFixed(1)}x</span>
+          </div>
+          {/* Easing Control */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <label htmlFor="easing-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Easing</label>
+            <select
+              id="easing-select"
+              value={currentEasing}
+              onChange={(e) => setCurrentEasing(e.target.value as 'linear' | 'cubic' | 'quart' | 'sine' | 'catmull-rom')}
+              style={{ flex: 1, padding: '4px', borderRadius: 4, border: '1px solid #ccc', fontSize: 12 }}
+            >
+              <option value="linear">Linear</option>
+              <option value="cubic">Cubic</option>
+              <option value="quart">Quart</option>
+              <option value="sine">Sine</option>
+              <option value="catmull-rom">Catmull-Rom</option>
+            </select>
+          </div>
         </div>
       </div>
       <Map
