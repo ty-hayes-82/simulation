@@ -268,13 +268,7 @@ def _generate_phase3_visualizations(simulation_result: Dict, output_dir: Path) -
     else:
         title = "Beverage Cart Route (Phase 3)"
     
-    # Render beverage cart route
-    render_beverage_cart_plot(
-        bev_points,
-        course_dir="courses/pinetree_country_club",  # TODO: Make this configurable
-        save_path=output_dir / "bev_cart_route.png",
-        title=title
-    )
+    # Route PNG intentionally omitted per requirements
 
 
 def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
@@ -358,7 +352,7 @@ def write_phase3_summary(results: List[Dict], output_root: Path) -> None:
     lines.append("## Artifacts")
     for r in results:
         ridx = r.get("run_idx", 0)
-        lines.append(f"- Run {ridx:02d}: bev_cart_route.png + sales.json + result.json + coordinates.csv")
+        lines.append(f"- Run {ridx:02d}: sales.json + result.json + coordinates.csv")
         
     lines.append("")
     (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
@@ -408,13 +402,7 @@ def save_phase5_output_files(result: Dict, run_dir: Path) -> None:
         
         write_unified_coordinates_csv(points_by_id, run_dir / "coordinates.csv")
     
-    # Save beverage cart route visualization (if bev_points exist)
-    if bev_points:
-        try:
-            from ..visualization.plotting import plot_beverage_cart_route
-            plot_beverage_cart_route(bev_points, run_dir / "bev_cart_route.png")
-        except ImportError:
-            pass  # Visualization optional
+    # Route PNG intentionally omitted per requirements
     
     # Save sales results
     sales_result = result.get("sales_result", {})
@@ -561,7 +549,6 @@ def write_phase5_stats_file(
         "## Artifacts",
         "",
         "- `coordinates.csv` — Combined GPS tracks (golfers + beverage cart)",
-        "- `bev_cart_route.png` — Beverage cart route visualization",
         "- `sales.json` — Detailed sales and pass data",
         "- `result.json` — Complete simulation metadata",
         "",
@@ -661,7 +648,7 @@ def write_phase5_summary(results: List[Dict], output_root: Path, scenario_name: 
     
     for r in results:
         run_idx = r.get("run_idx", 0)
-        lines.append(f"- **sim_{run_idx:02d}/**: coordinates.csv, bev_cart_route.png, sales.json, result.json, stats.md")
+        lines.append(f"- **sim_{run_idx:02d}/**: coordinates.csv, sales.json, result.json, stats.md")
     
     lines.append("")
     (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")

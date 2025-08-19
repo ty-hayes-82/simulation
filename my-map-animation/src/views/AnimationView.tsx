@@ -465,7 +465,10 @@ export default function AnimationView() {
     const loadConfig = async () => {
       try {
         const cacheBuster = `?t=${Date.now()}`;
-        const response = await fetch(`/config.json${cacheBuster}`);
+        const configPath = (process.env.REACT_APP_CONFIG_PATH && process.env.REACT_APP_CONFIG_PATH.trim().length > 0)
+          ? process.env.REACT_APP_CONFIG_PATH
+          : '/config.json';
+        const response = await fetch(`${configPath}${cacheBuster}`);
         const configData: AppConfig = await response.json();
         setConfig(configData);
         setCurrentMapStyle(configData.animation.defaultMapStyle);

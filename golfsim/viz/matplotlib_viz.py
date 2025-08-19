@@ -585,8 +585,8 @@ def render_bev_cart_crossings(
 ) -> None:
     """Render a map of beverage cart/golfer crossings with sale markers.
 
-    - Green dot: crossing where a sale occurred
-    - Red dot: crossing with no sale
+    - Blue dot with white outline (larger): crossing where a sale occurred
+    - Red dot (smaller): crossing with no sale
 
     Uses node_index from crossings_data to locate each crossing on
     holes_connected.geojson. Optionally overlays the bev-cart path.
@@ -652,7 +652,7 @@ def render_bev_cart_crossings(
                 except Exception:
                     pass
 
-            # Plot crossings as red/green dots
+            # Plot crossings as red (no sale) and blue-with-white-outline (sale) dots
             num_sales = 0
             num_cross = 0
             if isinstance(crossings_data, dict):
@@ -693,17 +693,33 @@ def render_bev_cart_crossings(
 
                             if sold_here:
                                 num_sales += 1
-                                ax.scatter([lon], [lat], c="#2ca02c", s=30, marker='o', label=None, zorder=5)
+                                ax.scatter(
+                                    [lon], [lat],
+                                    s=80,
+                                    marker='o',
+                                    facecolors="#1f77b4",
+                                    edgecolors="white",
+                                    linewidths=1.5,
+                                    zorder=6,
+                                )
                             else:
-                                ax.scatter([lon], [lat], c="#d62728", s=30, marker='o', label=None, zorder=5)
+                                ax.scatter(
+                                    [lon], [lat],
+                                    s=24,
+                                    marker='o',
+                                    facecolors="#d62728",
+                                    edgecolors='none',
+                                    alpha=0.95,
+                                    zorder=5,
+                                )
                 except Exception as e:  # noqa: BLE001
                     logger.warning("Failed plotting crossings: %s", e)
 
             # Legend handles
             from matplotlib.lines import Line2D
             legend_elems = [
-                Line2D([0], [0], marker='o', color='w', label='Sale', markerfacecolor='#2ca02c', markersize=8),
-                Line2D([0], [0], marker='o', color='w', label='No sale', markerfacecolor='#d62728', markersize=8),
+                Line2D([0], [0], marker='o', color='w', label='Sale', markerfacecolor='#1f77b4', markeredgecolor='white', markeredgewidth=1.5, markersize=10),
+                Line2D([0], [0], marker='o', color='w', label='No sale', markerfacecolor='#d62728', markersize=6),
             ]
             ax.legend(handles=legend_elems, loc='upper right')
 

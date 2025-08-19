@@ -11,7 +11,7 @@ Outputs JSON files under outputs/simple_tracks/ with identical schema for golfer
 
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import geopandas as gpd
 from shapely.geometry import LineString, Point
@@ -30,14 +30,17 @@ def _interpolate_along_linestring(line: LineString, fraction: float) -> Tuple[fl
     return (pt.x, pt.y)
 
 
-def load_holes_connected_points(course_dir: str) -> List[Tuple[int, float, float]]:
-    """Load (idx, lon, lat) from geojson/generated/holes_connected.geojson Point features.
+def load_holes_connected_points(course_dir: str) -> List[Tuple[int, float, float, Optional[int]]]:
+    """Load (idx, lon, lat, hole?) from geojson/generated/holes_connected.geojson Point features.
 
-    Falls back to deriving from the first LineString vertices if Point features are absent.
+    If a point has a hole label in its properties (any of: 'hole_number', 'hole',
+    'hole_num', 'current_hole'), it will be attached as the 4th tuple element.
+    Falls back to deriving from the first LineString vertices if Point features are absent
+    (in that case the hole value is None).
     """
     path = Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson"
     gdf = gpd.read_file(path).to_crs(4326)
-    pts: List[Tuple[int, float, float]] = []
+    pts: List[Tuple[int, float, float, Optional[int]]] = []
     for _, row in gdf.iterrows():
         if row.geometry is None:
             continue
@@ -46,19 +49,28 @@ def load_holes_connected_points(course_dir: str) -> List[Tuple[int, float, float
                 idx = int(row["idx"])  # type: ignore[index]
             except Exception:
                 continue
-            pts.append((idx, float(row.geometry.x), float(row.geometry.y)))
+            hole_val: Optional[int] = None
+            # Try common property names for hole labels
+            for key in ("hole_number", "hole", "hole_num", "current_hole"):
+                try:
+                    if key in row and row[key] == row[key]:  # filter out NaN
+                        hole_val = int(row[key])
+                        break
+                except Exception:
+                    continue
+            pts.append((idx, float(row.geometry.x), float(row.geometry.y), hole_val))
     if not pts:
         # Fallback: use the first LineString's vertices if Points not present
         line_rows = gdf[gdf.geometry.type == "LineString"]
         if not line_rows.empty:
             coords = list(line_rows.iloc[0].geometry.coords)
-            pts = [(i, float(lon), float(lat)) for i, (lon, lat) in enumerate(coords)]
+            pts = [(i, float(lon), float(lat), None) for i, (lon, lat) in enumerate(coords)]
     pts.sort(key=lambda t: t[0])
     return pts
 
 
 def build_minute_points_from_connected(
-    ordered_points: List[Tuple[int, float, float]],
+    ordered_points: List[Tuple[int, float, float]] | List[Tuple[int, float, float, Optional[int]]],
     *, point_type: str,
 ) -> List[Dict]:
     """Create one GPS point per minute from a sequence of connected nodes.
@@ -67,15 +79,25 @@ def build_minute_points_from_connected(
     """
     points: List[Dict] = []
     current_time_s = 0
-    for _, lon, lat in ordered_points:
-        points.append(
-            {
-                "timestamp": current_time_s,
-                "longitude": lon,
-                "latitude": lat,
-                "type": point_type,
-            }
-        )
+    for item in ordered_points:
+        # Support both 3-tuple (idx, lon, lat) and 4-tuple (idx, lon, lat, hole)
+        if len(item) >= 4:
+            _, lon, lat, hole = item  # type: ignore[misc]
+        else:
+            _, lon, lat = item  # type: ignore[misc]
+            hole = None
+
+        entry: Dict = {
+            "timestamp": current_time_s,
+            "longitude": lon,
+            "latitude": lat,
+            "type": point_type,
+        }
+        if hole is not None:
+            # Use a standard key that CSV writer recognizes
+            entry["current_hole"] = int(hole)
+
+        points.append(entry)
         current_time_s += 60
     return points
 

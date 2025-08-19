@@ -53,6 +53,7 @@ from golfsim.simulation.phase_simulations import generate_golfer_track
 from golfsim.simulation.crossings import (
     compute_crossings_from_files,
     serialize_crossings_summary,
+    load_nodes_geojson_with_holes,
 )
 from golfsim.simulation.pass_detection import (
     find_proximity_pass_events,
@@ -1085,8 +1086,24 @@ def _generate_simulation_metrics_json(
         avg_order_value = (total_bev_revenue / total_bev_orders) if total_bev_orders > 0 else 0.0
         
         # Calculate revenue per bevcart-hour
-        service_hours_actual = max(service_hours, 1.0)
-        revenue_per_bevcart_hour = total_bev_revenue / service_hours_actual
+        # Prefer actual bev-cart service window from GPS timestamps if available
+        service_hours_actual = float(service_hours)
+        try:
+            bev_points = sim_result.get("bev_points", []) or []
+            ts_values: List[int] = []
+            for p in bev_points:
+                try:
+                    ts = int(float(p.get("timestamp", p.get("timestamp_s", 0)) or 0))
+                    ts_values.append(ts)
+                except Exception:
+                    continue
+            if len(ts_values) >= 2:
+                duration_h = max(1.0, (max(ts_values) - min(ts_values)) / 3600.0)
+                service_hours_actual = duration_h
+        except Exception:
+            # Fallback to provided service_hours if anything goes wrong
+            service_hours_actual = max(service_hours, 1.0)
+        revenue_per_bevcart_hour = total_bev_revenue / max(service_hours_actual, 1.0)
         
         # Try to get groups passed from crossings data if available
         total_groups_passed = 0
@@ -1124,6 +1141,20 @@ def _events_from_activity_log(
 ) -> List[Dict[str, Any]]:
     """Map service activity logs to event rows."""
     events: List[Dict[str, Any]] = []
+    # Precompute earliest service_opened per entity (runner or cart) to remap any
+    # pre-opening 'service_closed' noise entries into a neutral 'service_idle'.
+    earliest_open_ts: Dict[str, int] = {}
+    for entry in activity_log or []:
+        try:
+            ts_s = int(entry.get("timestamp_s", 0))
+        except Exception:
+            ts_s = 0
+        runner_id = entry.get("runner_id")
+        cart_id = entry.get("cart_id")
+        entity_id = str(runner_id or cart_id or default_entity_id)
+        if str(entry.get("activity_type", entry.get("event", ""))).lower() == "service_opened":
+            if entity_id not in earliest_open_ts or ts_s < earliest_open_ts[entity_id]:
+                earliest_open_ts[entity_id] = ts_s
     for entry in activity_log or []:
         ts_s = int(entry.get("timestamp_s", 0))
         time_str = entry.get("time_str") or _seconds_to_clock_str(ts_s)
@@ -1136,13 +1167,19 @@ def _events_from_activity_log(
             etype = "delivery_runner"
         else:
             etype = default_entity_type
+        action_raw = str(entry.get("activity_type") or entry.get("event") or "activity")
+        action = action_raw
+        # Remap pre-opening 'service_closed' to 'service_idle' to avoid confusing timeline entries
+        eid = str(entity_id)
+        if action_raw == "service_closed" and eid in earliest_open_ts and ts_s < int(earliest_open_ts[eid]):
+            action = "service_idle"
         events.append(
             {
                 "simulation_id": simulation_id,
                 "ID": entity_id,
                 "timestamp": time_str,
                 "timestamp_s": ts_s,
-                "action": entry.get("activity_type") or entry.get("event") or "activity",
+                "action": action,
                 "node_id": entry.get("node_index"),
                 "hole": entry.get("hole") or entry.get("hole_num"),
                 "ttl_amt": entry.get("revenue"),
@@ -1435,9 +1472,21 @@ def _copy_to_public_coordinates(
             export_script = Path("scripts") / "viz" / "export_hole_delivery_geojson.py"
             
             if export_script.exists():
-                # Use the run directory as the output directory for the export script
+                # Prefer passing an explicit results file to avoid name assumptions
+                results_file = None
+                for name in ["results.json", "result.json", "simulation_results.json"]:
+                    cand = run_dir / name
+                    if cand.exists():
+                        results_file = cand
+                        break
+                cmd = [sys.executable, str(export_script)]
+                if results_file is not None:
+                    cmd += ["--results-file", str(results_file)]
+                else:
+                    # Fallback to output-dir resolution if specific file not found
+                    cmd += ["--output-dir", str(run_dir)]
                 result = subprocess.run(
-                    [sys.executable, str(export_script), "--output-dir", str(run_dir)],
+                    cmd,
                     capture_output=True,
                     text=True,
                     timeout=60  # 1 minute timeout
@@ -2116,8 +2165,7 @@ def _run_bev_carts_only_once(run_idx: int, course_dir: str, num_carts: int, outp
     all_coords: List[Dict] = []
     for svc in services.values():
         all_coords.extend(svc.coordinates)
-    if all_coords:
-        render_beverage_cart_plot(all_coords, course_dir=course_dir, save_path=run_dir / "bev_cart_route.png")
+    # Route PNG intentionally omitted per requirements
 
     # Stats
     stats = {
@@ -2214,6 +2262,30 @@ def _run_bev_with_groups_once(
         groups_interval_min=15.0,
     ) if groups else None
 
+    # Backfill missing hole labels in crossings using node→hole mapping when available
+    def _fill_crossing_holes(crossings_obj: Dict[str, Any]) -> Dict[str, Any]:
+        if not crossings_obj:
+            return crossings_obj
+        try:
+            _nodes, node_holes = load_nodes_geojson_with_holes(nodes_geojson)
+        except Exception:
+            node_holes = None
+        if not node_holes:
+            return crossings_obj
+        try:
+            for g in crossings_obj.get("groups", []) or []:
+                for cr in g.get("crossings", []) or []:
+                    if cr.get("hole") is None:
+                        idx = int(cr.get("node_index", -1))
+                        if 0 <= idx < len(node_holes):
+                            h = node_holes[idx]
+                            cr["hole"] = int(h) if h is not None else None
+        except Exception:
+            pass
+        return crossings_obj
+
+    crossings = _fill_crossing_holes(crossings) if crossings is not None else None
+
     # Generate golfer points and simulate sales (if groups)
     golfer_points = _generate_golfer_points_for_groups(course_dir, groups) if groups else []
 
@@ -2252,7 +2324,6 @@ def _run_bev_with_groups_once(
 
     # Visualization for cart
     if bev_points and not no_visualization:
-        render_beverage_cart_plot(bev_points, course_dir=course_dir, save_path=run_dir / "bev_cart_route.png")
         # Crossings pass/sale scatter viz (if crossings and sales available)
         try:
             from golfsim.viz.matplotlib_viz import render_bev_cart_crossings  # local import
@@ -2696,7 +2767,6 @@ def _run_mode_bev_carts(args: argparse.Namespace) -> None:
                 "",
                 "## Artifacts",
                 "- `bev_cart_coordinates.csv` — GPS track for each cart",
-                "- `bev_cart_route.png` — Route visualization",
                 "- `bev_cart_metrics_*.md` — Metrics per cart",
             ]
         (output_root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
@@ -2951,35 +3021,8 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
         requested_total_orders = int(args.delivery_total_orders) if getattr(args, "delivery_total_orders", None) is not None else int(getattr(sim_config, "delivery_total_orders", 0))
         delivery_order_probability = _calculate_delivery_order_probability_per_9_holes(requested_total_orders, len(groups))
 
-        # Compute crossings to detect bev-cart passes for boost
+        # Crossings are disabled in delivery-runner mode (bev-cart runs separately via --also-bevcart-only)
         crossings = None
-        # Determine if bev-cart should be included (default: disabled unless explicitly enabled)
-        include_bev_cart = bool(getattr(args, "with_bev_cart", False)) and not bool(getattr(args, "no_bev_cart", False))
-        if groups and include_bev_cart:
-            try:
-                nodes_geojson = str(Path(args.course_dir) / "geojson" / "generated" / "lcm_course_nodes.geojson")
-                holes_geojson = str(Path(args.course_dir) / "geojson" / "generated" / "holes_geofenced.geojson")
-                config_json = str(Path(args.course_dir) / "config" / "simulation_config.json")
-                first_tee_in_groups = min(g["tee_time_s"] for g in groups)
-                last_tee_in_groups = max(g["tee_time_s"] for g in groups)
-                bev_start_s = (9 - 7) * 3600
-                crossings = compute_crossings_from_files(
-                    nodes_geojson=nodes_geojson,
-                    holes_geojson=holes_geojson,
-                    config_json=config_json,
-                    v_fwd_mph=None,
-                    v_bwd_mph=None,
-                    bev_start=_seconds_to_clock_str(bev_start_s),
-                    groups_start=_seconds_to_clock_str(first_tee_in_groups),
-                    groups_end=_seconds_to_clock_str(last_tee_in_groups),
-                    groups_count=len(groups),
-                    random_seed=int(args.random_seed) if args.random_seed is not None else None,
-                    tee_mode="interval",
-                    groups_interval_min=float(args.groups_interval_min),
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Failed to compute crossings for bev-cart pass boost: %s", e)
-                crossings = None
 
         # Determine effective runner speed with CLI precedence
         if getattr(args, "runner_speed_mph", None) is not None:
@@ -3156,48 +3199,10 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
             },
         }
 
-        # Optionally add beverage cart GPS and sales (traditional bev-cart revenue) for combined metrics
+        # No in-run bev-cart mixing in delivery-runner mode; bev-cart can be run separately via --also-bevcart-only
         bev_points: List[Dict[str, Any]] = []
         bev_sales_result: Dict[str, Any] = {"sales": [], "revenue": 0.0}
         golfer_points: List[Dict[str, Any]] = []
-        if groups and include_bev_cart:
-            try:
-                # Generate golfer tracks for bev sales proximity/visibility
-                golfer_points = _generate_golfer_points_for_groups(args.course_dir, groups)
-
-                # Build beverage cart GPS via BeverageCartService for consistency
-                env2 = simpy.Environment()
-                svc2 = BeverageCartService(env=env2, course_dir=args.course_dir, cart_id="bev_cart_1", track_coordinates=True, starting_hole=18)
-                env2.run(until=svc2.service_end_s)
-                bev_points = svc2.coordinates or []
-
-                # Use configured beverage cart order probability per 9 holes (override via CLI)
-                bev_order_probability = (
-                    float(getattr(args, "bev_order_prob", None))
-                    if getattr(args, "bev_order_prob", None) is not None
-                    else float(getattr(sim_config, "bev_cart_order_probability_per_9_holes", 0.35))
-                )
-                # Determine bev-cart price: prefer course config unless CLI explicitly overrides
-                cfg_bev_price = float(getattr(sim_config, "bev_cart_avg_order_usd", 12.0))
-                arg_bev_price = float(getattr(args, "avg_order_usd", cfg_bev_price))
-                # If CLI equals its default (12.0) but config differs, use config
-                effective_bev_price = cfg_bev_price if (abs(arg_bev_price - 12.0) < 1e-9 and abs(cfg_bev_price - 12.0) > 1e-9) else arg_bev_price
-                bev_sales_result = simulate_beverage_cart_sales(
-                    course_dir=args.course_dir,
-                    groups=groups,
-                    pass_order_probability=float(bev_order_probability),
-                    price_per_order=float(effective_bev_price),
-                    minutes_between_holes=2.0,
-                    minutes_per_hole=None,
-                    golfer_points=golfer_points,
-                    crossings_data=crossings,
-                )
-
-                # Attach bev data so metrics integration can detect bev-cart
-                sim_result["bev_points"] = bev_points
-                sim_result["sales_result"] = bev_sales_result
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Failed to include beverage cart revenue in delivery-runner mode: %s", e)
 
         # Create visualizations if requested and there are orders
         if sim_result["orders"] and not bool(getattr(args, "no_visualization", False)) and bool(getattr(args, "include_delivery_maps", False)):
@@ -3995,8 +4000,9 @@ def main() -> None:
         parser.add_argument("--sla-minutes", type=int, default=30, help="SLA in minutes")
         parser.add_argument("--service-hours", type=float, default=10.0, help="Active service hours for runner (metrics scaling)")
         parser.add_argument("--num-runners", type=int, default=0, help="Number of delivery runners (mutually exclusive with --num-carts)")
-        parser.add_argument("--no-bev-cart", action="store_true", help="[Deprecated] Use --with-bev-cart to enable. When set, forces bev-cart OFF even if --with-bev-cart provided")
-        parser.add_argument("--with-bev-cart", action="store_true", help="Explicitly include a beverage cart in delivery-runner mode (enables bev-pass boost, bev GPS, and bev metrics)")
+        # Alias flag: run a separate beverage-cart-only shadow simulation after the main run
+        # Note: This is an alias for --also-bevcart-only for clarity
+        parser.add_argument("--with-bev-cart", action="store_true", dest="also_bevcart_only", help="Also run a separate beverage-cart-only simulation (1 cart, 0 runners) after the main run (alias of --also-bevcart-only)")
         parser.add_argument("--include-delivery-maps", action="store_true", help="Include delivery route maps (both individual and overall)")
         parser.add_argument("--no-heatmap", action="store_true", help="Skip creating delivery heatmap")
         parser.add_argument("--interactive-heatmap", action="store_true", help="Create interactive HTML heatmap with hover tooltips")
@@ -4025,6 +4031,7 @@ def main() -> None:
         parser.add_argument(
             "--also-bevcart-only",
             action="store_true",
+            dest="also_bevcart_only",
             help=(
                 "After the main run, execute a separate bev-cart-only simulation (1 cart, 0 runners, 0 golfers) "
                 "and duplicate public outputs into public/bevcart_only"
@@ -4086,9 +4093,6 @@ def main() -> None:
             except Exception as e:  # noqa: BLE001
                 logger.warning("Bev-cart-only shadow run failed: %s", e)
     elif mode_str == "delivery-runner":
-        # Enforce mutual exclusivity even if flags suggest otherwise
-        if getattr(args, "with_bev_cart", False):
-            logger.warning("Ignoring --with-bev-cart because beverage carts and delivery staff are mutually exclusive in auto mode")
         _run_mode_delivery_runner(args)
         # Optional: run bev-cart-only shadow and duplicate public artifacts
         if getattr(args, "also_bevcart_only", False):

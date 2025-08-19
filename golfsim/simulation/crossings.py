@@ -143,6 +143,18 @@ def load_nodes_geojson_with_holes(path: str) -> Tuple[List[Tuple[float, float]],
         except (TypeError, ValueError):
             return None
 
+    # Attempt to load hole polygons for fallback labeling
+    holes_fc: Optional[List[Dict[str, Any]]] = None
+    try:
+        # path → courses/<course>/geojson/generated/holes_connected.geojson
+        from pathlib import Path as _P
+        base = _P(path)
+        holes_path = base.parent / "holes_geofenced.geojson"
+        if holes_path.exists():
+            holes_fc = load_holes_geojson(str(holes_path))
+    except Exception:
+        holes_fc = None
+
     # Prefer Point features with ordering and optional hole labels
     temp: List[Tuple[int, Optional[int], Optional[float], Optional[int], float, float, Optional[int]]] = []
     for idx, feat in enumerate(features):
@@ -166,6 +178,12 @@ def load_nodes_geojson_with_holes(path: str) -> Tuple[List[Tuple[float, float]],
             or props.get("current_hole")
         )
         hole_num = coerce_int(hole_raw)
+        # Fallback to polygon lookup if label is missing
+        if hole_num is None and holes_fc is not None:
+            try:
+                hole_num = locate_hole_for_point(lon=lon, lat=lat, holes=holes_fc)  # type: ignore[arg-type]
+            except Exception:
+                hole_num = None
         temp.append((idx, idx_prop, seq, nid, lat, lon, hole_num))
 
     if temp:

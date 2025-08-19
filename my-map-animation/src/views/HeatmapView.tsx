@@ -38,7 +38,10 @@ export default function HeatmapView() {
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const resp = await fetch(`/config.json?t=${Date.now()}`);
+        const configPath = (process.env.REACT_APP_CONFIG_PATH && process.env.REACT_APP_CONFIG_PATH.trim().length > 0)
+          ? process.env.REACT_APP_CONFIG_PATH
+          : '/config.json';
+        const resp = await fetch(`${configPath}?t=${Date.now()}`);
         const cfg: AppConfig = await resp.json();
         setConfig(cfg);
         // Prefer Golf Course Terrain Pro (outdoors) style by default for Heatmap view if available
@@ -52,7 +55,10 @@ export default function HeatmapView() {
   useEffect(() => {
     const loadHoles = async () => {
       try {
-        const resp = await fetch(`/hole_delivery_times.geojson?t=${Date.now()}`);
+        const holesPath = (process.env.REACT_APP_HOLES_PATH && process.env.REACT_APP_HOLES_PATH.trim().length > 0)
+          ? process.env.REACT_APP_HOLES_PATH
+          : '/hole_delivery_times.geojson';
+        const resp = await fetch(`${holesPath}?t=${Date.now()}`);
         if (!resp.ok) return;
         const gj = await resp.json();
         setHolesGeojson(gj);
