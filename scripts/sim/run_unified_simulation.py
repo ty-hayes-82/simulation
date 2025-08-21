@@ -1523,6 +1523,113 @@ def _copy_to_public_coordinates(
         logger.warning("Failed to copy simulation to public coordinates: %s", e)
 
 
+def _sync_run_outputs_to_public(run_dir: Path, description: str | None = None) -> None:
+    """Copy key artifacts from a run directory into public/ and public/coordinates/.
+
+    Always best-effort; missing files are skipped.
+
+    Copies to public/:
+      - coordinates.csv (if present)
+      - simulation_metrics.json (if present)
+      - manifest.json (generated or copied)
+      - hole_delivery_times.geojson (exported if possible)
+
+    Also ensures public/coordinates/ contains coordinates.csv, simulation_metrics.json, manifest.json.
+    """
+    try:
+        import shutil
+
+        public_root = Path("public")
+        coords_dir = public_root / "coordinates"
+        public_root.mkdir(parents=True, exist_ok=True)
+        coords_dir.mkdir(parents=True, exist_ok=True)
+
+        # Source artifacts from run directory
+        src_coords = run_dir / "coordinates.csv"
+        src_metrics = run_dir / "simulation_metrics.json"
+
+        # 1) Copy coordinates.csv if available
+        if src_coords.exists():
+            shutil.copy2(src_coords, coords_dir / "coordinates.csv")
+            shutil.copy2(src_coords, public_root / "coordinates.csv")
+
+        # 2) Copy simulation_metrics.json if available
+        if src_metrics.exists():
+            shutil.copy2(src_metrics, coords_dir / "simulation_metrics.json")
+            shutil.copy2(src_metrics, public_root / "simulation_metrics.json")
+
+        # 3) Ensure a manifest.json exists in both places (reference coordinates.csv)
+        #    Prefer to generate a minimal manifest tailored to the copied coordinates
+        coord_count = 0
+        try:
+            if src_coords.exists():
+                with src_coords.open("r", encoding="utf-8") as f:
+                    coord_count = max(0, sum(1 for _ in f) - 1)
+        except Exception:
+            coord_count = 0
+
+        manifest_data = {
+            "simulations": [{
+                "id": "coordinates",
+                "name": "Simulation",
+                "filename": "coordinates.csv",
+                "description": description or (f"{coord_count} coordinate points" if coord_count else "latest run")
+            }],
+            "defaultSimulation": "coordinates",
+        }
+
+        # Write/overwrite manifests
+        try:
+            with (coords_dir / "manifest.json").open("w", encoding="utf-8") as mf:
+                json.dump(manifest_data, mf, indent=2)
+            with (public_root / "manifest.json").open("w", encoding="utf-8") as mf:
+                json.dump(manifest_data, mf, indent=2)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed writing public manifest files: %s", e)
+
+        # 4) Export hole_delivery_times.geojson if possible and copy to public/
+        try:
+            export_script = Path("scripts") / "viz" / "export_hole_delivery_geojson.py"
+            if export_script.exists():
+                # Choose results file from the run directory if present
+                results_file = None
+                for name in ("results.json", "result.json", "simulation_results.json"):
+                    cand = run_dir / name
+                    if cand.exists():
+                        results_file = cand
+                        break
+
+                cmd = [sys.executable, str(export_script)]
+                if results_file is not None:
+                    cmd += ["--results-file", str(results_file)]
+                else:
+                    cmd += ["--output-dir", str(run_dir)]
+
+                # Export (the script writes into my-map-animation/public/hole_delivery_times.geojson by default)
+                res = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                if res.returncode != 0 and res.stderr:
+                    logger.warning("GeoJSON export reported an error: %s", res.stderr.strip())
+
+                # Copy from React app public if present into simulation public/
+                react_geojson = Path("my-map-animation") / "public" / "hole_delivery_times.geojson"
+                sim_geojson = public_root / "hole_delivery_times.geojson"
+                if react_geojson.exists():
+                    shutil.copy2(react_geojson, sim_geojson)
+                # If exporter wrote directly to simulation public already, nothing else to do
+        except subprocess.TimeoutExpired:
+            logger.warning("GeoJSON export timed out after 60s")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed ensuring hole_delivery_times.geojson: %s", e)
+
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to sync run outputs to public: %s", e)
+
 def _copy_public_outputs_to_subfolder(subfolder: str = "bevcart_only") -> None:
     """Duplicate current public outputs into a subfolder under public/.
 
@@ -1599,7 +1706,13 @@ def _generate_executive_summary(output_root: Path) -> None:
     """Generate executive summary using Google Gemini for the simulation results."""
     try:
         # Import the executive summary script
-        script_path = Path(__file__).parent.parent / "analysis" / "generate_gemini_executive_summary.py"
+        # Handle case where __file__ is not defined (e.g., when running with exec())
+        try:
+            script_path = Path(__file__).parent.parent / "analysis" / "generate_gemini_executive_summary.py"
+        except NameError:
+            # Fallback: try to find the script relative to current working directory
+            script_path = Path("scripts") / "analysis" / "generate_gemini_executive_summary.py"
+        
         if not script_path.exists():
             logger.warning("Executive summary script not found: %s", script_path)
             return
@@ -1915,12 +2028,40 @@ def _parse_hhmm_to_seconds_since_7am(hhmm: str) -> int:
         return 0
 
 
+def _parse_tee_time_to_seconds_since_7am(tee_time: str) -> int:
+    """Parse tee time strings like '7:45 AM', '1:06 PM' to seconds since 7 AM."""
+    try:
+        # Handle AM/PM format
+        if 'PM' in tee_time.upper():
+            time_part = tee_time.upper().replace('PM', '').strip()
+            hh, mm = time_part.split(':')
+            hour = int(hh)
+            if hour != 12:  # 12 PM stays 12, 1 PM becomes 13, etc.
+                hour += 12
+            return (hour - 7) * 3600 + int(mm) * 60
+        elif 'AM' in tee_time.upper():
+            time_part = tee_time.upper().replace('AM', '').strip()
+            hh, mm = time_part.split(':')
+            hour = int(hh)
+            if hour == 12:  # 12 AM becomes 0
+                hour = 0
+            return (hour - 7) * 3600 + int(mm) * 60
+        else:
+            # Fallback to HH:MM format
+            return _parse_hhmm_to_seconds_since_7am(tee_time)
+    except Exception:
+        return 0
+
+
 def _build_groups_from_scenario(course_dir: str, scenario_key: str, default_group_size: int = 4) -> List[Dict]:
     """Build golfer groups using a named scenario from tee_times_config.json.
 
-    - Interprets `hourly_golfers` counts as number of golfers in that hour
-    - Creates groups of size `default_group_size` (last group may be smaller)
-    - Distributes groups evenly across each hour block
+    Supports two formats:
+    1. Legacy: `hourly_golfers` counts as number of golfers in that hour
+    2. New: `detailed_tee_times` with exact tee times and golfer counts
+    
+    For detailed tee times, creates groups exactly as specified.
+    For hourly distribution, creates groups of size `default_group_size` (last group may be smaller).
     """
     if not scenario_key or scenario_key.lower() in {"none", "manual"}:
         return []
@@ -1937,11 +2078,41 @@ def _build_groups_from_scenario(course_dir: str, scenario_key: str, default_grou
         return []
 
     scenario = scenarios[scenario_key]
+    
+    # Check for detailed tee times first (new format)
+    detailed_tee_times = scenario.get("detailed_tee_times", [])
+    if detailed_tee_times:
+        logger.info("Using detailed tee times from scenario '%s'", scenario_key)
+        groups: List[Dict] = []
+        group_id = 1
+        
+        for tee_time_entry in detailed_tee_times:
+            tee_time = tee_time_entry.get("tee_time", "")
+            num_golfers = int(tee_time_entry.get("number_of_golfers", 0))
+            
+            if not tee_time or num_golfers <= 0:
+                continue
+                
+            tee_time_s = _parse_tee_time_to_seconds_since_7am(tee_time)
+            if tee_time_s < 0:  # Skip times before 7 AM
+                continue
+                
+            groups.append({
+                "group_id": group_id,
+                "tee_time_s": tee_time_s,
+                "num_golfers": num_golfers,
+            })
+            group_id += 1
+        
+        return groups
+    
+    # Fallback to legacy hourly_golfers format
     hourly: Dict[str, int] = scenario.get("hourly_golfers", {})
     if not hourly:
-        logger.warning("tee-scenario '%s' missing 'hourly_golfers'; falling back to manual args", scenario_key)
+        logger.warning("tee-scenario '%s' missing both 'detailed_tee_times' and 'hourly_golfers'; falling back to manual args", scenario_key)
         return []
 
+    logger.info("Using hourly golfer distribution from scenario '%s'", scenario_key)
     groups: List[Dict] = []
     group_id = 1
 
@@ -2698,6 +2869,13 @@ def _run_mode_single_golfer(args: argparse.Namespace) -> None:
                 except Exception as e:  # noqa: BLE001
                     logger.warning("Failed to copy to public coordinates: %s", e)
 
+                # Always sync key artifacts to public directory
+                try:
+                    desc = description
+                    _sync_run_outputs_to_public(run_dir, description=desc)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Public sync failed: %s", e)
+
                 # Collect for summary
                 all_runs.append(results)
 
@@ -2743,6 +2921,13 @@ def _run_mode_bev_carts(args: argparse.Namespace) -> None:
     for i in range(1, int(args.num_runs) + 1):
         stats = _run_bev_carts_only_once(i, args.course_dir, int(args.num_carts), output_root)
         all_stats.append(stats)
+        # Sync artifacts for this run as well (bev-cart mode writes bev_cart_coordinates.csv; skip if missing coordinates.csv)
+        try:
+            run_dir = output_root / f"sim_{i:02d}"
+            desc = f"Beverage cart GPS run {i:02d}"
+            _sync_run_outputs_to_public(run_dir, description=desc)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Public sync failed: %s", e)
 
     # Write a mode-specific summary
     if all_stats:
@@ -2872,6 +3057,12 @@ def _run_mode_bev_with_golfers(args: argparse.Namespace) -> None:
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to copy to public coordinates: %s", e)
+
+        # Always sync key artifacts to public directory
+        try:
+            _sync_run_outputs_to_public(run_dir, description=description)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Public sync failed: %s", e)
 
         phase3_summary_rows.append({
             "run_idx": i,
@@ -3578,6 +3769,12 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to copy to public coordinates: %s", e)
+
+        # Always sync key artifacts to public directory
+        try:
+            _sync_run_outputs_to_public(run_path, description=description)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Public sync failed: %s", e)
 
         all_runs.append({
             "run_idx": run_idx,
