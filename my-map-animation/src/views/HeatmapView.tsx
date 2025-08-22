@@ -27,6 +27,32 @@ const DEFAULT_CONFIG: AppConfig = {
   }
 };
 
+const Legend = ({ minTime, maxTime }: { minTime: number, maxTime: number }) => (
+  <div style={{
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    background: 'rgba(255, 255, 255, 0.9)',
+    padding: '10px',
+    borderRadius: '5px',
+    boxShadow: '0 0 10px rgba(0, 0, 0, 0.2)',
+    zIndex: 10
+  }}>
+    <div style={{ marginBottom: '5px', fontWeight: 'bold', fontSize: '12px' }}>Avg Delivery Time (min)</div>
+    <div style={{ display: 'flex', alignItems: 'center' }}>
+      <span style={{ fontSize: '12px' }}>{minTime.toFixed(1)}</span>
+      <div style={{
+        width: '100px',
+        height: '20px',
+        background: 'linear-gradient(to right, #ffffff, #ff0000)',
+        margin: '0 10px',
+        border: '1px solid #ccc'
+      }} />
+      <span style={{ fontSize: '12px' }}>{maxTime.toFixed(1)}</span>
+    </div>
+  </div>
+);
+
 export default function HeatmapView() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [currentMapStyle, setCurrentMapStyle] = useState<string>('outdoors');
@@ -158,7 +184,7 @@ export default function HeatmapView() {
               'text-anchor': 'center'
             }}
             paint={{ 
-              'text-color': '#666666'
+              'text-color': '#333333'
             }}
           />
         )}
@@ -170,7 +196,7 @@ export default function HeatmapView() {
             filter={['>', ['get', 'count'], 0] as any}
             layout={{
               'text-field': '●',
-              'text-size': 32,
+              'text-size': 34,
               'text-allow-overlap': true,
               'text-justify': 'center',
               'text-anchor': 'center'
@@ -188,18 +214,13 @@ export default function HeatmapView() {
             filter={['>', ['get', 'count'], 0] as any}
             layout={{
               'text-field': ['to-string', ['get', 'count']] as any,
-              'text-size': 14,
+              'text-size': 11,
               'text-allow-overlap': true,
               'text-justify': 'center',
               'text-anchor': 'center'
             }}
             paint={{ 
-              'text-color': [
-                'case',
-                ['>', ['get', 'avg_time'], (holesMinTime + holesMaxTime) / 2],
-                '#ffffff',  // White text for darker red backgrounds
-                '#333333'   // Dark text for lighter/white backgrounds
-              ] as any
+              'text-color': '#000000'
             }}
           />
         )}
@@ -213,6 +234,7 @@ export default function HeatmapView() {
           </Popup>
         )}
       </Map>
+      {holesGeojson && <Legend minTime={holesMinTime} maxTime={holesMaxTime} />}
     </div>
   );
 }

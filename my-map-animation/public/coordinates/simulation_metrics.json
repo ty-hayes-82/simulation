@@ -1,12 +1,16 @@
 {
-  "deliveryMetrics": null,
-  "bevCartMetrics": {
-    "totalOrders": 1,
-    "totalGroupsPassed": 1,
-    "avgOrderValue": 12.0,
-    "totalDeliveryOrdersPlaced": 1,
-    "revenuePerBevcartHour": 1.33
+  "deliveryMetrics": {
+    "orderCount": 2,
+    "revenue": 60.0,
+    "avgOrderTime": 15.8,
+    "onTimeRate": 100.0,
+    "failedOrderCount": 0,
+    "queueWaitAvg": 0.0,
+    "deliveryCycleTimeP90": 16.1,
+    "ordersPerRunnerHour": 1.02,
+    "revenuePerRunnerHour": 30.56
   },
-  "hasRunners": false,
-  "hasBevCart": true
+  "bevCartMetrics": null,
+  "hasRunners": true,
+  "hasBevCart": false
 }

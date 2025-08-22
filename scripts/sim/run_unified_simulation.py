@@ -3518,29 +3518,51 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                 return pts
 
             def _interpolate_points(path_pts: List[Tuple[float, float]], start_ts: int, duration_s: float, runner_id: str) -> None:
+                """Interpolate along a path at fixed 60-second timestamps.
+
+                - Matches the golfer animation cadence (one point every 60 seconds)
+                - Produces points from the first minute boundary at/after start_ts
+                  through the last minute boundary at/before (start_ts + duration_s)
+                """
                 if not path_pts or duration_s <= 0:
                     return
+
+                total_time_s = float(duration_s)
                 segments = max(1, len(path_pts) - 1)
-                # Allocate evenly per segment; fine for animation
-                per_seg = float(duration_s) / float(segments)
-                t_cursor = float(start_ts)
-                for i in range(segments):
-                    x0, y0 = path_pts[i]
-                    x1, y1 = path_pts[i + 1]
-                    # Sample at 1s resolution per segment
-                    steps = max(1, int(round(per_seg)))
-                    for s in range(steps):
-                        frac = s / float(max(steps, 1))
-                        lon = x0 + frac * (x1 - x0)
-                        lat = y0 + frac * (y1 - y0)
-                        runner_points.append({
-                            "id": runner_id,
-                            "latitude": lat,
-                            "longitude": lon,
-                            "timestamp": int(round(t_cursor + s)),
-                            "type": "delivery_runner",
-                        })
-                    t_cursor += per_seg
+                per_segment_time = total_time_s / float(segments)
+
+                # Sample at 60-second cadence
+                first_tick = int(((int(start_ts) + 59) // 60) * 60)
+                last_tick = int(((int(start_ts) + int(total_time_s)) // 60) * 60)
+                if last_tick < first_tick:
+                    return
+
+                for t in range(first_tick, last_tick + 1, 60):
+                    # Progress ratio along the whole trip
+                    progress = (float(t) - float(start_ts)) / total_time_s
+                    # Clamp to [0, 1]
+                    if progress < 0.0:
+                        progress = 0.0
+                    elif progress > 1.0:
+                        progress = 1.0
+
+                    # Map progress to segment and local fraction
+                    pos = progress * float(segments)
+                    seg_idx = int(pos) if pos < segments else segments - 1
+                    local_frac = pos - float(seg_idx)
+
+                    x0, y0 = path_pts[seg_idx]
+                    x1, y1 = path_pts[min(seg_idx + 1, len(path_pts) - 1)]
+                    lon = x0 + local_frac * (x1 - x0)
+                    lat = y0 + local_frac * (y1 - y0)
+
+                    runner_points.append({
+                        "id": runner_id,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "timestamp": int(t),
+                        "type": "delivery_runner",
+                    })
 
             def _approximate_hole_location(hole_num: int) -> Optional[Tuple[float, float]]:
                 try:
@@ -3610,6 +3632,9 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                         logger.warning("Skipping return runner coordinates for order %s: no routing nodes", oid)
             except Exception as e:  # noqa: BLE001
                 logger.warning("Failed to synthesize runner coordinates: %s", e)
+
+            # Snap delivery anchors to golfer group position at the delivery minute
+            # (moved below after golfer_points_csv is populated)
 
             # Build golfer stream if groups exist
             try:
