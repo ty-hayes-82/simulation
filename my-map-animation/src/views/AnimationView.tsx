@@ -517,9 +517,15 @@ export default function AnimationView() {
               acc[coord.golfer_id].push(coord);
               return acc;
             }, {});
-            const allTimestamps = coords.map(c => c.timestamp);
-            const minTimestamp = Math.min(...allTimestamps);
-            const maxTimestamp = Math.max(...allTimestamps);
+            // Anchor animation start to the first golfer tee time when available
+            const golferTimestamps = coords
+              .filter((c: any) => c.type === 'golfer')
+              .map((c: any) => c.timestamp);
+            const timestampsForStart = golferTimestamps.length
+              ? golferTimestamps
+              : coords.map((c: any) => c.timestamp);
+            const minTimestamp = Math.min(...timestampsForStart);
+            const maxTimestamp = Math.max(...coords.map((c: any) => c.timestamp));
             const duration = (maxTimestamp - minTimestamp); // keep in seconds
             setOriginalMinTimestamp(minTimestamp);
             setAnimationDuration(duration / 60); // convert to minutes only for UI display
@@ -783,7 +789,11 @@ export default function AnimationView() {
               id="trackers-points"
               type="circle"
               paint={{
-                'circle-radius': (config?.display.golferMarkers.radius ?? 9),
+                'circle-radius': ['case',
+                  ['==', ['get', 'type'], 'golfer'],
+                  (config?.display.golferMarkers.radius ?? 9) * 0.65,
+                  (config?.display.golferMarkers.radius ?? 9)
+                ],
                 'circle-color': ['get', 'color'],
                 'circle-stroke-width': config?.display.golferMarkers.strokeWidth || 3,
                 'circle-stroke-color': config?.display.golferMarkers.strokeColor || '#ffffff',

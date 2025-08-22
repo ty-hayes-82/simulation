@@ -130,6 +130,10 @@ def main() -> None:
     parser.add_argument("--runner-speed", type=float, default=None, help="Runner speed in m/s (overrides config)")
     parser.add_argument("--golfer-total-minutes", type=int, default=None, help="Total minutes for golfer round (overrides config)")
     
+    # Hole restrictions
+    parser.add_argument("--block-up-to-hole", type=int, default=0, help="Block ordering for holes ≤ this number (e.g., 5 blocks 1–5)")
+    parser.add_argument("--block-holes-10-12", action="store_true", default=False, help="Block ordering for holes 10–12")
+    
     # GeoJSON export options
     parser.add_argument("--export-geojson", action="store_true", default=True, help="Export hole delivery times GeoJSON (default: True)")
     parser.add_argument("--geojson-output", type=str, default="my-map-animation/public/hole_delivery_times.geojson", help="GeoJSON output path")

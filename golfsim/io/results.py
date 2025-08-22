@@ -443,19 +443,14 @@ def copy_to_public_coordinates(
         public_coords_dir = react_public_dir / "coordinates"
         public_coords_dir.mkdir(parents=True, exist_ok=True)
         
-        sim_public_coords_dir = Path("public") / "coordinates"
-        sim_public_coords_dir.mkdir(parents=True, exist_ok=True)
-        
         source_coords = run_dir / "coordinates.csv"
         source_metrics = run_dir / "simulation_metrics.json"
         
         if source_coords.exists():
             shutil.copy2(source_coords, public_coords_dir / "coordinates.csv")
-            shutil.copy2(source_coords, sim_public_coords_dir / "coordinates.csv")
 
         if source_metrics.exists():
             shutil.copy2(source_metrics, public_coords_dir / "simulation_metrics.json")
-            shutil.copy2(source_metrics, sim_public_coords_dir / "simulation_metrics.json")
             
         coord_count = sum(1 for line in source_coords.open("r", encoding="utf-8")) - 1 if source_coords.exists() else 0
         manifest_data = {
@@ -463,17 +458,17 @@ def copy_to_public_coordinates(
             "defaultSimulation": "coordinates"
         }
         
-        for manifest_path in [public_coords_dir / "manifest.json", sim_public_coords_dir / "manifest.json"]:
-            with manifest_path.open("w", encoding="utf-8") as f:
-                json.dump(manifest_data, f, indent=2)
+        manifest_path = public_coords_dir / "manifest.json"
+        with manifest_path.open("w", encoding="utf-8") as f:
+            json.dump(manifest_data, f, indent=2)
 
     except Exception as e:
         logger.warning("Failed to copy coordinates to public: %s", e)
 
 def sync_run_outputs_to_public(run_dir: Path, description: Optional[str] = None) -> None:
-    """Copy key artifacts from a run directory into public/ and public/coordinates/."""
+    """Copy key artifacts from a run directory into my-map-animation/public/ and my-map-animation/public/coordinates/."""
     try:
-        public_root = Path("public")
+        public_root = Path("my-map-animation") / "public"
         coords_dir = public_root / "coordinates"
         public_root.mkdir(parents=True, exist_ok=True)
         coords_dir.mkdir(parents=True, exist_ok=True)

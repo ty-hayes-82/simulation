@@ -22,10 +22,10 @@ from datetime import datetime
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = (SCRIPT_DIR / "..").resolve()
 
-# Configuration - Copy to both locations: simulation/public and my-map-animation/public
-PUBLIC_DIRS = [str(PROJECT_ROOT / "public"), str(SCRIPT_DIR / "public")]
+# Configuration - Copy to my-map-animation/public only
+PUBLIC_DIRS = [str(SCRIPT_DIR / "public")]
 COORDINATES_DIR = "coordinates"
-LOCAL_CSV_FILE = str(PROJECT_ROOT / "public" / "coordinates.csv")
+LOCAL_CSV_FILE = str(SCRIPT_DIR / "public" / "coordinates.csv")
 
 # Determine outputs directory dynamically, with env override
 # Falls back to ../outputs relative to this script
@@ -420,8 +420,8 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                 json.dump(manifest, f, indent=2)
             print(f"📋 Created manifest: {manifest_path}")
         
-        # Copy simulation_metrics.json if it exists in the parent public directory
-        metrics_source = PROJECT_ROOT / "public" / "simulation_metrics.json"
+        # Copy simulation_metrics.json if it exists in the my-map-animation public directory
+        metrics_source = SCRIPT_DIR / "public" / "simulation_metrics.json"
         if os.path.exists(metrics_source):
             for coordinates_dir in coordinates_dirs:
                 metrics_target = os.path.join(coordinates_dir, "simulation_metrics.json")
@@ -486,7 +486,7 @@ def copy_heatmaps_to_coordinates_dirs(all_simulations: Dict[str, List[Tuple[str,
 
 def copy_hole_delivery_geojson(coordinates_dirs: List[str]) -> None:
     """Copy hole_delivery_times.geojson to parent public directories."""
-    source_file = PROJECT_ROOT / "public" / "hole_delivery_times.geojson"
+    source_file = SCRIPT_DIR / "public" / "hole_delivery_times.geojson"
     
     if os.path.exists(source_file):
         for public_dir in PUBLIC_DIRS:
