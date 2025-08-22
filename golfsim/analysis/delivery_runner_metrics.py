@@ -145,6 +145,74 @@ def calculate_delivery_runner_metrics(
     )
 
 
+def calculate_utilization_from_activity_log(activity_logs: List[Dict[str, Any]], service_hours: float) -> Dict[str, Dict[str, float]]:
+    """Calculate runner utilization from activity log including all delivery attempts.
+    
+    Counts time from delivery_start to returning for ALL deliveries (successful and failed).
+    """
+    by_runner: Dict[str, Dict[str, float]] = {}
+    
+    if not activity_logs:
+        return by_runner
+    
+    service_seconds = service_hours * 3600
+    
+    # Group activities by runner_id
+    runner_activities = {}
+    for activity in activity_logs:
+        runner_id = activity.get('runner_id')
+        if runner_id:
+            if runner_id not in runner_activities:
+                runner_activities[runner_id] = []
+            runner_activities[runner_id].append(activity)
+    
+    # Calculate total delivery time per runner
+    for runner_id, activities in runner_activities.items():
+        # Sort activities by timestamp
+        activities.sort(key=lambda x: x.get('timestamp_s', 0))
+        
+        total_delivery_time = 0.0
+        current_delivery_start = None
+        service_start_time = None
+        service_end_time = None
+        
+        for activity in activities:
+            activity_type = activity.get('activity_type', '')  # Use activity_type from service logs
+            timestamp = activity.get('timestamp_s', 0)
+            
+            # Track actual service window for this runner
+            if 'service_opened' in activity_type:
+                service_start_time = timestamp
+            elif 'service_closed' in activity_type:
+                service_end_time = timestamp
+            
+            if 'delivery_start' in activity_type:
+                current_delivery_start = timestamp
+            elif 'returning' in activity_type and current_delivery_start is not None:
+                # Calculate time for this complete delivery cycle
+                delivery_cycle_time = timestamp - current_delivery_start
+                total_delivery_time += delivery_cycle_time
+                current_delivery_start = None
+        
+        # If there's an uncompleted delivery (failed/timeout), count time until service end
+        if current_delivery_start is not None and service_end_time is not None:
+            incomplete_delivery_time = service_end_time - current_delivery_start
+            if incomplete_delivery_time > 0:  # Only add positive time
+                total_delivery_time += incomplete_delivery_time
+        
+        # Calculate utilization percentage using fixed service window
+        utilization_pct = (total_delivery_time / service_seconds) * 100 if service_seconds > 0 else 0
+        
+        by_runner[runner_id] = {
+            'driving': utilization_pct,
+            'total_delivery_time_s': total_delivery_time,
+            'prep': 0.0, # to match other function's output schema
+            'idle': 100.0 - utilization_pct,
+        }
+        
+    return by_runner
+
+
 def _calculate_actual_active_hours(activity_log: List[Dict[str, Any]], max_service_hours: float) -> float:
     """Calculate actual active hours from service_opened to last activity."""
     if not activity_log:

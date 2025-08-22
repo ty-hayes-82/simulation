@@ -1,6 +1,13 @@
+"""
+Simulation Results I/O Module
+
+Handles final packaging and exporting of simulation results for consumers like the web UI.
+"""
+
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -421,4 +428,74 @@ def write_coordinates_csv_with_visibility(
     
     # Write enhanced CSV
     return write_unified_coordinates_csv(enhanced_points_by_id, save_path)
+
+
+def copy_to_public_coordinates(
+    run_dir: Path, simulation_id: str, mode: str, golfer_group_count: int,
+    description: Optional[str] = None
+) -> None:
+    """Copy simulation files to public/coordinates/ for React map animation."""
+    if golfer_group_count != 1:
+        return
+        
+    try:
+        react_public_dir = Path("my-map-animation") / "public"
+        public_coords_dir = react_public_dir / "coordinates"
+        public_coords_dir.mkdir(parents=True, exist_ok=True)
+        
+        sim_public_coords_dir = Path("public") / "coordinates"
+        sim_public_coords_dir.mkdir(parents=True, exist_ok=True)
+        
+        source_coords = run_dir / "coordinates.csv"
+        source_metrics = run_dir / "simulation_metrics.json"
+        
+        if source_coords.exists():
+            shutil.copy2(source_coords, public_coords_dir / "coordinates.csv")
+            shutil.copy2(source_coords, sim_public_coords_dir / "coordinates.csv")
+
+        if source_metrics.exists():
+            shutil.copy2(source_metrics, public_coords_dir / "simulation_metrics.json")
+            shutil.copy2(source_metrics, sim_public_coords_dir / "simulation_metrics.json")
+            
+        coord_count = sum(1 for line in source_coords.open("r", encoding="utf-8")) - 1 if source_coords.exists() else 0
+        manifest_data = {
+            "simulations": [{"id": "coordinates", "name": f"{mode.title()} Simulation", "filename": "coordinates.csv", "description": description or f"{coord_count} coordinate points"}],
+            "defaultSimulation": "coordinates"
+        }
+        
+        for manifest_path in [public_coords_dir / "manifest.json", sim_public_coords_dir / "manifest.json"]:
+            with manifest_path.open("w", encoding="utf-8") as f:
+                json.dump(manifest_data, f, indent=2)
+
+    except Exception as e:
+        logger.warning("Failed to copy coordinates to public: %s", e)
+
+def sync_run_outputs_to_public(run_dir: Path, description: Optional[str] = None) -> None:
+    """Copy key artifacts from a run directory into public/ and public/coordinates/."""
+    try:
+        public_root = Path("public")
+        coords_dir = public_root / "coordinates"
+        public_root.mkdir(parents=True, exist_ok=True)
+        coords_dir.mkdir(parents=True, exist_ok=True)
+
+        src_coords = run_dir / "coordinates.csv"
+        if src_coords.exists():
+            shutil.copy2(src_coords, coords_dir / "coordinates.csv")
+            shutil.copy2(src_coords, public_root / "coordinates.csv")
+
+        src_metrics = run_dir / "simulation_metrics.json"
+        if src_metrics.exists():
+            shutil.copy2(src_metrics, coords_dir / "simulation_metrics.json")
+            shutil.copy2(src_metrics, public_root / "simulation_metrics.json")
+        
+        coord_count = sum(1 for _ in src_coords.open("r")) - 1 if src_coords.exists() else 0
+        manifest_data = {
+            "simulations": [{"id": "coordinates", "name": "Simulation", "filename": "coordinates.csv", "description": description or f"{coord_count} coordinate points"}],
+            "defaultSimulation": "coordinates"
+        }
+        with (coords_dir / "manifest.json").open("w") as f: json.dump(manifest_data, f, indent=2)
+        with (public_root / "manifest.json").open("w") as f: json.dump(manifest_data, f, indent=2)
+
+    except Exception as e:
+        logger.warning("Failed to sync outputs to public: %s", e)
 

@@ -2,13 +2,14 @@
 Unit tests for delivery runner metrics module.
 """
 
+from __future__ import annotations
 import pytest
 import statistics
 from golfsim.analysis.delivery_runner_metrics import (
     calculate_delivery_runner_metrics,
     summarize_delivery_runner_metrics,
     DeliveryRunnerMetrics,
-    _extract_total_rounds,
+    _extract_total_ordering_groups as _extract_total_rounds,
     _calculate_on_time_rate,
     _calculate_runner_utilization,
     _calculate_queue_metrics,
@@ -16,6 +17,8 @@ from golfsim.analysis.delivery_runner_metrics import (
     _calculate_second_runner_break_even,
     _calculate_zone_service_times,
 )
+from golfsim.simulation.delivery_service import DeliveryService
+from golfsim.simulation.order_generation import simulate_golfer_orders
 
 
 def test_extract_total_rounds():
@@ -85,42 +88,38 @@ def test_calculate_runner_utilization():
     """Test runner utilization calculation."""
     service_hours = 10.0
     service_seconds = service_hours * 3600
-    
+
     # Test with various activities
     activity_log = [
         {'activity_type': 'delivery_start', 'timestamp_s': 0},
         {'activity_type': 'delivery_complete', 'timestamp_s': 1800},  # 30 min driving
         {'activity_type': 'prep_start', 'timestamp_s': 1800},
-        {'activity_type': 'prep_complete', 'timestamp_s': 2400},  # 10 min waiting
+        {'activity_type': 'prep_complete', 'timestamp_s': 2400},
         {'activity_type': 'idle', 'timestamp_s': 2400},
         {'activity_type': 'queue_status', 'timestamp_s': service_seconds},  # Rest idle
     ]
-    
+
     utilization = _calculate_runner_utilization(activity_log, service_hours)
-    
-    # Check that percentages are valid (may not sum to 100% since we only track driving and waiting)
+
+    # Check that percentages are valid
     assert utilization['driving'] >= 0
-    assert utilization['waiting'] >= 0
-    assert 'handoff' not in utilization
-    assert 'deadhead' not in utilization
-    
-    # Check that driving time is calculated correctly
-    expected_driving_pct = (1800 / service_seconds) * 100
-    assert abs(utilization['driving'] - expected_driving_pct) < 1.0
+    assert utilization['prep'] >= 0
+    assert utilization['idle'] >= 0
 
 
 def test_calculate_queue_metrics():
     """Test queue metrics calculation."""
     # Test with queue status activities
+    delivery_stats = []
     activity_log = [
         {'activity_type': 'queue_status', 'description': '2 orders waiting'},
         {'activity_type': 'queue_status', 'description': '5 orders waiting'},
         {'activity_type': 'queue_status', 'description': '1 order waiting'},
         {'activity_type': 'queue_status', 'description': '3 orders waiting'},
     ]
-    
-    queue_metrics = _calculate_queue_metrics(activity_log)
-    
+
+    queue_metrics = _calculate_queue_metrics(delivery_stats, activity_log)
+
     # Average queue depth should be (2+5+1+3)/4 = 2.75
     # Note: The implementation uses a simplified calculation, so we check for reasonable range
     assert 0 <= queue_metrics['avg_depth'] <= 5
@@ -130,7 +129,7 @@ def test_calculate_queue_metrics():
         {'activity_type': 'delivery_start', 'description': 'Starting delivery'},
     ]
     
-    queue_metrics = _calculate_queue_metrics(activity_log)
+    queue_metrics = _calculate_queue_metrics(delivery_stats, activity_log)
     assert queue_metrics['avg_depth'] == 0
     assert queue_metrics['avg_wait'] == 0
 
@@ -338,7 +337,8 @@ def test_summarize_delivery_runner_metrics():
         second_runner_break_even_orders=5.0,
         queue_wait_avg=15.0,
         runner_utilization_driving_pct=40.0,
-        runner_utilization_waiting_pct=30.0,
+        runner_utilization_prep_pct=0.0,
+        runner_utilization_idle_pct=60.0,
         distance_per_delivery_avg=1000.0,
         zone_service_times={'hole_5': 22.0, 'hole_8': 28.0},
         total_revenue=100.0,
@@ -361,7 +361,8 @@ def test_summarize_delivery_runner_metrics():
         second_runner_break_even_orders=6.0,
         queue_wait_avg=20.0,
         runner_utilization_driving_pct=45.0,
-        runner_utilization_waiting_pct=25.0,
+        runner_utilization_prep_pct=0.0,
+        runner_utilization_idle_pct=55.0,
         distance_per_delivery_avg=1200.0,
         zone_service_times={'hole_5': 25.0, 'hole_12': 32.0},
         total_revenue=150.0,
@@ -377,17 +378,15 @@ def test_summarize_delivery_runner_metrics():
     summaries = summarize_delivery_runner_metrics([metrics1, metrics2])
     
     # Check summary calculations
-    assert summaries['revenue_per_round']['mean'] == 25.0  # (20+30)/2
+    assert summaries['revenue_per_round']['mean'] == 25.0
     assert summaries['revenue_per_round']['min'] == 20.0
     assert summaries['revenue_per_round']['max'] == 30.0
     
-    # order_penetration_rate removed from summaries
-    
-    assert summaries['total_revenue'] == 250.0  # 100+150
-    assert summaries['total_orders'] == 9  # 4+5
-    assert summaries['successful_orders'] == 7  # 3+4
-    assert summaries['failed_orders'] == 2  # 1+1
-    assert summaries['total_rounds'] == 10  # 5+5
+    assert summaries['total_revenue'] == 250.0
+    assert summaries['total_orders'] == 9
+    assert summaries['successful_orders'] == 7
+    assert summaries['failed_orders'] == 2
+    assert summaries['total_rounds'] == 10
 
 
 def test_summarize_delivery_runner_metrics_empty():

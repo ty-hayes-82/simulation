@@ -17,15 +17,21 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 from datetime import datetime
 
-# Configuration
-PUBLIC_DIR = "public"
+# --- Start of new path configuration ---
+# Make paths robust to script's location and execution directory
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = (SCRIPT_DIR / "..").resolve()
+
+# Configuration - Copy to both locations: simulation/public and my-map-animation/public
+PUBLIC_DIRS = [str(PROJECT_ROOT / "public"), str(SCRIPT_DIR / "public")]
 COORDINATES_DIR = "coordinates"
-LOCAL_CSV_FILE = "public/coordinates.csv"
+LOCAL_CSV_FILE = str(PROJECT_ROOT / "public" / "coordinates.csv")
 
 # Determine outputs directory dynamically, with env override
 # Falls back to ../outputs relative to this script
-DEFAULT_OUTPUTS_DIR = str((Path(__file__).resolve().parent / ".." / "outputs").resolve())
+DEFAULT_OUTPUTS_DIR = str(PROJECT_ROOT / "outputs")
 SIM_BASE_DIR = os.environ.get("SIM_BASE_DIR", DEFAULT_OUTPUTS_DIR)
+# --- End of new path configuration ---
 
 def _humanize(name: str) -> str:
     name = name.replace('-', ' ').replace('_', ' ').strip()
@@ -196,8 +202,9 @@ def find_all_simulations() -> Dict[str, List[Tuple[str, str, str]]]:
         print(f"Outputs directory not found: {base_dir}")
         return simulations
 
-    # Walk the outputs directory and collect any coordinates CSVs
+    # Walk the outputs directory and collect any coordinates CSVs and heatmaps
     valid_filenames = {"coordinates.csv", "bev_cart_coordinates.csv"}
+    valid_heatmap_filenames = {"delivery_heatmap.png", "heatmap.png"}
 
     for root, dirs, files in os.walk(base_dir):
         csv_files = [f for f in files if f in valid_filenames]
@@ -290,7 +297,7 @@ def find_all_simulations() -> Dict[str, List[Tuple[str, str, str]]]:
 
 def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, str]]], preferred_default_id: Optional[str] = None) -> bool:
     """
-    Copy all coordinate files to the public/coordinates directory and create a hierarchical manifest.
+    Copy all coordinate files to both public directories and create hierarchical manifests.
     
     Args:
         all_simulations: Dict with simulation groups and their files
@@ -299,19 +306,22 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
         True if successful, False otherwise
     """
     try:
-        # Create coordinates directory
-        coordinates_dir = os.path.join(PUBLIC_DIR, COORDINATES_DIR)
-        
-        # Fully clear out existing coordinate directory first (including manifest and any stale files)
-        if os.path.exists(coordinates_dir):
-            try:
-                print("Cleaning coordinates directory...")
-                shutil.rmtree(coordinates_dir)
-            except Exception as e:
-                print(f"Error clearing coordinates directory: {e}")
-                return False
-        
-        os.makedirs(coordinates_dir, exist_ok=True)
+        # Create coordinates directories in both locations
+        coordinates_dirs = []
+        for public_dir in PUBLIC_DIRS:
+            coordinates_dir = os.path.join(public_dir, COORDINATES_DIR)
+            coordinates_dirs.append(coordinates_dir)
+            
+            # Fully clear out existing coordinate directory first (including manifest and any stale files)
+            if os.path.exists(coordinates_dir):
+                try:
+                    print(f"Cleaning coordinates directory: {coordinates_dir}")
+                    shutil.rmtree(coordinates_dir)
+                except Exception as e:
+                    print(f"Error clearing coordinates directory {coordinates_dir}: {e}")
+                    return False
+            
+            os.makedirs(coordinates_dir, exist_ok=True)
         
         # Create flattened manifest for the React app
         manifest = {
@@ -327,39 +337,48 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
             for scenario_id, display_name, source_path in file_options:
                 # Create target filename
                 target_filename = f"{scenario_id}.csv"
-                target_path = os.path.join(coordinates_dir, target_filename)
                 
-                # Copy the file
-                shutil.copy2(source_path, target_path)
-                
-                # Verify the copy
-                if os.path.exists(target_path):
-                    source_size = os.path.getsize(source_path)
-                    target_size = os.path.getsize(target_path)
+                # Copy the file to all coordinates directories
+                all_copies_successful = True
+                for coordinates_dir in coordinates_dirs:
+                    target_path = os.path.join(coordinates_dir, target_filename)
                     
-                    if source_size == target_size:
-                        copied_count += 1
-                        total_size += source_size
+                    # Copy the file
+                    shutil.copy2(source_path, target_path)
+                    
+                    # Verify the copy
+                    if os.path.exists(target_path):
+                        source_size = os.path.getsize(source_path)
+                        target_size = os.path.getsize(target_path)
                         
-                        # Add to flattened simulations list
-                        file_info = get_file_info(source_path)
-                        manifest["simulations"].append({
-                            "id": scenario_id,
-                            "name": f"{group_name}: {display_name}",
-                            "filename": target_filename,
-                            "description": file_info
-                        })
-                        try:
-                            id_to_mtime[scenario_id] = os.path.getmtime(source_path)
-                        except Exception:
-                            pass
-                        
-                        print(f"✅ {display_name} ({source_size//1024:,} KB)")
+                        if source_size != target_size:
+                            print(f"❌ Failed to verify copy for {display_name} to {coordinates_dir}")
+                            all_copies_successful = False
+                            break
                     else:
-                        print(f"❌ Failed to verify copy for {display_name}")
-                        return False
+                        print(f"❌ Failed to copy {display_name} to {coordinates_dir}")
+                        all_copies_successful = False
+                        break
+                
+                if all_copies_successful:
+                    copied_count += 1
+                    total_size += source_size
+                    
+                    # Add to flattened simulations list (only once)
+                    file_info = get_file_info(source_path)
+                    manifest["simulations"].append({
+                        "id": scenario_id,
+                        "name": f"{group_name}: {display_name}",
+                        "filename": target_filename,
+                        "description": file_info
+                    })
+                    try:
+                        id_to_mtime[scenario_id] = os.path.getmtime(source_path)
+                    except Exception:
+                        pass
+                    
+                    print(f"✅ {display_name} ({source_size//1024:,} KB) - copied to all locations")
                 else:
-                    print(f"❌ Failed to copy {display_name}")
                     return False
         
         # Set default simulation
@@ -394,13 +413,31 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
             manifest["defaultSimulation"] = selected_default["id"]
             print(f"Set default simulation: {selected_default['name']}")
         
-        # Write manifest file
-        manifest_path = os.path.join(coordinates_dir, "manifest.json")
-        with open(manifest_path, 'w') as f:
-            json.dump(manifest, f, indent=2)
+        # Write manifest files to all coordinates directories
+        for coordinates_dir in coordinates_dirs:
+            manifest_path = os.path.join(coordinates_dir, "manifest.json")
+            with open(manifest_path, 'w') as f:
+                json.dump(manifest, f, indent=2)
+            print(f"📋 Created manifest: {manifest_path}")
+        
+        # Copy simulation_metrics.json if it exists in the parent public directory
+        metrics_source = PROJECT_ROOT / "public" / "simulation_metrics.json"
+        if os.path.exists(metrics_source):
+            for coordinates_dir in coordinates_dirs:
+                metrics_target = os.path.join(coordinates_dir, "simulation_metrics.json")
+                try:
+                    shutil.copy2(metrics_source, metrics_target)
+                    print(f"📋 Copied simulation_metrics.json to {coordinates_dir}")
+                except Exception as e:
+                    print(f"⚠️  Warning: Could not copy simulation_metrics.json to {coordinates_dir}: {e}")
+        
+        # Copy heatmap files from simulation outputs
+        copy_heatmaps_to_coordinates_dirs(all_simulations, coordinates_dirs)
+        
+        # Copy hole_delivery_times.geojson if it exists
+        copy_hole_delivery_geojson(coordinates_dirs)
         
         print(f"\n✅ Successfully copied {copied_count} simulations ({total_size//1024:,} KB total)")
-        print(f"📋 Created manifest: {manifest_path}")
         
         return True
         
@@ -422,6 +459,44 @@ def get_file_info(file_path: str) -> str:
     except Exception as e:
         return f"Error reading file: {e}"
 
+def copy_heatmaps_to_coordinates_dirs(all_simulations: Dict[str, List[Tuple[str, str, str]]], coordinates_dirs: List[str]) -> None:
+    """Copy heatmap files from simulation outputs to coordinates directories."""
+    valid_heatmap_filenames = {"delivery_heatmap.png", "heatmap.png"}
+    
+    for group_name, file_options in all_simulations.items():
+        for scenario_id, display_name, csv_source_path in file_options:
+            # Find heatmap files in the same directory as the CSV
+            csv_dir = os.path.dirname(csv_source_path)
+            
+            for filename in os.listdir(csv_dir):
+                if filename in valid_heatmap_filenames:
+                    heatmap_source = os.path.join(csv_dir, filename)
+                    
+                    # Copy to all coordinates directories
+                    for coordinates_dir in coordinates_dirs:
+                        # Create a unique heatmap filename based on scenario_id
+                        heatmap_filename = f"{scenario_id}_{filename}"
+                        heatmap_target = os.path.join(coordinates_dir, heatmap_filename)
+                        
+                        try:
+                            shutil.copy2(heatmap_source, heatmap_target)
+                            print(f"🖼️  Copied {filename} to {coordinates_dir} as {heatmap_filename}")
+                        except Exception as e:
+                            print(f"⚠️  Warning: Could not copy {filename}: {e}")
+
+def copy_hole_delivery_geojson(coordinates_dirs: List[str]) -> None:
+    """Copy hole_delivery_times.geojson to parent public directories."""
+    source_file = PROJECT_ROOT / "public" / "hole_delivery_times.geojson"
+    
+    if os.path.exists(source_file):
+        for public_dir in PUBLIC_DIRS:
+            target_file = os.path.join(public_dir, "hole_delivery_times.geojson")
+            try:
+                shutil.copy2(source_file, target_file)
+                print(f"🗺️  Copied hole_delivery_times.geojson to {public_dir}")
+            except Exception as e:
+                print(f"⚠️  Warning: Could not copy hole_delivery_times.geojson to {public_dir}: {e}")
+
 def run_react_app() -> bool:
     """
     Start the React development server.
@@ -438,7 +513,7 @@ def run_react_app() -> bool:
         # Start the React app
         result = subprocess.run(
             ["npm", "start"],
-            cwd=os.getcwd(),
+            cwd=str(SCRIPT_DIR),
             shell=True
         )
         

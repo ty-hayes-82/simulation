@@ -337,15 +337,15 @@ function ControlPanel({
                 Delivery Metrics
               </h4>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 11 }}>
-                <div>Order Count: <strong>{deliveryMetrics.orderCount}</strong></div>
-                <div>Revenue: <strong>${deliveryMetrics.revenue.toFixed(0)}</strong></div>
-                <div>Avg Order Time: <strong>{deliveryMetrics.avgOrderTime.toFixed(1)}m</strong></div>
-                <div>On-Time %: <strong>{deliveryMetrics.onTimeRate.toFixed(1)}%</strong></div>
-                <div>Failed Orders: <strong>{deliveryMetrics.failedOrderCount}</strong></div>
-                <div>Queue Wait: <strong>{deliveryMetrics.queueWaitAvg.toFixed(1)}m</strong></div>
-                <div>Cycle Time (P90): <strong>{deliveryMetrics.deliveryCycleTimeP90.toFixed(1)}m</strong></div>
-                <div>Orders/Runner-Hr: <strong>{deliveryMetrics.ordersPerRunnerHour.toFixed(1)}</strong></div>
-                <div style={{ gridColumn: 'span 2' }}>Revenue/Runner-Hr: <strong>${deliveryMetrics.revenuePerRunnerHour.toFixed(0)}</strong></div>
+                <div>Order Count: <strong>{(deliveryMetrics as any).totalOrders ?? deliveryMetrics.orderCount ?? 0}</strong></div>
+                <div>Revenue: <strong>${(deliveryMetrics.revenue ?? 0).toFixed(0)}</strong></div>
+                <div>Avg Order Time: <strong>{(deliveryMetrics.avgOrderTime ?? 0).toFixed(1)}m</strong></div>
+                <div>On-Time %: <strong>{((deliveryMetrics as any).onTimePercentage ?? deliveryMetrics.onTimeRate ?? 0).toFixed(1)}%</strong></div>
+                <div>Failed Orders: <strong>{(deliveryMetrics as any).failedDeliveries ?? deliveryMetrics.failedOrderCount ?? 0}</strong></div>
+                <div>Queue Wait: <strong>{(deliveryMetrics.queueWaitAvg ?? 0).toFixed(1)}m</strong></div>
+                <div>Cycle Time (P90): <strong>{(deliveryMetrics.deliveryCycleTimeP90 ?? 0).toFixed(1)}m</strong></div>
+                <div>Orders/Runner-Hr: <strong>{(deliveryMetrics.ordersPerRunnerHour ?? 0).toFixed(1)}</strong></div>
+                <div style={{ gridColumn: 'span 2' }}>Revenue/Runner-Hr: <strong>${(deliveryMetrics.revenuePerRunnerHour ?? 0).toFixed(0)}</strong></div>
               </div>
             </div>
           )}
@@ -357,11 +357,11 @@ function ControlPanel({
                 Bev-Cart Metrics
               </h4>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 11 }}>
-                <div>Total Orders: <strong>{bevCartMetrics.totalOrders}</strong></div>
-                <div>Groups Passed: <strong>{bevCartMetrics.totalGroupsPassed}</strong></div>
-                <div>Avg Order Value: <strong>${bevCartMetrics.avgOrderValue.toFixed(0)}</strong></div>
-                <div>Delivery Orders: <strong>{bevCartMetrics.totalDeliveryOrdersPlaced}</strong></div>
-                <div style={{ gridColumn: 'span 2' }}>Revenue/Bevcart-Hr: <strong>${bevCartMetrics.revenuePerBevcartHour.toFixed(0)}</strong></div>
+                <div>Total Orders: <strong>{bevCartMetrics.totalOrders ?? 0}</strong></div>
+                <div>Groups Passed: <strong>{bevCartMetrics.totalGroupsPassed ?? 0}</strong></div>
+                <div>Avg Order Value: <strong>${(bevCartMetrics.avgOrderValue ?? 0).toFixed(0)}</strong></div>
+                <div>Delivery Orders: <strong>{bevCartMetrics.totalDeliveryOrdersPlaced ?? 0}</strong></div>
+                <div style={{ gridColumn: 'span 2' }}>Revenue/Bevcart-Hr: <strong>${(bevCartMetrics.revenuePerBevcartHour ?? 0).toFixed(0)}</strong></div>
               </div>
             </div>
           )}
@@ -424,7 +424,7 @@ function ColorLegend({
 
 const DEFAULT_CONFIG: AppConfig = {
   data: { csvFileName: '/golfer_coordinates.csv', cartPathFileName: '/cart_paths.geojson', coordinatesDir: '/coordinates' },
-  animation: { speedMultiplier: 250, defaultMapStyle: 'satellite-streets', smoothing: { enabled: true, easing: 'catmull-rom', frameRate: 60 } },
+  animation: { speedMultiplier: 150, defaultMapStyle: 'satellite-streets', smoothing: { enabled: true, easing: 'catmull-rom', frameRate: 60 } },
   mapStyles: { 'satellite-streets': { name: 'Satellite with Streets', url: 'mapbox://styles/mapbox/satellite-streets-v12', description: 'Satellite imagery with roads and labels' } },
   entityTypes: { 'golfer': { name: 'Golfer', color: '#007cbf', description: 'Golf players' }, 'bev-cart': { name: 'Beverage Cart', color: '#ff6b6b', description: 'Beverage service' }, 'runner': { name: 'Runner', color: '#FF8B00', description: 'Runners on course' }},
   display: { golferTrails: { width: 2, opacity: 0.6 }, golferMarkers: { radius: 9, strokeWidth: 3, strokeColor: '#ffffff', strokeOpacity: 0.8 } },
@@ -462,8 +462,8 @@ export default function AnimationView() {
   const trackersGeoJsonRef = useRef<any>({ type: 'FeatureCollection', features: [] });
   const styleReadyRef = useRef<boolean>(false);
   // Speed control for smooth animation without resets
-  const speedRef = useRef<number>(DEFAULT_CONFIG.animation.speedMultiplier);
-  const [currentSpeed, setCurrentSpeed] = useState<number>(DEFAULT_CONFIG.animation.speedMultiplier);
+  const speedRef = useRef<number>(150);
+  const [currentSpeed, setCurrentSpeed] = useState<number>(150);
   const simulatedElapsedRef = useRef<number>(0);
   const lastRealTimeSecRef = useRef<number>(0);
   // Easing selection state
@@ -668,6 +668,27 @@ export default function AnimationView() {
     };
   }, [isLoading, trackersData, currentEasing]); // Removed problematic dependencies
 
+  // Cleanup terrain when component unmounts or map style changes
+  useEffect(() => {
+    return () => {
+      const map = mapRef.current?.getMap?.();
+      if (map) {
+        try {
+          // Remove terrain first to avoid the undefined source error
+          if (map.getTerrain()) {
+            map.setTerrain(null);
+          }
+          // Then remove the source if it exists
+          if (map.getSource('mapbox-dem')) {
+            map.removeSource('mapbox-dem');
+          }
+        } catch (error) {
+          console.warn('Error during terrain cleanup:', error);
+        }
+      }
+    };
+  }, [currentMapStyle]); // Also cleanup when map style changes
+
 
 
   const getInitialViewState = () => {
@@ -748,7 +769,9 @@ export default function AnimationView() {
               });
             }
             map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
-          } catch {}
+          } catch (error) {
+            console.warn('Failed to set up terrain:', error);
+          }
           styleReadyRef.current = true;
           setStyleReady(true);
         }}

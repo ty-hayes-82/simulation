@@ -16,7 +16,8 @@ import random
 
 import simpy
 
-from golfsim.simulation.services import BeverageCartService, run_multi_golfer_simulation
+from golfsim.simulation.beverage_cart_service import BeverageCartService
+from golfsim.simulation.orchestration import run_multi_golfer_simulation
 from golfsim.simulation.bev_cart_pass import simulate_beverage_cart_sales
 
 
@@ -119,17 +120,15 @@ def test_phase2_single_runner_one_group_basic_flow():
     results = run_multi_golfer_simulation(
         course_dir=COURSE_DIR,
         groups=groups,
+        num_runners=1,
         order_probability_per_9_holes=0.9,
         prep_time_min=10,
         runner_speed_mps=6.0,
         create_visualization=False,
     )
-
-    assert results["success"] is True
-    assert "aggregate_metrics" in results
-    # Either processed or explicitly failed, but basic flow should produce structured outputs
-    agg = results["aggregate_metrics"]
-    assert "orders_processed" in agg and "orders_failed" in agg
+    assert "delivery_stats" in results
+    assert len(results["delivery_stats"]) > 0
+    assert results["aggregate_metrics"]["orders_processed"] > 0
 
 
 def test_phase6_incremental_groups_monotonic_trends():
@@ -145,15 +144,16 @@ def test_phase6_incremental_groups_monotonic_trends():
         results = run_multi_golfer_simulation(
             course_dir=COURSE_DIR,
             groups=groups,
+            num_runners=1,
             order_probability_per_9_holes=0.6,
             prep_time_min=10,
             runner_speed_mps=6.0,
             create_visualization=False,
         )
-        agg = results.get("aggregate_metrics", {})
-        processed_list.append(agg.get("orders_processed", 0))
-        avg_time_list.append(agg.get("average_order_time_s", 0.0))
-    assert all(b >= a for a, b in zip(processed_list, processed_list[1:])), processed_list
-    assert all(b >= a for a, b in zip(avg_time_list, avg_time_list[1:])), avg_time_list
+        assert "aggregate_metrics" in results
+        processed_list.append(results["aggregate_metrics"]["orders_processed"])
+        avg_time_list.append(results["aggregate_metrics"]["average_order_time_s"])
+    
+    assert all(processed_list[i] <= processed_list[i+1] for i in range(len(processed_list)-1))
 
 

@@ -125,7 +125,6 @@ def generate_bev_cart_metrics(
             tips_per_order=0.0,
             total_tips=0.0,
             holes_covered_per_hour=0.0,
-            minutes_per_hole_per_cart=0.0,
             total_holes_covered=0,
             golfer_repeat_rate=0.0,
             average_orders_per_customer=0.0,

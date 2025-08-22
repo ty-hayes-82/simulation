@@ -1,0 +1,57 @@
+---
+description: Guidelines for delivery runner coordinate generation and debugging
+globs: golfsim/simulation/*.py,golfsim/config/*.py,golfsim/io/*.py
+---
+
+# Delivery Runner Coordinate Generation
+
+## Key Components for Runner Coordinates
+
+### Configuration Loading
+- Clubhouse coordinates MUST be converted from JSON dict format `{"latitude": X, "longitude": Y}` to tuple format `(longitude, latitude)` in [SimulationConfig.from_dict()](mdc:golfsim/config/models.py)
+- The routing functions expect `(lon, lat)` tuples, not dictionaries
+- Check [load_simulation_config()](mdc:golfsim/config/loaders.py) for proper coordinate handling
+
+### Routing Data Capture
+- Runner coordinates are generated from routing nodes in `trip_to_golfer` and `trip_back` objects
+- These objects must contain a `nodes` array with NetworkX graph node IDs
+- The routing data is captured in [MultiRunnerDeliveryService._process_single_order()](mdc:golfsim/simulation/services.py)
+- If routing fails, coordinates will be missing - check for "Skipping runner coordinates" warnings
+
+### Coordinate Generation Process
+1. Enhanced routing calculates paths using [enhanced_delivery_routing()](mdc:golfsim/simulation/engine.py)
+2. Routing nodes are extracted from `delivery_stats` in [run_delivery_runner_simulation()](mdc:golfsim/simulation/orchestration.py)
+3. Coordinates are interpolated using [interpolate_path_points()](mdc:golfsim/simulation/tracks.py)
+4. Final coordinates are written via [write_unified_coordinates_csv()](mdc:golfsim/io/results.py)
+
+## Common Issues and Debugging
+
+### Missing Runner Coordinates
+- **Symptom**: "Skipping outbound/return runner coordinates: no routing nodes" warnings
+- **Cause**: `trip_to_golfer` or `trip_back` objects are None or missing `nodes` arrays
+- **Debug**: Check if enhanced routing is failing due to coordinate format issues
+
+### Routing Failures
+- **Symptom**: "Unexpected error in route calculation" errors
+- **Cause**: Usually coordinate format mismatch (dict vs tuple)
+- **Fix**: Ensure clubhouse coordinates are properly converted to tuples
+
+### Cart Graph Issues
+- **Location**: [cart_graph.pkl](mdc:courses/pinetree_country_club/pkl/cart_graph.pkl)
+- **Check**: Graph should have nodes with 'x' and 'y' attributes and edges with 'length' weights
+- **Debug**: Use `pickle.load()` to inspect graph structure
+
+## Testing Coordinate Generation
+```bash
+# Run with debug logging to see coordinate generation process
+python scripts/sim/run_new.py --course-dir courses/pinetree_country_club --num-runners 1 --groups-count 1 --log-level DEBUG
+
+# Check for runner coordinates in output
+grep "runner," outputs/*/run_*/coordinates.csv
+```
+
+## Required Data Flow
+1. Config JSON → SimulationConfig (with proper coordinate conversion)
+2. SimulationConfig → MultiRunnerDeliveryService (clubhouse coords as tuple)
+3. Enhanced routing → delivery_stats (with routing nodes)
+4. delivery_stats → coordinate interpolation → coordinates.csv

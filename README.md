@@ -99,8 +99,8 @@ python scripts/sim/run_unified_simulation.py --mode optimize-runners --tee-scena
 
 ### Delivery runner options
 
-- **--prep-time**: Food preparation time (min). Default: `10`
-- **--runner-speed**: Runner speed in m/s. Default: `6.0` (config can override)
+- **--prep-time**: Food preparation time (min). Overrides the value in `simulation_config.json`.
+- **--runner-speed**: Runner speed in m/s. Overrides the value in `simulation_config.json`.
 - **--revenue-per-order**: Revenue per successful runner order (USD). Default: `25.0`
 - **--sla-minutes**: SLA threshold for on-time (min). Default: `30`
 - **--service-hours**: Active service hours for utilization scaling. Default: `10.0`
@@ -144,72 +144,15 @@ This system simulates delivery operations on golf courses, tracking golfers' mov
 ### Prerequisites
 
 1. **Python Environment**: Python 3.9 or higher
-2. **Virtual Environment**: Use the provided virtual environment setup
+2. **Poetry**: This project uses Poetry for dependency management.
 
 ### Environment Setup
-
-#### Option 1: Using Virtual Environment (Recommended)
-
-The project includes a pre-configured virtual environment with all dependencies installed.
-
-**PowerShell:**
-```powershell
-# Activate the virtual environment
-.\.venv\Scripts\Activate.ps1
-
-# Or use the convenience script
-.\activate_env.ps1
-```
-
-**Command Prompt:**
-```cmd
-# Activate the virtual environment
-.venv\Scripts\activate.bat
-
-# Or use the convenience script
-activate_env.bat
-```
-
-**Linux/macOS:**
-```bash
-# Activate the virtual environment
-source .venv/bin/activate
-```
-
-**Verify Setup:**
-```bash
-# Run the verification script to check all dependencies
-python verify_setup.py
-```
-
-#### Option 2: Using Conda (Alternative)
-
-1. **Python Environment**: Ensure you have conda installed
-2. **Environment Setup**: Activate the `my_gemini_env` conda environment:
-   ```bash
-   conda activate my_gemini_env
-   ```
-
-### Manual Environment Setup (Alternative)
-
-```bash
-# Create and activate the environment
-conda create -n my_gemini_env python=3.9
-conda activate my_gemini_env
-
-# Install dependencies from pyproject.toml
-pip install -e .
-
-# Install development dependencies (optional)
-pip install -e ".[dev]"
-```
-
-#### Option 3: Using Poetry (Alternative)
 
 The project includes a `pyproject.toml` file configured for Poetry:
 
 ```bash
 # Install Poetry (if not already installed)
+# See https://python-poetry.org/docs/#installation
 pip install poetry
 
 # Install dependencies
@@ -217,17 +160,6 @@ poetry install
 
 # Activate the Poetry shell
 poetry shell
-```
-
-#### Option 4: Using pip + pyproject.toml
-
-```bash
-# Activate your Python environment of choice
-# Install the package in development mode
-pip install -e .
-
-# For development tools (ruff, black, mypy, pytest)
-pip install -e ".[dev]"
 ```
 
 ### Build Tasks
@@ -450,110 +382,4 @@ Available scenarios in `tee_times_config.json`:
 - **`typical_weekday`**: Regular Wednesday (104 golfers)
 - **`busy_weekend`**: Peak Saturday (180 golfers)
 - **`quiet_day`**: Light play (68 golfers)
-- **`busy_weekday`**: High-volume Wednesday (144 golfers)
-- **`mens_league`**: Thursday evening league (96 golfers)
-- **`testing_rainy_day`**: Rain scenario (4 golfers) (Recommended for testing)
-
-## Output Files
-
-Each simulation generates several output files:
-
-### Individual Simulation Files
-- **`delivery_simulation.png`**: Visual map showing delivery routes
-- **`golfer_coordinates.csv`**: GPS tracking data for golfers
-- **`runner_coordinates.csv`**: GPS tracking data for delivery runner
-- **`simulation_results.json`**: Raw simulation data and metrics
-- **`simulation_X_stats.md`**: Detailed analysis and statistics
-
-### Batch Simulation Files
-- **`BATCH_SUMMARY.md`**: Aggregate analysis across all simulations
-- **Individual folders**: `simulation_01/`, `simulation_02/`, etc.
-
-## Understanding Results
-
-### Key Metrics
-
-- **Service Time**: Total time from order to delivery
-- **Travel Time**: Time spent by runner traveling to golfer
-- **Route Efficiency**: Percentage of optimal route efficiency
-- **Delivery Distance**: Total distance traveled by runner
-- **Runner Utilization**: Percentage of time runner is active
-
-### Performance Benchmarks
-
-- Fast Service: < 15 minutes
-- Good Service: 15-25 minutes
-- Slow Service: > 25 minutes
-
-- Excellent Routing: > 80% efficiency
-- Good Routing: 60-80% efficiency
-- Needs Improvement: < 60% efficiency
-
-## Common Use Cases
-
-### Testing Configuration Changes
-
-1. **Update runner speed** in `simulation_config.json`
-2. **Run rainy day batch** to test new settings:
-   ```bash
-   python scripts/run_multiple_rainy_day_sims.py --runner-speed 6.0
-   ```
-3. **Review results** in the generated `BATCH_SUMMARY.md`
-
-### Validating System Performance
-
-1. **Run multiple scenarios** with different tee times
-2. **Compare efficiency metrics** across scenarios
-3. **Analyze service time distributions**
-
-### Course Analysis
-
-1. **Test different hole locations** for order placement
-2. **Evaluate route optimization** on various course areas
-3. **Assess delivery feasibility** for different course layouts
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Unicode Warnings**: These are harmless display warnings on Windows and don't affect simulation results
-2. **Missing Dependencies**: Ensure all packages are installed in your conda environment
-3. **Path Issues**: Make sure you're in the project root directory when running scripts
-
-### Environment Issues
-
-If you encounter Python environment issues:
-
-```bash
-# Verify environment
-conda activate my_gemini_env
-python --version
-
-# Check if packages are available
-python -c "import golfsim; print('Golf simulation package loaded successfully')"
-```
-
-## Recent Updates
-
-- **Runner Speed**: Updated from 10 m/s to 6.0 m/s for more realistic delivery scenarios
-- **Batch Processing**: Enhanced rainy day simulation script with comprehensive reporting
-- **GPS Tracking**: Improved coordinate tracking for detailed route analysis
-
----
-
-## Example Session
-
-Here's a complete example of running simulations:
-
-```bash
-# 1. Activate environment
-conda activate my_gemini_env
-
-# 2. Run 5 rainy day simulations
-python scripts/sim/run_scenarios_batch.py --course-dir courses/pinetree_country_club --scenario testing_rainy_day --runs-per-scenario 5 --runner-speed 6.0 --log-level INFO
-
-# 3. Results will be saved to outputs/rainy_day_batch_YYYYMMDD_HHMMSS/
-# 4. Check BATCH_SUMMARY.md for aggregate analysis
-```
-
-The system will generate comprehensive reports and visualizations for analysis and decision-making.
+- **`

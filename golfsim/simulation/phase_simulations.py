@@ -20,8 +20,7 @@ from ..config.loaders import load_simulation_config, load_tee_times_config
 from ..io.results import write_unified_coordinates_csv, write_coordinates_csv_with_visibility
 from .bev_cart_pass import simulate_beverage_cart_sales
 from .engine import (
-    calculate_synchronized_timing, 
-    calculate_practical_sync_offset, 
+    get_node_timing,
     simulate_beverage_cart_gps
 )
 from .pass_detection import (
@@ -221,7 +220,7 @@ def run_phase3_beverage_cart_simulation(
     golfer_points = generate_golfer_track(course_dir, tee_time_s)
     
     if use_synchronized_timing:
-        return _run_synchronized_simulation(
+        return _run_simplified_simulation(
             course_dir, sim_cfg, group, golfer_points, run_idx
         )
     else:
@@ -287,7 +286,6 @@ def _run_standard_simulation(
         pass_order_probability=float(sim_cfg.bev_cart_order_probability),
         price_per_order=float(sim_cfg.bev_cart_avg_order_usd),
         minutes_between_holes=2.0,
-        minutes_per_hole=None,
         golfer_points=golfer_points,
         crossings_data=crossings_data,
     )
@@ -334,61 +332,51 @@ def _run_standard_simulation(
     }
 
 
-def _run_synchronized_simulation(
+def _run_simplified_simulation(
     course_dir: str,
     sim_cfg,
     group: Dict,
     golfer_points: List[Dict],
     run_idx: int
 ) -> Dict:
-    """Run Phase 3 simulation with synchronized timing."""
+    """Run simulation with simplified node-per-minute timing."""
     tee_time_s = group["tee_time_s"]
     
     # Ensure random seed is set for this specific simulation
     random.seed(run_idx)
     
-    # Calculate synchronized timing parameters for more realistic passes
-    # Adjust beverage cart to move slower for better encounter patterns
-    sync_timing = calculate_synchronized_timing(
-        golfer_minutes_per_hole=12.0,
-        golfer_minutes_between_holes=2.0,
-        bev_cart_minutes_per_hole=12.0,  # Same pace as golfer
-        bev_cart_minutes_between_holes=3.0,  # Slightly slower transitions
+    # Use simple node-per-minute timing
+    node_timing = get_node_timing(
+        golfer_total_minutes=sim_cfg.speeds.golfer_total_minutes,
+        time_quantum_s=sim_cfg.speeds.time_quantum_s
     )
     
-    # Calculate practical synchronization offset
+    # Beverage cart service hours (9 AM to 5 PM)
     bev_cart_start_s = 2 * 3600  # 9 AM (2 hours after 7 AM baseline)
-    sync_calc = calculate_practical_sync_offset(
-        golfer_tee_time_s=tee_time_s,
-        bev_cart_start_time_s=bev_cart_start_s,
-        synchronized_timing=sync_timing,
-    )
+    bev_cart_end_s = 10 * 3600   # 5 PM (10 hours after 7 AM baseline)
     
-    adjusted_bev_start_s = sync_calc['adjusted_bev_cart_start_s']
-    
-    # Load hole geometry and generate synchronized beverage cart GPS
-    hole_lines = load_hole_geometry(course_dir)
+    # Generate beverage cart GPS using simplified approach
     bev_points = simulate_beverage_cart_gps(
-        hole_lines=hole_lines,
+        course_dir=course_dir,
         clubhouse_lonlat=sim_cfg.clubhouse,
-        start_time_s=adjusted_bev_start_s,
-        end_time_s=17 * 3600,  # 5 PM
-        cart_id=f"bev_cart_sync_{run_idx}",
+        start_time_s=bev_cart_start_s,
+        end_time_s=bev_cart_end_s,
+        golfer_total_minutes=sim_cfg.speeds.golfer_total_minutes,
+        cart_id=f"bev_cart_{run_idx}",
         track_coordinates=True,
-        synchronized_timing=sync_timing,
+        time_quantum_s=sim_cfg.speeds.time_quantum_s,
     )
     
-    # Simulate sales with synchronized timing
-    sync_sales_result = simulate_beverage_cart_sales(
+    # Simulate sales with node-based timing
+    sales_result = simulate_beverage_cart_sales(
         course_dir=course_dir,
         groups=[group],
-        pass_order_probability=float(sim_cfg.bev_cart_order_probability),
+        pass_order_probability=float(sim_cfg.bev_cart_order_probability_per_9_holes),
         price_per_order=float(sim_cfg.bev_cart_avg_order_usd),
-        minutes_between_holes=2.0,
         golfer_points=golfer_points,
     )
     
-    # Compute pass events using proximity-based detection aligned to synchronized pacing
+    # Compute pass events using proximity-based detection
     pass_events = find_proximity_pass_events(
         tee_time_s=tee_time_s,
         beverage_cart_points=bev_points,
@@ -398,15 +386,14 @@ def _run_synchronized_simulation(
     )
     
     return {
-        "type": "synchronized", 
-        "run_idx": f"sync_{run_idx}",
-        "sales_result": sync_sales_result,
+        "type": "simplified", 
+        "run_idx": f"simplified_{run_idx}",
+        "sales_result": sales_result,
         "golfer_points": golfer_points,
         "bev_points": bev_points,
         "pass_events": pass_events,
         "tee_time_s": tee_time_s,
-        "sync_timing": sync_timing,
-        "sync_calc": sync_calc,
+        "node_timing": node_timing,
     }
 
 
@@ -457,7 +444,7 @@ def run_phase4_beverage_cart_simulation(
         all_golfer_points.extend(golfer_points)
     
     if use_synchronized_timing:
-        return _run_phase4_synchronized_simulation(
+        return _run_phase4_simplified_simulation(
             course_dir, sim_cfg, groups, all_golfer_points, run_idx
         )
     else:
@@ -577,82 +564,70 @@ def _run_phase4_standard_simulation(
     }
 
 
-def _run_phase4_synchronized_simulation(
+def _run_phase4_simplified_simulation(
     course_dir: str,
     sim_cfg,
     groups: List[Dict],
     all_golfer_points: List[Dict],
     run_idx: int
 ) -> Dict:
-    """Run Phase 4 simulation with synchronized timing."""
+    """Run Phase 4 simulation with simplified node-per-minute timing."""
     first_tee_time_s = groups[0]["tee_time_s"]
     
     # Ensure random seed is set for this specific simulation
     random.seed(run_idx)
     
-    # Calculate synchronized timing parameters for more realistic passes
-    sync_timing = calculate_synchronized_timing(
-        golfer_minutes_per_hole=12.0,
-        golfer_minutes_between_holes=2.0,
-        bev_cart_minutes_per_hole=12.0,  # Same pace as golfer
-        bev_cart_minutes_between_holes=3.0,  # Slightly slower transitions
+    # Use simple node-per-minute timing
+    node_timing = get_node_timing(
+        golfer_total_minutes=sim_cfg.speeds.golfer_total_minutes,
+        time_quantum_s=sim_cfg.speeds.time_quantum_s
     )
     
-    # Calculate practical synchronization offset
+    # Beverage cart service hours (9 AM to 5 PM)
     bev_cart_start_s = 2 * 3600  # 9 AM (2 hours after 7 AM baseline)
-    sync_calc = calculate_practical_sync_offset(
-        golfer_tee_time_s=first_tee_time_s,
-        bev_cart_start_time_s=bev_cart_start_s,
-        synchronized_timing=sync_timing,
-    )
+    bev_cart_end_s = 10 * 3600   # 5 PM (10 hours after 7 AM baseline)
     
-    adjusted_bev_start_s = sync_calc['adjusted_bev_cart_start_s']
-    
-    # Load hole geometry and generate synchronized beverage cart GPS
-    hole_lines = load_hole_geometry(course_dir)
+    # Generate beverage cart GPS using simplified approach
     bev_points = simulate_beverage_cart_gps(
-        hole_lines=hole_lines,
+        course_dir=course_dir,
         clubhouse_lonlat=sim_cfg.clubhouse,
-        start_time_s=adjusted_bev_start_s,
-        end_time_s=17 * 3600,  # 5 PM
-        cart_id=f"bev_cart_sync_{run_idx}",
+        start_time_s=bev_cart_start_s,
+        end_time_s=bev_cart_end_s,
+        golfer_total_minutes=sim_cfg.speeds.golfer_total_minutes,
+        cart_id=f"bev_cart_{run_idx}",
         track_coordinates=True,
-        synchronized_timing=sync_timing,
+        time_quantum_s=sim_cfg.speeds.time_quantum_s,
     )
     
-    # Simulate sales with synchronized timing for all groups
-    sync_sales_result = simulate_beverage_cart_sales(
+    # Simulate sales with simplified timing for all groups
+    sales_result = simulate_beverage_cart_sales(
         course_dir=course_dir,
         groups=groups,
-        pass_order_probability=float(sim_cfg.bev_cart_order_probability),
+        pass_order_probability=float(sim_cfg.bev_cart_order_probability_per_9_holes),
         price_per_order=float(sim_cfg.bev_cart_avg_order_usd),
-        minutes_between_holes=2.0,
-        minutes_per_hole=8.0,  # Use synchronized timing
         golfer_points=all_golfer_points,
     )
     
-    # Compute pass events using proximity-based detection aligned to synchronized pacing
+    # Compute pass events using proximity-based detection
     pass_events = find_proximity_pass_events(
         tee_time_s=first_tee_time_s,
         beverage_cart_points=bev_points,
         golfer_points=all_golfer_points,
         proximity_threshold_m=100.0,
         min_pass_interval_s=1200,
-        minutes_per_hole=8.0,
     )
     
     return {
-        "type": "synchronized", 
-        "run_idx": f"sync_{run_idx}",
-        "sales_result": sync_sales_result,
+        "type": "simplified", 
+        "run_idx": f"simplified_{run_idx}",
+        "sales_result": sales_result,
         "golfer_points": all_golfer_points,
         "bev_points": bev_points,
         "pass_events": pass_events,
         "groups": groups,
         "first_tee_time_s": first_tee_time_s,
         "last_tee_time_s": groups[-1]["tee_time_s"],
-        "sync_timing": sync_timing,
-        "sync_calc": sync_calc,
+        "node_timing": node_timing,
     }
 
 
@@ -784,7 +759,7 @@ def run_phase5_beverage_cart_simulation(
         all_golfer_points.extend(golfer_points)
     
     if use_synchronized_timing:
-        return _run_phase5_synchronized_simulation(
+        return _run_phase5_simplified_simulation(
             course_dir, sim_cfg, groups, all_golfer_points, run_idx, scenario_name
         )
     else:
@@ -905,7 +880,7 @@ def _run_phase5_standard_simulation(
     }
 
 
-def _run_phase5_synchronized_simulation(
+def _run_phase5_simplified_simulation(
     course_dir: str,
     sim_cfg,
     groups: List[Dict],
@@ -913,54 +888,44 @@ def _run_phase5_synchronized_simulation(
     run_idx: int,
     scenario_name: str
 ) -> Dict:
-    """Run Phase 5 simulation with synchronized timing."""
+    """Run Phase 5 simulation with simplified node-per-minute timing."""
     first_tee_time_s = min(g["tee_time_s"] for g in groups)
     
     # Ensure random seed is set for this specific simulation
     random.seed(run_idx)
     
-    # Calculate synchronized timing parameters for more realistic passes
-    sync_timing = calculate_synchronized_timing(
-        golfer_minutes_per_hole=12.0,
-        golfer_minutes_between_holes=2.0,
-        bev_cart_minutes_per_hole=12.0,  # Same pace as golfer
-        bev_cart_minutes_between_holes=3.0,  # Slightly slower transitions
+    # Use simple node-per-minute timing
+    node_timing = get_node_timing(
+        golfer_total_minutes=sim_cfg.speeds.golfer_total_minutes,
+        time_quantum_s=sim_cfg.speeds.time_quantum_s
     )
     
-    # Calculate practical synchronization offset
+    # Beverage cart service hours (9 AM to 5 PM)
     bev_cart_start_s = 2 * 3600  # 9 AM (2 hours after 7 AM baseline)
-    sync_calc = calculate_practical_sync_offset(
-        golfer_tee_time_s=first_tee_time_s,
-        bev_cart_start_time_s=bev_cart_start_s,
-        synchronized_timing=sync_timing,
-    )
+    bev_cart_end_s = 10 * 3600   # 5 PM (10 hours after 7 AM baseline)
     
-    adjusted_bev_start_s = sync_calc['adjusted_bev_cart_start_s']
-    
-    # Load hole geometry and generate synchronized beverage cart GPS
-    hole_lines = load_hole_geometry(course_dir)
+    # Generate beverage cart GPS using simplified approach
     bev_points = simulate_beverage_cart_gps(
-        hole_lines=hole_lines,
+        course_dir=course_dir,
         clubhouse_lonlat=sim_cfg.clubhouse,
-        start_time_s=adjusted_bev_start_s,
-        end_time_s=17 * 3600,  # 5 PM
-        cart_id=f"bev_cart_sync_{run_idx}",
+        start_time_s=bev_cart_start_s,
+        end_time_s=bev_cart_end_s,
+        golfer_total_minutes=sim_cfg.speeds.golfer_total_minutes,
+        cart_id=f"bev_cart_{run_idx}",
         track_coordinates=True,
-        synchronized_timing=sync_timing,
+        time_quantum_s=sim_cfg.speeds.time_quantum_s,
     )
     
-    # Simulate sales with synchronized timing for all groups
-    sync_sales_result = simulate_beverage_cart_sales(
+    # Simulate sales with simplified timing for all groups
+    sales_result = simulate_beverage_cart_sales(
         course_dir=course_dir,
         groups=groups,
-        pass_order_probability=float(sim_cfg.bev_cart_order_probability),
+        pass_order_probability=float(sim_cfg.bev_cart_order_probability_per_9_holes),
         price_per_order=float(sim_cfg.bev_cart_avg_order_usd),
-        minutes_between_holes=2.0,
-        minutes_per_hole=8.0,  # Use synchronized timing
         golfer_points=all_golfer_points,
     )
     
-    # Compute pass events using proximity-based detection aligned to synchronized pacing
+    # Compute pass events using proximity-based detection
     pass_events = find_proximity_pass_events(
         golfer_points=all_golfer_points,
         bev_points=bev_points,
@@ -968,10 +933,10 @@ def _run_phase5_synchronized_simulation(
     )
     
     return {
-        "type": "synchronized",
+        "type": "simplified",
         "run_idx": run_idx,
         "scenario_name": scenario_name,
-        "sales_result": sync_sales_result,
+        "sales_result": sales_result,
         "golfer_points": all_golfer_points,
         "bev_points": bev_points,
         "pass_events": pass_events,
@@ -979,5 +944,5 @@ def _run_phase5_synchronized_simulation(
         "first_tee_time_s": first_tee_time_s,
         "last_tee_time_s": max(g["tee_time_s"] for g in groups),
         "beverage_cart_service": None,  # Using direct GPS generation
-        "sync_calc": sync_calc,
+        "node_timing": node_timing,
     }

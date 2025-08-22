@@ -20,13 +20,16 @@
     "connect_on_network_build": true
   },
   "golfer_18_holes_minutes": 240,
-  
-  
+  "speeds": {
+    "runner_mps": 6.0,
+    "time_quantum_s": 60,
+    "golfer_total_minutes": 240
+  },
   "delivery_prep_time_sec": 600,
   "bev_cart_avg_order_usd": 12.5,
   "delivery_avg_order_usd": 30.0,
   "bev_cart_order_probability_per_9_holes": 0.35,
-  "delivery_total_orders": 20,
+  "delivery_total_orders": 30,
   "minutes_for_delivery_order_failure": 60,
   "delivery_hourly_distribution": {
     "10:00": 0.05,

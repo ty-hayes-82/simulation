@@ -125,7 +125,6 @@ def find_proximity_pass_events(
         golfer_points: List of golfer GPS coordinates  
         proximity_threshold_m: Distance threshold for considering a "pass"
         min_pass_interval_s: Minimum time between passes
-        minutes_per_hole: Minutes per hole for hole estimation
         
     Returns:
         List of pass event dictionaries

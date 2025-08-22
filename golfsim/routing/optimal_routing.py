@@ -158,6 +158,16 @@ def find_optimal_route(
         dy = (end_coords[1] - start_coords[1]) * 111139  # meters per degree latitude
         straight_line_distance = np.sqrt(dx**2 + dy**2)
 
+        if start_node == end_node:
+            return {
+                "success": True,
+                "path": [start_node],
+                "path_ids": [list(graph.nodes()).index(start_node)],
+                "metrics": {"length_m": 0.0, "time_s": 0.0, "time_min": 0.0, "num_segments": 0},
+                "efficiency": 100.0,
+                "straight_line_distance": 0.0,
+            }
+
         # Find shortest path using NetworkX
         path = nx.shortest_path(graph, start_node, end_node, weight="length")
 

@@ -1,0 +1,94 @@
+---
+description: Configuration loading and validation patterns for simulation setup
+globs: golfsim/config/*.py,courses/*/config/*.json
+---
+
+# Configuration Management Guidelines
+
+## Configuration File Structure
+
+### Simulation Config
+Location: [courses/*/config/simulation_config.json](mdc:courses/pinetree_country_club/config/simulation_config.json)
+
+**Critical Fields**:
+```json
+{
+  "clubhouse": {
+    "latitude": 34.0379,
+    "longitude": -84.5928
+  },
+  "delivery_runner_speed_mps": 6.0,
+  "delivery_prep_time_sec": 600,
+  "golfer_18_holes_minutes": 240
+}
+```
+
+### Tee Times Config  
+Location: [courses/*/config/tee_times_config.json](mdc:courses/pinetree_country_club/config/tee_times_config.json)
+
+## Configuration Loading Patterns
+
+### Coordinate Conversion
+**CRITICAL**: Always convert clubhouse coordinates from JSON dict to tuple format:
+
+```python
+# In SimulationConfig.from_dict()
+if "clubhouse" in data and isinstance(data["clubhouse"], dict):
+    clubhouse_raw = data["clubhouse"]
+    filtered_data["clubhouse"] = (clubhouse_raw["longitude"], clubhouse_raw["latitude"])
+```
+
+### Service Hours Parsing
+- Use [parse_hhmm_to_seconds_since_7am()](mdc:golfsim/config/loaders.py) for time conversion
+- Service hours are stored as seconds since 7:00 AM simulation start
+- Validate hour ranges (0-24) and logical ordering (start < end)
+
+### Default Value Handling
+The [SimulationConfig.from_dict()](mdc:golfsim/config/models.py) method provides defaults for missing fields:
+- Strings: empty string `""`
+- Numbers: `0` or `0.0`  
+- Booleans: `False`
+- Collections: empty list `[]` or dict `{}`
+
+## Validation Requirements
+
+### Coordinate Validation
+```python
+def validate_clubhouse_coords(coords):
+    if not isinstance(coords, tuple) or len(coords) != 2:
+        raise ValueError("Clubhouse coordinates must be (longitude, latitude) tuple")
+    lon, lat = coords
+    if not (-180 <= lon <= 180) or not (-90 <= lat <= 90):
+        raise ValueError("Invalid coordinate values")
+```
+
+### Speed and Time Validation
+- Runner speeds: Must be positive (> 0)
+- Prep times: Must be non-negative (>= 0)  
+- Service hours: End time must be after start time
+- Round duration: Typically 180-300 minutes for 18 holes
+
+## Configuration Loading Order
+1. **Base Config**: Load JSON file using [load_simulation_config()](mdc:golfsim/config/loaders.py)
+2. **Coordinate Conversion**: Transform clubhouse dict to tuple
+3. **CLI Override**: Apply command-line argument overrides
+4. **Validation**: Check all required fields and value ranges
+5. **Service Creation**: Pass validated config to simulation services
+
+## Common Configuration Errors
+
+### Missing Files
+- **Error**: `FileNotFoundError: simulation_config.json not found`
+- **Fix**: Ensure config file exists in `courses/*/config/` directory
+
+### Coordinate Format Issues  
+- **Error**: `TypeError: 'dict' object cannot be interpreted as coordinates`
+- **Fix**: Verify clubhouse coordinate conversion in `from_dict()`
+
+### Invalid Time Formats
+- **Error**: Service hour parsing failures
+- **Fix**: Use "HH:MM" format for all time strings
+
+### Missing Required Fields
+- **Error**: Missing clubhouse, course_name, or other required config
+- **Fix**: Check JSON structure matches [SimulationConfig](mdc:golfsim/config/models.py) dataclass

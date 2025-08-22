@@ -14,7 +14,6 @@ The executive-priority metrics include:
 7. Total Delivery Orders Conversion Count - Cross-selling to delivery service
 8. Total Delivery Orders Conversion Revenue - Revenue from delivery cross-sell
 9. Holes Covered per Hour - Route efficiency and coverage
-10. Minutes per Hole per Cart - Operational efficiency metric
 """
 
 from __future__ import annotations
@@ -42,7 +41,6 @@ class BevCartMetrics:
     total_delivery_orders_conversion_count: int
     total_delivery_orders_conversion_revenue: float
     holes_covered_per_hour: float
-    minutes_per_hole_per_cart: float
     
     # Additional metrics for batch processing
     unique_customers: int
@@ -108,13 +106,9 @@ def calculate_bev_cart_metrics(
         order.get("price", 0.0) for order in delivery_conversion_data
     )
     
-    # Coverage metrics
-    # Unique holes tells where the cart reached at least once across the day
+    # Coverage metrics - simplified to use total service time and node count
     holes_covered = _calculate_holes_covered(coordinates)
-    # Actual pace: count hole transitions across the whole service window
-    holes_traversed = _calculate_hole_traversals(coordinates)
-    holes_covered_per_hour = (holes_traversed / service_hours) if service_hours > 0 else 0.0
-    minutes_per_hole_per_cart = ((service_hours * 60) / holes_traversed) if holes_traversed > 0 else 0.0
+    holes_covered_per_hour = holes_covered / service_hours if service_hours > 0 else 0.0
     
     # Additional metrics for batch processing
     tips_per_order = total_tips / total_orders if total_orders > 0 else 0.0
@@ -140,7 +134,6 @@ def calculate_bev_cart_metrics(
         total_delivery_orders_conversion_count=total_delivery_orders_conversion_count,
         total_delivery_orders_conversion_revenue=total_delivery_orders_conversion_revenue,
         holes_covered_per_hour=holes_covered_per_hour,
-        minutes_per_hole_per_cart=minutes_per_hole_per_cart,
         # Additional metrics
         unique_customers=unique_customers,
         tip_rate=tip_rate,
@@ -161,50 +154,12 @@ def calculate_bev_cart_metrics(
 
 
 def _calculate_holes_covered(coordinates: List[Dict[str, Any]]) -> int:
-    """Calculate total number of unique holes covered by the cart."""
-    if not coordinates:
-        return 0
-    
-    holes_covered = set()
-    for coord in coordinates:
-        hole = coord.get("current_hole") or coord.get("hole")
-        if hole and isinstance(hole, (int, float)):
-            holes_covered.add(int(hole))
-    
-    return len(holes_covered)
+    """Count unique holes visited (from hole labels in coordinates)."""
+    holes = {coord.get("current_hole") or coord.get("hole") for coord in coordinates}
+    return len([h for h in holes if h is not None])
 
 
-def _calculate_hole_traversals(coordinates: List[Dict[str, Any]]) -> int:
-    """Count the number of hole-to-hole transitions the cart actually made.
-
-    Robust to missing/None hole labels by skipping them. Consecutive samples on the
-    same hole are collapsed; only changes contribute to traversal count.
-
-    Returns the number of transitions (e.g., 18 traversals per full loop), which can
-    be used to derive holes/hour and minutes/hole independent of service window length.
-    """
-    if not coordinates:
-        return 0
-
-    last_hole: Optional[int] = None
-    traversals: int = 0
-    for coord in coordinates:
-        hole_val = coord.get("current_hole") or coord.get("hole")
-        try:
-            hole = int(hole_val) if hole_val is not None else None
-        except Exception:
-            hole = None
-        if hole is None:
-            # Skip unlabeled points
-            continue
-        if last_hole is None:
-            last_hole = hole
-            continue
-        if hole != last_hole:
-            traversals += 1
-            last_hole = hole
-
-    return traversals
+# Removed _calculate_hole_traversals - replaced with simple coverage calculation
 
 
 def _calculate_customer_order_counts(sales_data: List[Dict[str, Any]]) -> Dict[int, int]:
@@ -336,7 +291,6 @@ def summarize_bev_cart_metrics(metrics_list: List[BevCartMetrics]) -> Dict[str, 
     summaries["total_delivery_orders_conversion_count"] = _mm([float(m.total_delivery_orders_conversion_count) for m in metrics_list])
     summaries["total_delivery_orders_conversion_revenue"] = _mm([m.total_delivery_orders_conversion_revenue for m in metrics_list])
     summaries["holes_covered_per_hour"] = _mm([m.holes_covered_per_hour for m in metrics_list])
-    summaries["minutes_per_hole_per_cart"] = _mm([m.minutes_per_hole_per_cart for m in metrics_list])
 
     # Totals
     summaries["total_orders_sum"] = sum(m.total_orders for m in metrics_list)
@@ -361,7 +315,6 @@ def format_metrics_report(metrics: BevCartMetrics) -> str:
 7. **Total Delivery Orders Conversion Count**: {metrics.total_delivery_orders_conversion_count}
 8. **Total Delivery Orders Conversion Revenue**: ${metrics.total_delivery_orders_conversion_revenue:.2f}
 9. **Holes Covered per Hour**: {metrics.holes_covered_per_hour:.2f}
-10. **Minutes per Hole per Cart**: {metrics.minutes_per_hole_per_cart:.1f}
 
 ## Simulation Details
 - Simulation ID: {metrics.simulation_id}
@@ -387,7 +340,6 @@ def format_summary_report(summaries: Dict[str, Any], num_runs: int) -> str:
 - Delivery Orders Conversion Count — Mean: {summaries.get('total_delivery_orders_conversion_count', {}).get('mean', 0):.0f}
 - Delivery Orders Conversion Revenue — Mean: ${summaries.get('total_delivery_orders_conversion_revenue', {}).get('mean', 0):.2f}
 - Holes Covered per Hour — Mean: {summaries.get('holes_covered_per_hour', {}).get('mean', 0):.2f}
-- Minutes per Hole per Cart — Mean: {summaries.get('minutes_per_hole_per_cart', {}).get('mean', 0):.1f} min
 
 ## Aggregate Totals
 - Total Revenue: ${summaries.get('total_revenue_sum', 0):.2f}

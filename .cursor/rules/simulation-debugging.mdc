@@ -1,0 +1,57 @@
+---
+description: Debugging guidelines for golf delivery simulation issues
+globs: golfsim/**/*.py,scripts/**/*.py
+---
+
+# Golf Delivery Simulation Debugging Guide
+
+## Common Debugging Patterns
+
+### Coordinate Format Issues
+- **Always check**: Are coordinates in the expected format?
+- **Clubhouse**: Should be `(longitude, latitude)` tuple, not `{"latitude": X, "longitude": Y}` dict
+- **Hole locations**: Should be `(lon, lat)` tuples from geospatial data
+- **Debug tip**: Add logging to show coordinate values and types
+
+### Service Class Identification
+- **MultiRunnerDeliveryService**: Used in [run_delivery_runner_simulation()](mdc:golfsim/simulation/orchestration.py)
+- **SingleRunnerDeliveryService**: Used in legacy simulations
+- **DeliveryService**: Used in [run_multi_golfer_simulation()](mdc:golfsim/simulation/orchestration.py)
+- **Check**: Verify which service class is actually being instantiated
+
+### Routing Debug Steps
+1. **Cart Graph**: Verify [cart_graph.pkl](mdc:courses/pinetree_country_club/pkl/cart_graph.pkl) exists and loads
+2. **Nearest Nodes**: Check if start/end coordinates map to valid graph nodes
+3. **Path Finding**: Ensure NetworkX can find paths between nodes
+4. **Edge Weights**: Verify edges have proper 'length' attributes
+
+### Logging Levels for Different Issues
+- **INFO**: Basic simulation flow and major milestones
+- **DEBUG**: Detailed routing, coordinate generation, and data transformations
+- **WARNING**: Missing data or fallback behaviors
+
+## File Import Issues
+- **Path Resolution**: Use relative imports within golfsim package
+- **Missing Dependencies**: Check if optional dependencies (matplotlib, geopandas) are available
+- **Pickle Loading**: Ensure cart graph files are compatible with current NetworkX version
+
+## Performance Debugging
+- **Coordinate Generation**: Can be expensive for long routes with many nodes
+- **Graph Operations**: NetworkX shortest path calculations scale with graph size
+- **File I/O**: Large coordinate CSV files may impact performance
+
+## Testing Strategies
+```python
+# Quick coordinate format test
+def test_clubhouse_format(config):
+    assert isinstance(config.clubhouse, tuple), f"Expected tuple, got {type(config.clubhouse)}"
+    assert len(config.clubhouse) == 2, f"Expected (lon, lat), got {config.clubhouse}"
+
+# Routing connectivity test  
+def test_routing(cart_graph, start, end):
+    from golfsim.routing.networks import nearest_node
+    start_node = nearest_node(cart_graph, start[0], start[1])
+    end_node = nearest_node(cart_graph, end[0], end[1])
+    assert start_node is not None, "No start node found"
+    assert end_node is not None, "No end node found"
+```

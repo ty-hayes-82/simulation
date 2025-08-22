@@ -16,8 +16,6 @@ def simulate_beverage_cart_sales(
     groups: List[Dict[str, Any]],
     pass_order_probability: float,
     price_per_order: float,
-    minutes_between_holes: float = 2.0,
-    minutes_per_hole: Optional[float] = None,
     golfer_points: Optional[List[Dict]] = None,
     crossings_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -30,8 +28,6 @@ def simulate_beverage_cart_sales(
         groups: List of golfer groups with group_id, tee_time_s, num_golfers
         pass_order_probability: Probability of order on each crossing
         price_per_order: Price per order in dollars
-        minutes_between_holes: Time between holes
-        minutes_per_hole: Time per hole (optional)
         golfer_points: GPS points for golfers (optional)
         crossings_data: Crossings computation result from crossings service
         

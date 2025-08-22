@@ -3,11 +3,9 @@ Test beverage cart metrics calculation.
 """
 
 from __future__ import annotations
-
-import pytest
+from golfsim.simulation.beverage_cart_service import BeverageCartService
 from golfsim.analysis.bev_cart_metrics import (
     calculate_bev_cart_metrics,
-    BevCartMetrics,
     _calculate_holes_covered,
     _calculate_customer_order_counts,
     _calculate_distance_m
