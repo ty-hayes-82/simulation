@@ -329,7 +329,12 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                 # Get the golfer's current node at the time of the order
                 golfer_group = delivery_service.groups_by_id.get(order.golfer_group_id)
                 if golfer_group:
-                    current_node = golfer_group.current_node_index
+                    # Calculate current node index based on time elapsed since tee time
+                    tee_time_s = int(golfer_group.get("tee_time_s", 0))
+                    time_elapsed_s = order.order_time_s - tee_time_s
+                    # Each node represents 1 minute of play time
+                    current_node = max(0, int(time_elapsed_s // 60))
+                    
                     # Get the correct hole for the node
                     correct_hole = get_hole_for_node(current_node, config.course_dir)
                     if correct_hole is not None:

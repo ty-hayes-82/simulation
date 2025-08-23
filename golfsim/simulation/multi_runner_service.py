@@ -32,6 +32,7 @@ class MultiRunnerDeliveryService(BaseDeliveryService):
     runner_busy: List[bool] = field(default_factory=list)
     # Derived helpers for prediction
     _tee_time_by_group: Dict[int, int] = field(default_factory=dict)
+    groups_by_id: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     _nodes_per_hole: int = 12
     # Connected points from holes_connected and hole line geometries for prediction/mapping
     _loop_points: List[Tuple[float, float]] = field(default_factory=list)
@@ -43,7 +44,7 @@ class MultiRunnerDeliveryService(BaseDeliveryService):
         self._load_course_config()
         self._load_node_travel_times()  # New method to load node travel times
         self._init_runner_stores_and_processes()
-        self._init_group_tee_times()
+        self._init_group_lookups()
         self._loop_points, self._loop_holes = utils.load_connected_points(self.course_dir)
 
     def _init_runner_stores_and_processes(self) -> None:
@@ -60,16 +61,19 @@ class MultiRunnerDeliveryService(BaseDeliveryService):
         # Start dispatcher process to assign orders to runners with priority by index
         self.env.process(self._dispatch_loop())
 
-    def _init_group_tee_times(self) -> None:
-        """Initialize a lookup for group tee times for faster access."""
+    def _init_group_lookups(self) -> None:
+        """Initialize lookups for group tee times and groups by ID."""
         if self.groups:
-            self._tee_time_by_group = {
-                int(g.get("group_id")): int(g.get("tee_time_s", 0))
-                for g in self.groups
-                if g is not None and g.get("group_id") is not None
-            }
+            self._tee_time_by_group = {}
+            self.groups_by_id = {}
+            for g in self.groups:
+                if g and g.get("group_id") is not None:
+                    group_id = int(g["group_id"])
+                    self._tee_time_by_group[group_id] = int(g.get("tee_time_s", 0))
+                    self.groups_by_id[group_id] = g
         else:
             self._tee_time_by_group = {}
+            self.groups_by_id = {}
 
     def _load_hole_lines(self) -> Dict[int, Any]:
         """Load hole LineString geometries keyed by hole number."""
