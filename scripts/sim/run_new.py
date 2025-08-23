@@ -156,18 +156,28 @@ def main() -> None:
         
         # Export hole delivery GeoJSON if requested
         if args.export_geojson:
-            geojson_path = Path(args.geojson_output)
-            # Use absolute path if not already absolute
-            if not geojson_path.is_absolute():
-                geojson_path = Path.cwd() / geojson_path
-                
-            export_hole_delivery_geojson(
-                results=results,
-                course_dir=Path(config.course_dir),
-                output_path=geojson_path
-            )
+            # The `results` dict from the simulation orchestrator is a summary.
+            # We need to load the detailed results.json from the output directory.
+            output_dir = Path(results.get("output_dir", ""))
+            if output_dir and (output_dir / "run_01" / "results.json").exists():
+                detailed_results_path = output_dir / "run_01" / "results.json"
+                with detailed_results_path.open("r") as f:
+                    detailed_results = json.load(f)
+
+                geojson_path = Path(args.geojson_output)
+                # Use absolute path if not already absolute
+                if not geojson_path.is_absolute():
+                    geojson_path = Path.cwd() / geojson_path
+                    
+                export_hole_delivery_geojson(
+                    results=detailed_results,
+                    course_dir=Path(config.course_dir),
+                    output_path=geojson_path
+                )
+            else:
+                logger.warning("Could not find detailed results.json to generate heatmap data.")
         
-        return results
+        return
     else:
         raise SystemExit("Nothing to simulate: set --num-runners > 0")
     

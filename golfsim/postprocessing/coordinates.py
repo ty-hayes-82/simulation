@@ -136,6 +136,16 @@ def generate_runner_coordinates_from_events(
                     hole_num
                 )
                 runner_coords.extend(delivery_coords)
+
+                # Add a point at the exact delivery time to ensure runner and golfer meet
+                runner_coords.append({
+                    "id": runner_id,
+                    "latitude": delivery_target[1],
+                    "longitude": delivery_target[0],
+                    "timestamp": complete_ts,
+                    "type": "runner",
+                    "hole": hole_num,
+                })
                 
                 # Calculate return path - from delivery complete to return timestamp
                 return_path_nodes = nx.shortest_path(cart_graph, delivery_node, clubhouse_node)
