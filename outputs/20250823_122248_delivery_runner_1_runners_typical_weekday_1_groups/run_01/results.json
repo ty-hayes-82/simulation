@@ -1,0 +1,387 @@
+{
+  "success": true,
+  "simulation_type": "multi_golfer_single_runner",
+  "orders": [
+    {
+      "order_id": "001",
+      "golfer_group_id": 1,
+      "golfer_id": "G1",
+      "hole_num": 9,
+      "order_time_s": 20962,
+      "status": "processed",
+      "total_completion_time_s": 620.8643261158359
+    },
+    {
+      "order_id": "002",
+      "golfer_group_id": 1,
+      "golfer_id": "G1",
+      "hole_num": 11,
+      "order_time_s": 23413,
+      "status": "processed",
+      "total_completion_time_s": 849.6404218786956
+    }
+  ],
+  "orders_all": [
+    {
+      "order_id": "001",
+      "golfer_group_id": 1,
+      "golfer_id": "G1",
+      "hole_num": 9,
+      "order_time_s": 20962,
+      "status": "processed",
+      "total_completion_time_s": 620.8643261158359
+    },
+    {
+      "order_id": "002",
+      "golfer_group_id": 1,
+      "golfer_id": "G1",
+      "hole_num": 11,
+      "order_time_s": 23413,
+      "status": "processed",
+      "total_completion_time_s": 849.6404218786956
+    }
+  ],
+  "delivery_stats": [
+    {
+      "order_id": "001",
+      "golfer_group_id": 1,
+      "hole_num": 9,
+      "placed_hole_num": 9,
+      "order_time_s": 20962,
+      "queue_delay_s": 3,
+      "prep_time_s": 600,
+      "delivery_time_s": 39.99475996082333,
+      "return_time_s": 39.99475996082333,
+      "total_drive_time_s": 79.98951992164666,
+      "delivery_distance_m": 214.37191339001305,
+      "total_completion_time_s": 620.8643261158359,
+      "delivered_at_time_s": 21582.864326115836,
+      "runner_id": "runner_1",
+      "order_node_idx": 96,
+      "predicted_delivery_node_idx": 119,
+      "actual_delivery_node_idx": 119,
+      "trip_to_golfer": {
+        "nodes": [
+          0,
+          [
+            -84.5928,
+            34.0379
+          ],
+          120,
+          119
+        ],
+        "length_m": 107.18595669500652,
+        "time_s": 17.86432611583442,
+        "efficiency": null,
+        "routing_type": "optimal"
+      },
+      "trip_back": {
+        "nodes": [
+          119,
+          120,
+          [
+            -84.5928,
+            34.0379
+          ],
+          0
+        ],
+        "length_m": 107.18595669500652,
+        "time_s": 17.86432611583442,
+        "efficiency": null,
+        "routing_type": "optimal"
+      },
+      "predicted_delivery_location": [
+        -84.59386503819965,
+        34.03826384971107
+      ]
+    },
+    {
+      "order_id": "002",
+      "golfer_group_id": 1,
+      "hole_num": 12,
+      "placed_hole_num": 11,
+      "order_time_s": 23413,
+      "queue_delay_s": 2,
+      "prep_time_s": 600,
+      "delivery_time_s": 554.4188549523021,
+      "return_time_s": 554.4188549523021,
+      "total_drive_time_s": 1108.8377099046043,
+      "delivery_distance_m": 2971.6850625443394,
+      "total_completion_time_s": 849.6404218786956,
+      "delivered_at_time_s": 24262.640421878696,
+      "runner_id": "runner_1",
+      "order_node_idx": 120,
+      "predicted_delivery_node_idx": 164,
+      "actual_delivery_node_idx": 164,
+      "trip_to_golfer": {
+        "nodes": [
+          0,
+          239,
+          238,
+          237,
+          236,
+          235,
+          234,
+          233,
+          201,
+          200,
+          199,
+          198,
+          197,
+          196,
+          195,
+          194,
+          193,
+          192,
+          191,
+          190,
+          189,
+          188,
+          187,
+          186,
+          185,
+          184,
+          183,
+          182,
+          181,
+          180,
+          179,
+          178,
+          177,
+          176,
+          175,
+          174,
+          173,
+          172,
+          171,
+          170,
+          169,
+          168,
+          167,
+          166,
+          165,
+          164
+        ],
+        "length_m": 1485.8425312721697,
+        "time_s": 247.64042187869495,
+        "efficiency": null,
+        "routing_type": "optimal"
+      },
+      "trip_back": {
+        "nodes": [
+          164,
+          165,
+          166,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          174,
+          175,
+          176,
+          177,
+          178,
+          179,
+          180,
+          181,
+          182,
+          183,
+          184,
+          185,
+          186,
+          187,
+          188,
+          189,
+          190,
+          191,
+          192,
+          193,
+          194,
+          195,
+          196,
+          197,
+          198,
+          199,
+          200,
+          201,
+          233,
+          234,
+          235,
+          236,
+          237,
+          238,
+          239,
+          0
+        ],
+        "length_m": 1485.8425312721695,
+        "time_s": 247.64042187869492,
+        "efficiency": null,
+        "routing_type": "optimal"
+      },
+      "predicted_delivery_location": [
+        -84.5943069567697,
+        34.03095630546771
+      ]
+    }
+  ],
+  "failed_orders": [],
+  "activity_log": [
+    {
+      "timestamp_s": 0,
+      "time_str": "07:00",
+      "activity_type": "service_closed",
+      "description": "runner_1 waiting 180 minutes until opening",
+      "order_id": null,
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 10800,
+      "time_str": "10:00",
+      "activity_type": "service_opened",
+      "description": "runner_1 started shift",
+      "order_id": null,
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 20965,
+      "time_str": "12:49",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 001 to runner_1",
+      "order_id": "001",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 20965,
+      "time_str": "12:49",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 001 (Hole 9)",
+      "order_id": "001",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 21565,
+      "time_str": "12:59",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 001",
+      "order_id": "001",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 21565,
+      "time_str": "12:59",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 9 (214m, 0.3 min)",
+      "order_id": "001",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 21582.864326115836,
+      "time_str": "12:59",
+      "activity_type": "delivery_complete",
+      "description": "runner_1 delivered Order 001 to Hole 9 (Total completion: 10.3 min)",
+      "order_id": "001",
+      "location": "hole_9",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 21582.864326115836,
+      "time_str": "12:59",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_9 (0.7 min)",
+      "order_id": "001",
+      "location": "hole_9",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 21622.85908607666,
+      "time_str": "13:00",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse after delivering Order 001",
+      "order_id": "001",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 23415,
+      "time_str": "13:30",
+      "activity_type": "order_assigned",
+      "description": "Assigned Order 002 to runner_1",
+      "order_id": "002",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 23415,
+      "time_str": "13:30",
+      "activity_type": "prep_start",
+      "description": "runner_1 started prep for Order 002 (Hole 11)",
+      "order_id": "002",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 24015,
+      "time_str": "13:40",
+      "activity_type": "prep_complete",
+      "description": "runner_1 completed prep for Order 002",
+      "order_id": "002",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 24015,
+      "time_str": "13:40",
+      "activity_type": "delivery_start",
+      "description": "runner_1 departing to Hole 12 (2972m, 4.1 min)",
+      "order_id": "002",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 24262.640421878696,
+      "time_str": "13:44",
+      "activity_type": "delivery_complete",
+      "description": "runner_1 delivered Order 002 to Hole 12 (Total completion: 14.2 min)",
+      "order_id": "002",
+      "location": "hole_12",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 24262.640421878696,
+      "time_str": "13:44",
+      "activity_type": "returning",
+      "description": "runner_1 returning to clubhouse from hole_12 (9.2 min)",
+      "order_id": "002",
+      "location": "hole_12",
+      "runner_id": "runner_1"
+    },
+    {
+      "timestamp_s": 24817.059276830998,
+      "time_str": "13:53",
+      "activity_type": "arrived_clubhouse",
+      "description": "runner_1 arrived at clubhouse after delivering Order 002",
+      "order_id": "002",
+      "location": "clubhouse",
+      "runner_id": "runner_1"
+    }
+  ],
+  "metadata": {
+    "prep_time_min": 10,
+    "runner_speed_mps": 6.0,
+    "num_groups": 1,
+    "num_runners": 1,
+    "course_dir": "courses/pinetree_country_club",
+    "service_open_s": 10800,
+    "service_close_s": 39600
+  },
+  "heatmap_path": "outputs\\20250823_122248_delivery_runner_1_runners_typical_weekday_1_groups\\run_01\\delivery_heatmap.png"
+}

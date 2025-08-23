@@ -105,13 +105,13 @@ def generate_runner_coordinates_from_events(
         closest_idx = time_diffs.idxmin()
         golfer_location = golfer_coords_df.loc[closest_idx]
         
-        # Use the golfer's exact timestamp and coordinates as the delivery target
-        delivery_timestamp = int(golfer_location['timestamp'])
+        # Use the golfer's coordinates as the delivery target, but use actual delivery timing
         delivery_target = (float(golfer_location['longitude']), float(golfer_location['latitude']))
         
         # Log the timing for debugging
-        time_diff = abs(delivery_timestamp - complete_ts)
-        print(f"Order {order_id}: Original delivery at {complete_ts}, using golfer point at {delivery_timestamp} (diff: {time_diff}s)")
+        golfer_timestamp = int(golfer_location['timestamp'])
+        time_diff = abs(golfer_timestamp - complete_ts)
+        print(f"Order {order_id}: Delivery at {complete_ts}, using golfer location from {golfer_timestamp} (diff: {time_diff}s)")
         
         # Generate delivery path coordinates
         try:
@@ -120,24 +120,24 @@ def generate_runner_coordinates_from_events(
             delivery_node = nearest_node(cart_graph, delivery_target[0], delivery_target[1])
             
             if clubhouse_node is not None and delivery_node is not None:
-                # Calculate delivery path - from departure to golfer's exact timestamp
+                # Calculate delivery path - from departure to actual delivery complete time
                 delivery_path_nodes = nx.shortest_path(cart_graph, clubhouse_node, delivery_node)
                 delivery_path_coords = [
                     (float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y'])) 
                     for n in delivery_path_nodes
                 ]
                 
-                # Generate delivery coordinates using the golfer's exact timestamp as target
+                # Generate delivery coordinates using actual delivery timing
                 delivery_coords = interpolate_path_points(
                     delivery_path_coords,
                     start_ts,
-                    float(delivery_timestamp - start_ts),
+                    float(complete_ts - start_ts),
                     runner_id,
                     hole_num
                 )
                 runner_coords.extend(delivery_coords)
                 
-                # Calculate return path - from golfer's timestamp to return timestamp
+                # Calculate return path - from delivery complete to return timestamp
                 return_path_nodes = nx.shortest_path(cart_graph, delivery_node, clubhouse_node)
                 return_path_coords = [
                     (float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y']))
@@ -147,8 +147,8 @@ def generate_runner_coordinates_from_events(
                 # Generate return coordinates using exact return timestamp
                 return_coords = interpolate_path_points(
                     return_path_coords,
-                    delivery_timestamp,
-                    float(return_ts - delivery_timestamp),
+                    complete_ts,
+                    float(return_ts - complete_ts),
                     runner_id,
                     hole_num
                 )

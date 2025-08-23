@@ -138,13 +138,27 @@ export default function HeatmapView() {
 
   useEffect(() => {
     const loadHoles = async () => {
+      const cacheBuster = `?t=${Date.now()}`;
+      const primaryPath = (process.env.REACT_APP_HOLES_PATH && process.env.REACT_APP_HOLES_PATH.trim().length > 0)
+        ? process.env.REACT_APP_HOLES_PATH
+        : '/hole_delivery_times.geojson';
+      const fallbackPath = '/hole_delivery_times_debug.geojson';
       try {
-        const holesPath = (process.env.REACT_APP_HOLES_PATH && process.env.REACT_APP_HOLES_PATH.trim().length > 0)
-          ? process.env.REACT_APP_HOLES_PATH
-          : '/hole_delivery_times.geojson';
-        const resp = await fetch(`${holesPath}?t=${Date.now()}`);
-        if (!resp.ok) return;
-        const gj = await resp.json();
+        // Try primary first
+        let resp = await fetch(`${primaryPath}${cacheBuster}`);
+        let gj: any | null = null;
+        if (resp.ok) {
+          gj = await resp.json();
+        }
+        // If primary failed or has no data, try fallback
+        const hasAnyData = (gj?.features || []).some((f: any) => Boolean(f?.properties?.has_data));
+        if (!resp.ok || !hasAnyData) {
+          const fb = await fetch(`${fallbackPath}${cacheBuster}`);
+          if (fb.ok) {
+            gj = await fb.json();
+          }
+        }
+        if (!gj) return;
         setHolesGeojson(gj);
         try {
           const times: number[] = (gj.features || [])
@@ -155,7 +169,6 @@ export default function HeatmapView() {
             setHolesMinTime(Math.min(...times));
             setHolesMaxTime(Math.max(...times));
           } else {
-            // Set safe defaults when no data is available
             setHolesMinTime(0);
             setHolesMaxTime(1);
           }
