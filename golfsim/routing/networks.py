@@ -8,6 +8,10 @@ from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
 from shapely.geometry import Point
+import geopandas as gpd
+import pandas as pd
+
+_gdf_cache: Dict[int, gpd.GeoDataFrame] = {}
 
 
 def nearest_node(G: nx.Graph, lon: float, lat: float):
@@ -20,23 +24,37 @@ def nearest_node(G: nx.Graph, lon: float, lat: float):
     if G is None or G.number_of_nodes() == 0:
         return None
 
-    min_dist = float("inf")
-    nearest = None
+    graph_id = id(G)
+
+    if graph_id not in _gdf_cache:
+        node_list = [
+            (node, data.get("x"), data.get("y"))
+            for node, data in G.nodes(data=True)
+            if data.get("x") is not None and data.get("y") is not None
+        ]
+        if not node_list:
+            return None
+
+        df = pd.DataFrame(node_list, columns=['node', 'x', 'y'])
+        # Use node ID as index for easy lookup later with idxmin()
+        gdf = gpd.GeoDataFrame(
+            df.drop(columns=['node']),
+            geometry=gpd.points_from_xy(df.x, df.y),
+            index=df.node
+        )
+        _gdf_cache[graph_id] = gdf
+
+    gdf = _gdf_cache[graph_id]
+    if gdf.empty:
+        return None
+        
     target = Point(lon, lat)
 
-    # Iterate without sorting to avoid mixed-type comparison (int vs tuple)
-    for node, node_data in G.nodes(data=True):
-        x = node_data.get("x")
-        y = node_data.get("y")
-        if x is None or y is None:
-            continue
-        node_point = Point(x, y)
-        dist = target.distance(node_point)
-        if dist < min_dist:
-            min_dist = dist
-            nearest = node
+    # Calculate distances from the target to all nodes in a vectorized way
+    distances = gdf.distance(target)
 
-    return nearest
+    # Find the index (node ID) of the minimum distance
+    return distances.idxmin()
 
 
 def shortest_path_on_cartpaths(

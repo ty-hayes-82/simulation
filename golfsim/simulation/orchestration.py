@@ -49,13 +49,15 @@ from ..utils import generate_standardized_output_name
 from .orders import (
     calculate_delivery_order_probability_per_9_holes,
     generate_delivery_orders_with_pass_boost,
-    generate_delivery_orders_by_hour_distribution
+    generate_delivery_orders_by_hour_distribution,
+    generate_dynamic_hourly_distribution,
 )
 from golfsim.simulation.delivery_service import DeliveryService
 from golfsim.simulation.beverage_cart_service import BeverageCartService
 from golfsim.simulation.order_generation import simulate_golfer_orders
 from golfsim.config.loaders import load_simulation_config
 from golfsim.viz.matplotlib_viz import render_delivery_plot, render_individual_delivery_plots, load_course_geospatial_data
+from golfsim.routing.utils import get_hole_for_node
 import simpy
 from pathlib import Path
 import pickle
@@ -231,12 +233,15 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
             groups = build_groups_interval(int(config.groups_count), first_tee_s, float(config.groups_interval_min)) if config.groups_count > 0 else []
 
         # Decide order generation mode
-        # TODO: These attributes are not in SimulationConfig. Need to move them or get from args.
         hourly_dist = getattr(config, "delivery_hourly_distribution", None)
-        use_hourly = isinstance(hourly_dist, dict) and len(hourly_dist) > 0
-        requested_total_orders = int(args.delivery_total_orders) if getattr(args, "delivery_total_orders", None) is not None else int(config.delivery_total_orders)
         
-        delivery_order_probability = calculate_delivery_order_probability_per_9_holes(requested_total_orders, len(groups))
+        # If hourly distribution is not provided, create a default dynamic distribution
+        if not isinstance(hourly_dist, dict) or not hourly_dist:
+            service_start_hour = int(config.service_hours.start_hour) if config.service_hours else 10
+            service_end_hour = int(config.service_hours.end_hour) if config.service_hours else 19
+            hourly_dist = generate_dynamic_hourly_distribution(service_start_hour, service_end_hour)
+
+        requested_total_orders = int(args.delivery_total_orders) if getattr(args, "delivery_total_orders", None) is not None else int(config.delivery_total_orders)
 
         crossings = None # Disabled in this mode
 
@@ -263,58 +268,22 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
         orders: list[DeliveryOrder] = []
         orders_all: list[DeliveryOrder] = []
         if groups:
-            if use_hourly:
-                orders_all = generate_delivery_orders_by_hour_distribution(
-                    groups=groups,
-                    hourly_distribution=hourly_dist,
-                    total_orders=int(requested_total_orders),
-                    service_open_hhmm=str(config.service_hours.start_hour) + ":00" if config.service_hours else "10:00",
-                    service_close_hhmm=str(config.service_hours.end_hour) + ":00" if config.service_hours else "19:00",
-                    opening_ramp_minutes=int(getattr(config, "delivery_opening_ramp_minutes", 0)),
-                    course_dir=config.course_dir,
-                    rng_seed=config.random_seed,
-                )
-            else:
-                orders_all = generate_delivery_orders_with_pass_boost(
-                    groups=groups,
-                    base_prob_per_9=float(delivery_order_probability),
-                    crossings_data=crossings,
-                    rng_seed=config.random_seed,
-                    course_dir=config.course_dir,
-                    service_open_s=int(delivery_service.service_open_s),
-                    opening_ramp_minutes=int(getattr(config, "delivery_opening_ramp_minutes", 0)),
-                )
-            
-            group_by_id: dict[int, dict[str, Any]] = {int(g.get("group_id")): g for g in (groups or [])}
-            try:
-                total_nodes = len(load_holes_connected_points(config.course_dir))
-            except Exception:
-                total_nodes = 18 * 12
-            nodes_per_hole = max(1.0, float(total_nodes) / 18.0)
-            for o in orders_all:
-                try:
-                    if int(getattr(o, "order_time_s", 0)) < int(delivery_service.service_open_s):
-                        opening_ramp_min = int(getattr(config, "delivery_opening_ramp_minutes", 0))
-                        if opening_ramp_min > 0:
-                            import random as _r
-                            ramp_end_s = int(delivery_service.service_open_s) + opening_ramp_min * 60
-                            o.order_time_s = int(_r.uniform(int(delivery_service.service_open_s), ramp_end_s - 1))
-                        else:
-                            o.order_time_s = int(delivery_service.service_open_s)
-                    gid = int(getattr(o, "golfer_group_id", 0) or 0)
-                    g = group_by_id.get(gid)
-                    if g is not None:
-                        start = int(g.get("tee_time_s", 0))
-                        ts_s = int(getattr(o, "order_time_s", 0))
-                        delta_min = max(0, int((ts_s - start) // 60))
-                        node_idx = delta_min
-                        hole = 1 + int(node_idx // int(nodes_per_hole))
-                        o.hole_num = int(max(1, min(18, hole)))
-                except Exception:
-                    pass
+            orders_all = generate_delivery_orders_by_hour_distribution(
+                groups=groups,
+                hourly_distribution=hourly_dist,
+                total_orders=int(requested_total_orders),
+                service_open_hhmm=str(config.service_hours.start_hour) + ":00" if config.service_hours else "10:00",
+                service_close_hhmm=str(config.service_hours.end_hour) + ":00" if config.service_hours else "19:00",
+                opening_ramp_minutes=int(getattr(config, "delivery_opening_ramp_minutes", 0)),
+                course_dir=config.course_dir,
+                rng_seed=config.random_seed,
+                service_open_s=int(delivery_service.service_open_s),
+            )
             
             block_up_to_hole = getattr(args, "block_up_to_hole", 0)
             block_holes_10_12 = getattr(args, "block_holes_10_12", False)
+            block_holes_list = getattr(args, "block_holes", None)
+            block_holes_range = getattr(args, "block_holes_range", None)
             
             if block_up_to_hole > 0:
                 original_count = len(orders_all)
@@ -328,11 +297,44 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                 blocked_count = original_count - len(orders_all)
                 logger.info(f"After blocking holes 10-12: {len(orders_all)} orders remaining (blocked {blocked_count} orders)")
 
-            orders = [o for o in orders_all if int(delivery_service.service_open_s) <= int(getattr(o, "order_time_s", 0)) <= int(delivery_service.service_close_s)]
+            # Generic blocking for specific holes
+            try:
+                if block_holes_list:
+                    blocked = set(int(h) for h in block_holes_list)
+                    original_count = len(orders_all)
+                    orders_all = [o for o in orders_all if int(getattr(o, "hole_num", 0)) not in blocked]
+                    blocked_count = original_count - len(orders_all)
+                    logger.info("After blocking holes %s: %d orders remaining (blocked %d orders)", sorted(blocked), len(orders_all), blocked_count)
+            except Exception:
+                pass
+
+            # Range-based blocking like "3-5"
+            try:
+                if isinstance(block_holes_range, str) and "-" in block_holes_range:
+                    a_str, b_str = block_holes_range.split("-", 1)
+                    a = int(a_str); b = int(b_str)
+                    rng = set(range(min(a, b), max(a, b) + 1))
+                    original_count = len(orders_all)
+                    orders_all = [o for o in orders_all if int(getattr(o, "hole_num", 0)) not in rng]
+                    blocked_count = original_count - len(orders_all)
+                    logger.info("After blocking holes %d-%d: %d orders remaining (blocked %d orders)", min(a,b), max(a,b), len(orders_all), blocked_count)
+            except Exception:
+                pass
+
+            orders = orders_all
 
         def order_arrival_process():
             last_time = env.now
             for order in orders:
+                # Get the golfer's current node at the time of the order
+                golfer_group = delivery_service.groups_by_id.get(order.golfer_group_id)
+                if golfer_group:
+                    current_node = golfer_group.current_node_index
+                    # Get the correct hole for the node
+                    correct_hole = get_hole_for_node(current_node, config.course_dir)
+                    if correct_hole is not None:
+                        order.hole_num = correct_hole
+
                 target_time = max(order.order_time_s, delivery_service.service_open_s)
                 if target_time > last_time:
                     yield env.timeout(target_time - last_time)
@@ -383,6 +385,8 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                 "num_groups": len(groups),
                 "num_runners": int(config.num_runners),
                 "course_dir": str(config.course_dir),
+                "service_open_s": int(delivery_service.service_open_s),
+                "service_close_s": int(delivery_service.service_close_s),
             },
         }
 
@@ -553,6 +557,30 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                 streams.update(by_rid)
             if golfer_points_csv:
                 streams.update(golfer_points_csv)
+
+            # Timeline anchors to control animation start/end
+            # - Start: naturally anchored by earliest golfer tee time
+            # - End: force timeline to extend 5 hours after last tee time
+            try:
+                if groups:
+                    last_tee_s = max(int(g.get("tee_time_s", 0) or 0) for g in groups)
+                    anchor_end_s = int(last_tee_s + 5 * 3600)
+                    # Use clubhouse coords for anchor point
+                    if config.clubhouse and isinstance(config.clubhouse, tuple) and len(config.clubhouse) == 2:
+                        lon, lat = float(config.clubhouse[0]), float(config.clubhouse[1])
+                    else:
+                        lon, lat = -84.5928, 34.0379
+                    timeline_point = {
+                        "id": "timeline",
+                        "latitude": lat,
+                        "longitude": lon,
+                        "timestamp": anchor_end_s,
+                        "type": "timeline",
+                        "hole": "clubhouse",
+                    }
+                    streams.setdefault("timeline", []).append(timeline_point)
+            except Exception:
+                pass
 
             # Write coordinates CSV
             if streams:

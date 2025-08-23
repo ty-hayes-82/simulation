@@ -22,14 +22,32 @@ def generate_golfer_points_for_groups(course_dir: str, groups: List[Dict]) -> Li
         groups: List of group dictionaries with 'tee_time_s' and 'group_id'
         
     Returns:
-        List of GPS points with group_id added to each point
+        List of GPS points with group_id and hole number added to each point
     """
     all_points: List[Dict] = []
+    
+    try:
+        total_nodes = len(load_holes_connected_points(course_dir))
+    except (FileNotFoundError, SystemExit):
+        total_nodes = 18 * 12  # Fallback if file is missing or invalid
+    nodes_per_hole = max(1.0, float(total_nodes) / 18.0)
+
     for g in groups:
-        pts = generate_golfer_track(course_dir, g["tee_time_s"]) or []
+        tee_time_s = int(g["tee_time_s"])
+        pts = generate_golfer_track(course_dir, tee_time_s) or []
         for p in pts:
             p["group_id"] = g["group_id"]
+            
+            # Calculate current hole based on timestamp
+            time_since_tee_off_s = int(p["timestamp"]) - tee_time_s
+            node_idx = time_since_tee_off_s // 60  # Each node represents 1 minute
+            
+            # Assign hole number, ensuring it's within 1-18
+            hole = 1 + int(node_idx // nodes_per_hole)
+            p["hole"] = max(1, min(18, hole))
+
         all_points.extend(pts)
+        
     return all_points
 
 

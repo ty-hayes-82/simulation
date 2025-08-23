@@ -67,12 +67,33 @@ def build_staffing_table(rows: List[Dict[str, Any]]) -> str:
         prev = by_key.get(key)
         if prev is None or int(float(r.get("num_runners", 999))) < int(float(prev.get("num_runners", 999))):
             by_key[key] = r
+    
     lines: List[str] = []
-    lines.append("| Scenario | Orders | Minimal Runners | On-Time (mean) | Failed (mean) | p90 (mean) |\n")
-    lines.append("|---|---:|---:|---:|---:|---:|\n")
+    lines.append("| Scenario | Orders | Minimal Runners | On-Time (95% CI) | Failed (95% CI) | p90 (95% CI) | Stability | Frontier |\n")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+    
     for (scenario, orders), r in sorted(by_key.items(), key=lambda t: (t[0][0], t[0][1])):
+        # Format confidence intervals
+        on_time_ci = f"{float(r.get('on_time_rate_mean', 0)):.2f} ({float(r.get('on_time_rate_ci_lower', 0)):.2f}-{float(r.get('on_time_rate_ci_upper', 0)):.2f})"
+        failed_ci = f"{float(r.get('failed_rate_mean', 0)):.3f} ({float(r.get('failed_rate_ci_lower', 0)):.3f}-{float(r.get('failed_rate_ci_upper', 0)):.3f})"
+        p90_ci = f"{float(r.get('p90_mean', 0)):.1f} ({float(r.get('p90_ci_lower', 0)):.1f}-{float(r.get('p90_ci_upper', 0)):.1f})"
+        
+        # Stability and frontier flags
+        is_stable = str(r.get("is_stable", "")).lower() in ("true", "1", "yes")
+        is_frontier = str(r.get("is_frontier_point", "")).lower() in ("true", "1", "yes")
+        is_knee = str(r.get("is_knee_point", "")).lower() in ("true", "1", "yes")
+        
+        stability_badge = "✅ Stable" if is_stable else "⚠️ Unstable"
+        frontier_badge = ""
+        if is_knee:
+            frontier_badge = "🎯 Knee Point"
+        elif is_frontier:
+            frontier_badge = "⭐ Frontier"
+        else:
+            frontier_badge = "-"
+        
         lines.append(
-            f"| {scenario} | {orders} | {int(float(r['num_runners']))} | {float(r['on_time_rate_mean']):.2f} | {float(r['failed_rate_mean']):.2f} | {float(r['p90_mean']):.1f} |\n"
+            f"| {scenario} | {orders} | {int(float(r['num_runners']))} | {on_time_ci} | {failed_ci} | {p90_ci} | {stability_badge} | {frontier_badge} |\n"
         )
     return "".join(lines)
 

@@ -492,7 +492,10 @@ def copy_hole_delivery_geojson(coordinates_dirs: List[str]) -> None:
         for public_dir in PUBLIC_DIRS:
             target_file = os.path.join(public_dir, "hole_delivery_times.geojson")
             try:
-                shutil.copy2(source_file, target_file)
+                # Use a temporary file to handle potential file locks
+                temp_target = target_file + ".tmp"
+                shutil.copy2(source_file, temp_target)
+                os.replace(temp_target, target_file)
                 print(f"🗺️  Copied hole_delivery_times.geojson to {public_dir}")
             except Exception as e:
                 print(f"⚠️  Warning: Could not copy hole_delivery_times.geojson to {public_dir}: {e}")

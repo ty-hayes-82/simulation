@@ -281,13 +281,33 @@ def write_unified_coordinates_csv(points_by_id: Dict[str, List[Dict[str, Any]]],
     with save_path.open("w", newline="", encoding="utf-8") as f:
         writer = _csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
+        # Collect, normalize, and deduplicate rows per (id, timestamp)
+        collected_rows = []
         for stream_id, points in points_by_id.items():
             for p in points or []:
                 entry = dict(p)
                 if "id" not in entry or not entry.get("id"):
                     entry["id"] = stream_id
                 row = normalize_coordinate_entry(entry)
-                writer.writerow(row)
+                collected_rows.append(row)
+
+        # Sort by id, timestamp then drop duplicates keeping first occurrence
+        try:
+            collected_rows.sort(key=lambda r: (str(r.get("id", "")), int(r.get("timestamp", 0))))
+        except Exception:
+            pass
+
+        seen_keys = set()
+        unique_rows = []
+        for r in collected_rows:
+            key = (str(r.get("id", "")), int(r.get("timestamp", 0)))
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            unique_rows.append(r)
+
+        for r in unique_rows:
+            writer.writerow(r)
 
     logger.info("Saved unified coordinates CSV: %s", save_path)
     return save_path

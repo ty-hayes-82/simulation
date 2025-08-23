@@ -110,6 +110,32 @@ class SimulationConfig:
         if "clubhouse" in data and isinstance(data["clubhouse"], dict):
             clubhouse_raw = data["clubhouse"]
             filtered_data["clubhouse"] = (clubhouse_raw["longitude"], clubhouse_raw["latitude"])  # (lon, lat)
+
+        # Map service hours from common config shapes
+        service_hours_obj: Optional[ServiceHours] = None
+        try:
+            # Legacy shape: service_hours { start, end }
+            if isinstance(data.get("service_hours"), dict):
+                sh = data["service_hours"]
+                service_hours_obj = ServiceHours(start_hour=int(sh.get("start")), end_hour=int(sh.get("end")))
+            # New shape: delivery_service_hours { open_time: "HH:MM", close_time: "HH:MM" }
+            elif isinstance(data.get("delivery_service_hours"), dict):
+                dsh = data["delivery_service_hours"]
+                def _parse_hour(hhmm: str) -> int:
+                    try:
+                        return int(str(hhmm).split(":")[0])
+                    except Exception:
+                        return 7
+                service_hours_obj = ServiceHours(
+                    start_hour=_parse_hour(dsh.get("open_time", "07:00")),
+                    end_hour=_parse_hour(dsh.get("close_time", "18:00")),
+                )
+            if service_hours_obj is not None:
+                service_hours_obj.validate()
+                filtered_data["service_hours"] = service_hours_obj
+        except Exception:
+            # Leave unset on parse/validate failure; downstream will use defaults
+            pass
         
         # Ensure all required arguments are present by providing defaults
         for p in sig.parameters.values():

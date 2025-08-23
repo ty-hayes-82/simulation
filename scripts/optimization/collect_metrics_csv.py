@@ -64,6 +64,15 @@ def main() -> None:
         row: Dict[str, Any] = {
             "file": str(fp.relative_to(root)),
         }
+        
+        # Extract triad name from path, e.g., "triad_1_3"
+        try:
+            triad_part = [part for part in fp.parts if "triad_" in part]
+            if triad_part:
+                row["triad"] = triad_part[0]
+        except Exception:
+            pass
+
         for k in FIELDS:
             row[k] = d.get(k)
         rows.append(row)
@@ -73,8 +82,13 @@ def main() -> None:
         print("No metrics found.")
         return
 
+    # Ensure "triad" is a field if it exists in any row
+    fieldnames = list(rows[0].keys())
+    if "triad" in rows[0] and "triad" not in fieldnames:
+         fieldnames.insert(1, "triad")
+
     with out_csv.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         for r in rows:
             w.writerow(r)

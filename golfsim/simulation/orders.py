@@ -4,6 +4,7 @@ Order Generation Module
 from __future__ import annotations
 import random
 from typing import Any, Dict, List, Optional, Tuple
+import math
 
 from .services import DeliveryOrder
 from ..config.loaders import parse_hhmm_to_seconds_since_7am
@@ -14,6 +15,42 @@ def calculate_delivery_order_probability_per_9_holes(total_orders: int, num_grou
     if num_groups == 0 or total_orders == 0:
         return 0.0
     return float(total_orders) / (float(num_groups) * 2.0)
+
+def generate_dynamic_hourly_distribution(start_hour: int, end_hour: int) -> Dict[str, float]:
+    """
+    Generates an hourly order distribution with a lunch and dinner peak.
+    Models a normal-like distribution around lunch and a smaller one around dinner.
+    """
+    distribution = {}
+
+    # Parameters for the distribution peaks
+    lunch_peak_hour = 12.5  # Center of lunch peak
+    lunch_spread = 1.5      # Standard deviation for lunch peak
+    lunch_amplitude = 3.0   # Height of lunch peak
+
+    dinner_peak_hour = 17.5 # Center of dinner peak
+    dinner_spread = 1.0     # Standard deviation for dinner peak
+    dinner_amplitude = 2.0  # Height of dinner peak (less than lunch)
+
+    base_weight = 0.5       # Base order probability
+
+    for hour in range(start_hour, end_hour):
+        # Center the calculation in the middle of the hour for a better curve
+        hour_center = hour + 0.5
+        
+        # Calculate weight from lunch peak
+        lunch_dist = abs(hour_center - lunch_peak_hour)
+        lunch_weight = lunch_amplitude * math.exp(-((lunch_dist ** 2) / (2 * lunch_spread ** 2)))
+
+        # Calculate weight from dinner peak
+        dinner_dist = abs(hour_center - dinner_peak_hour)
+        dinner_weight = dinner_amplitude * math.exp(-((dinner_dist ** 2) / (2 * dinner_spread ** 2)))
+
+        # Total weight for the hour is the sum of peaks + base
+        total_weight = base_weight + lunch_weight + dinner_weight
+        distribution[f"{hour:02d}:00"] = total_weight
+        
+    return distribution
 
 def generate_delivery_orders_with_pass_boost(
     groups: List[Dict[str, Any]],
@@ -119,11 +156,12 @@ def generate_delivery_orders_by_hour_distribution(
     opening_ramp_minutes: int = 0,
     course_dir: Optional[str] = None,
     rng_seed: Optional[int] = None,
+    service_open_s: Optional[int] = None,
 ) -> List[DeliveryOrder]:
     if rng_seed is not None:
         random.seed(int(rng_seed))
 
-    open_s = parse_hhmm_to_seconds_since_7am(service_open_hhmm)
+    open_s = service_open_s if isinstance(service_open_s, int) else parse_hhmm_to_seconds_since_7am(service_open_hhmm)
     close_s = parse_hhmm_to_seconds_since_7am(service_close_hhmm)
     if close_s <= open_s:
         close_s = open_s + 10 * 3600
@@ -177,6 +215,10 @@ def generate_delivery_orders_by_hour_distribution(
         
         for _ in range(cnt):
             order_time_s = random.randint(start_s, end_s - 1)
+            # Ensure order time is not before service opening
+            if service_open_s is not None:
+                order_time_s = max(order_time_s, service_open_s)
+            
             active_groups = group_active_at(order_time_s)
             if not active_groups:
                 continue
@@ -197,5 +239,38 @@ def generate_delivery_orders_by_hour_distribution(
     orders.sort(key=lambda o: float(getattr(o, "order_time_s", 0.0)))
     for i, o in enumerate(orders, start=1):
         o.order_id = f"{i:03d}"
+
+    # --- Start of new code ---
+    # If not enough orders were generated due to no active groups, fill the remainder
+    if len(orders) < total_orders:
+        num_to_add = total_orders - len(orders)
+        
+        # Try to find any group to assign the order to
+        fallback_group = groups[0] if groups else {"group_id": 1, "tee_time_s": open_s}
+
+        for _ in range(num_to_add):
+            # Place new orders randomly within the service window
+            order_time_s = random.randint(open_s, close_s - 1)
+            
+            # Find active groups at this time, or use fallback
+            active_groups = group_active_at(order_time_s)
+            group = random.choice(active_groups) if active_groups else fallback_group
+            hole = infer_hole_for_group_at_time(group, order_time_s)
+
+            orders.append(
+                DeliveryOrder(
+                    order_id=None,
+                    golfer_group_id=group.get("group_id"),
+                    golfer_id=f"G{group.get('group_id')}",
+                    order_time_s=order_time_s,
+                    hole_num=hole,
+                )
+            )
+        
+        # Re-sort and re-assign IDs
+        orders.sort(key=lambda o: float(getattr(o, "order_time_s", 0.0)))
+        for i, o in enumerate(orders, start=1):
+            o.order_id = f"{i:03d}"
+    # --- End of new code ---
 
     return orders

@@ -11,7 +11,30 @@ interface MapStyle {
   description: string;
 }
 
+interface DeliveryMetrics {
+  orderCount: number;
+  revenue: number;
+  avgOrderTime: number;
+  onTimeRate: number;
+  failedOrderCount: number;
+  queueWaitAvg: number;
+  deliveryCycleTimeP90: number;
+  ordersPerRunnerHour: number;
+  revenuePerRunnerHour: number;
+}
+
+interface BevCartMetrics {
+  totalOrders: number;
+  totalGroupsPassed: number;
+  avgOrderValue: number;
+  totalDeliveryOrdersPlaced: number;
+  revenuePerBevcartHour: number;
+}
+
 interface AppConfig {
+  data?: {
+    coordinatesDir?: string;
+  };
   animation: {
     defaultMapStyle: string;
   };
@@ -19,6 +42,7 @@ interface AppConfig {
 }
 
 const DEFAULT_CONFIG: AppConfig = {
+  data: { coordinatesDir: '/coordinates' },
   animation: { defaultMapStyle: 'outdoors' },
   mapStyles: {
     'outdoors': { name: 'Golf Course Terrain Pro', url: 'mapbox://styles/mapbox/outdoors-v12', description: 'Perfect for golf - vivid hillshading shows elevation changes, natural features like water hazards, and soft contrasting colors highlight course terrain' },
@@ -60,6 +84,10 @@ export default function HeatmapView() {
   const [holesMinTime, setHolesMinTime] = useState<number>(0);
   const [holesMaxTime, setHolesMaxTime] = useState<number>(1);
   const [hoverInfo, setHoverInfo] = useState<{ lngLat: [number, number]; hole: number; avg: number; count: number } | null>(null);
+  const [deliveryMetrics, setDeliveryMetrics] = useState<DeliveryMetrics | null>(null);
+  const [bevCartMetrics, setBevCartMetrics] = useState<BevCartMetrics | null>(null);
+  const [hasRunners, setHasRunners] = useState<boolean>(false);
+  const [hasBevCart, setHasBevCart] = useState<boolean>(false);
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -68,15 +96,45 @@ export default function HeatmapView() {
           ? process.env.REACT_APP_CONFIG_PATH
           : '/config.json';
         const resp = await fetch(`${configPath}?t=${Date.now()}`);
-        const cfg: AppConfig = await resp.json();
-        setConfig(cfg);
-        // Prefer Golf Course Terrain Pro (outdoors) style by default for Heatmap view if available
-        const preferred = (cfg.mapStyles && cfg.mapStyles['outdoors']) ? 'outdoors' : cfg.animation.defaultMapStyle;
+        const cfg: Partial<AppConfig> = await resp.json();
+        // Merge with defaults to ensure required keys exist (match AnimationView tolerance)
+        const merged: AppConfig = {
+          ...DEFAULT_CONFIG,
+          ...(cfg || {}),
+          data: { ...DEFAULT_CONFIG.data, ...(cfg?.data || {}) },
+          animation: { ...DEFAULT_CONFIG.animation, ...(cfg?.animation || {}) },
+          mapStyles: { ...DEFAULT_CONFIG.mapStyles, ...(cfg?.mapStyles || {}) }
+        } as AppConfig;
+        setConfig(merged);
+        // Prefer Golf Course Terrain Pro (outdoors) if available, otherwise use configured default, finally fallback to DEFAULT_CONFIG
+        const preferred = (merged.mapStyles?.['outdoors'])
+          ? 'outdoors'
+          : (merged.animation?.defaultMapStyle || DEFAULT_CONFIG.animation.defaultMapStyle);
         setCurrentMapStyle(preferred);
       } catch {}
     };
     loadConfig();
   }, []);
+
+  // Load simulation metrics to match AnimationView
+  useEffect(() => {
+    const loadMetrics = async () => {
+      try {
+        const cacheBuster = `?t=${Date.now()}`;
+        const coordinatesDir = (config?.data?.coordinatesDir) || '/coordinates';
+        const response = await fetch(`${coordinatesDir}/simulation_metrics.json${cacheBuster}`);
+        if (!response.ok) {
+          return;
+        }
+        const metricsData = await response.json();
+        setHasRunners(Boolean(metricsData.hasRunners));
+        setHasBevCart(Boolean(metricsData.hasBevCart));
+        if (metricsData.deliveryMetrics) setDeliveryMetrics(metricsData.deliveryMetrics);
+        if (metricsData.bevCartMetrics) setBevCartMetrics(metricsData.bevCartMetrics);
+      } catch {}
+    };
+    loadMetrics();
+  }, [config]);
 
   useEffect(() => {
     const loadHoles = async () => {
@@ -96,6 +154,10 @@ export default function HeatmapView() {
           if (times.length > 0) {
             setHolesMinTime(Math.min(...times));
             setHolesMaxTime(Math.max(...times));
+          } else {
+            // Set safe defaults when no data is available
+            setHolesMinTime(0);
+            setHolesMaxTime(1);
           }
         } catch {}
       } catch {}
@@ -121,7 +183,11 @@ export default function HeatmapView() {
       </div>
       <Map
         initialViewState={{ latitude: 34.0405, longitude: -84.5955, zoom: 14 }}
-        mapStyle={(config.mapStyles[currentMapStyle]?.url) || (config.mapStyles[config.animation.defaultMapStyle]?.url)}
+        mapStyle={
+          config.mapStyles?.[currentMapStyle]?.url
+          || config.mapStyles?.[config.animation?.defaultMapStyle || 'outdoors']?.url
+          || DEFAULT_CONFIG.mapStyles['outdoors'].url
+        }
         mapboxAccessToken={MAPBOX_TOKEN}
         interactiveLayerIds={["holes-fill"] as any}
         onMouseMove={(evt: any) => {
@@ -234,6 +300,43 @@ export default function HeatmapView() {
           </Popup>
         )}
       </Map>
+      {/* Metrics panel - mirrored from AnimationView ControlPanel (sizing and layout) */}
+      <div style={{ position: 'absolute', top: 0, right: 0, maxWidth: 340, background: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.3)', padding: '12px 20px', margin: 20, fontSize: 12, lineHeight: 1.4, color: '#6b6b76', outline: 'none', borderRadius: 4 }}>
+        {/* Delivery Runner Metrics */}
+        {hasRunners && deliveryMetrics && (
+          <div style={{ marginBottom: 16 }}>
+            <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 14, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
+              Delivery Metrics
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 13 }}>
+              <div>Order Count: <strong>{(deliveryMetrics as any).totalOrders ?? deliveryMetrics.orderCount ?? 0}</strong></div>
+              <div>Revenue: <strong>${(deliveryMetrics.revenue ?? 0).toFixed(0)}</strong></div>
+              <div>Avg Order Time: <strong>{(deliveryMetrics.avgOrderTime ?? 0).toFixed(1)}m</strong></div>
+              <div>On-Time %: <strong>{((deliveryMetrics as any).onTimePercentage ?? deliveryMetrics.onTimeRate ?? 0).toFixed(1)}%</strong></div>
+              <div>Failed Orders: <strong>{(deliveryMetrics as any).failedDeliveries ?? deliveryMetrics.failedOrderCount ?? 0}</strong></div>
+              <div>Queue Wait: <strong>{(deliveryMetrics.queueWaitAvg ?? 0).toFixed(1)}m</strong></div>
+              <div>Cycle Time (P90): <strong>{(deliveryMetrics.deliveryCycleTimeP90 ?? 0).toFixed(1)}m</strong></div>
+              <div>Orders/Runner-Hr: <strong>{(deliveryMetrics.ordersPerRunnerHour ?? 0).toFixed(1)}</strong></div>
+              <div style={{ gridColumn: 'span 2' }}>Revenue/Runner-Hr: <strong>${(deliveryMetrics.revenuePerRunnerHour ?? 0).toFixed(0)}</strong></div>
+            </div>
+          </div>
+        )}
+        {/* Bev-Cart Metrics */}
+        {hasBevCart && bevCartMetrics && (
+          <div style={{ marginBottom: 16 }}>
+            <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 14, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
+              Bev-Cart Metrics
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 13 }}>
+              <div>Total Orders: <strong>{bevCartMetrics.totalOrders ?? 0}</strong></div>
+              <div>Groups Passed: <strong>{bevCartMetrics.totalGroupsPassed ?? 0}</strong></div>
+              <div>Avg Order Value: <strong>${(bevCartMetrics.avgOrderValue ?? 0).toFixed(0)}</strong></div>
+              <div>Delivery Orders: <strong>{bevCartMetrics.totalDeliveryOrdersPlaced ?? 0}</strong></div>
+              <div style={{ gridColumn: 'span 2' }}>Revenue/Bevcart-Hr: <strong>${(bevCartMetrics.revenuePerBevcartHour ?? 0).toFixed(0)}</strong></div>
+            </div>
+          </div>
+        )}
+      </div>
       {holesGeojson && <Legend minTime={holesMinTime} maxTime={holesMaxTime} />}
     </div>
   );

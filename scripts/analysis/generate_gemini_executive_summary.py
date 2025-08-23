@@ -105,9 +105,7 @@ def attempt_models(api_key: str, requested_model: str, prompt: str) -> Tuple[boo
     logger = get_logger(__name__)
     candidate_models: List[str] = [
         requested_model,
-        "gemini-2.0-pro",
-        "gemini-2.0-flash",
-        "gemini-1.5-pro-latest",
+        "gemini-2.5-pro"
     ]
 
     last_errors: List[str] = []

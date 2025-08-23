@@ -149,6 +149,18 @@ function formatSimulationTime(elapsedMinutes: number, startingHour: number = 9):
   return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
 }
 
+// Render HH:MM clock for absolute seconds since 7:00 AM baseline
+function secondsSince7amToClock(totalSeconds: number): string {
+  const total = Math.max(0, Math.floor(totalSeconds));
+  const hoursSinceStart = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  // Convert to 24h clock relative to 7:00 AM baseline
+  const hour24 = (7 + hoursSinceStart) % 24;
+  const period = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = (hour24 % 12) === 0 ? 12 : (hour24 % 12);
+  return `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+}
+
 function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic'): Coordinate | null {
   if (coordinates.length === 0) return null;
   if (coordinates.length === 1) return coordinates[0];
@@ -330,46 +342,44 @@ function ControlPanel({
         <p>Loading simulation data...</p>
       ) : (
         <>
-          {/* Delivery Runner Metrics */}
-          {hasRunners && deliveryMetrics && (
-            <div style={{ marginBottom: 16 }}>
-              <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
-                Delivery Metrics
-              </h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 11 }}>
-                <div>Order Count: <strong>{(deliveryMetrics as any).totalOrders ?? deliveryMetrics.orderCount ?? 0}</strong></div>
-                <div>Revenue: <strong>${(deliveryMetrics.revenue ?? 0).toFixed(0)}</strong></div>
-                <div>Avg Order Time: <strong>{(deliveryMetrics.avgOrderTime ?? 0).toFixed(1)}m</strong></div>
-                <div>On-Time %: <strong>{((deliveryMetrics as any).onTimePercentage ?? deliveryMetrics.onTimeRate ?? 0).toFixed(1)}%</strong></div>
-                <div>Failed Orders: <strong>{(deliveryMetrics as any).failedDeliveries ?? deliveryMetrics.failedOrderCount ?? 0}</strong></div>
-                <div>Queue Wait: <strong>{(deliveryMetrics.queueWaitAvg ?? 0).toFixed(1)}m</strong></div>
-                <div>Cycle Time (P90): <strong>{(deliveryMetrics.deliveryCycleTimeP90 ?? 0).toFixed(1)}m</strong></div>
-                <div>Orders/Runner-Hr: <strong>{(deliveryMetrics.ordersPerRunnerHour ?? 0).toFixed(1)}</strong></div>
-                <div style={{ gridColumn: 'span 2' }}>Revenue/Runner-Hr: <strong>${(deliveryMetrics.revenuePerRunnerHour ?? 0).toFixed(0)}</strong></div>
-              </div>
-            </div>
-          )}
+                     {/* Delivery Runner Metrics */}
+           {hasRunners && deliveryMetrics && (
+             <div style={{ marginBottom: 16 }}>
+               <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 14, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
+                 Delivery Metrics
+               </h4>
+               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 13 }}>
+                 <div>Order Count: <strong>{(deliveryMetrics as any).totalOrders ?? deliveryMetrics.orderCount ?? 0}</strong></div>
+                 <div>Revenue: <strong>${(deliveryMetrics.revenue ?? 0).toFixed(0)}</strong></div>
+                 <div>Avg Order Time: <strong>{(deliveryMetrics.avgOrderTime ?? 0).toFixed(1)}m</strong></div>
+                 <div>On-Time %: <strong>{((deliveryMetrics as any).onTimePercentage ?? deliveryMetrics.onTimeRate ?? 0).toFixed(1)}%</strong></div>
+                 <div>Failed Orders: <strong>{(deliveryMetrics as any).failedDeliveries ?? deliveryMetrics.failedOrderCount ?? 0}</strong></div>
+                 <div>Queue Wait: <strong>{(deliveryMetrics.queueWaitAvg ?? 0).toFixed(1)}m</strong></div>
+                 <div>Cycle Time (P90): <strong>{(deliveryMetrics.deliveryCycleTimeP90 ?? 0).toFixed(1)}m</strong></div>
+                 <div>Orders/Runner-Hr: <strong>{(deliveryMetrics.ordersPerRunnerHour ?? 0).toFixed(1)}</strong></div>
+                 <div style={{ gridColumn: 'span 2' }}>Revenue/Runner-Hr: <strong>${(deliveryMetrics.revenuePerRunnerHour ?? 0).toFixed(0)}</strong></div>
+               </div>
+             </div>
+           )}
 
-          {/* Bev-Cart Metrics */}
-          {hasBevCart && bevCartMetrics && (
-            <div style={{ marginBottom: 16 }}>
-              <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
-                Bev-Cart Metrics
-              </h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 11 }}>
-                <div>Total Orders: <strong>{bevCartMetrics.totalOrders ?? 0}</strong></div>
-                <div>Groups Passed: <strong>{bevCartMetrics.totalGroupsPassed ?? 0}</strong></div>
-                <div>Avg Order Value: <strong>${(bevCartMetrics.avgOrderValue ?? 0).toFixed(0)}</strong></div>
-                <div>Delivery Orders: <strong>{bevCartMetrics.totalDeliveryOrdersPlaced ?? 0}</strong></div>
-                <div style={{ gridColumn: 'span 2' }}>Revenue/Bevcart-Hr: <strong>${(bevCartMetrics.revenuePerBevcartHour ?? 0).toFixed(0)}</strong></div>
-              </div>
-            </div>
-          )}
+                     {/* Bev-Cart Metrics */}
+           {hasBevCart && bevCartMetrics && (
+             <div style={{ marginBottom: 16 }}>
+               <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 14, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
+                 Bev-Cart Metrics
+               </h4>
+               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 13 }}>
+                 <div>Total Orders: <strong>{bevCartMetrics.totalOrders ?? 0}</strong></div>
+                 <div>Groups Passed: <strong>{bevCartMetrics.totalGroupsPassed ?? 0}</strong></div>
+                 <div>Avg Order Value: <strong>${(bevCartMetrics.avgOrderValue ?? 0).toFixed(0)}</strong></div>
+                 <div>Delivery Orders: <strong>{bevCartMetrics.totalDeliveryOrdersPlaced ?? 0}</strong></div>
+                 <div style={{ gridColumn: 'span 2' }}>Revenue/Bevcart-Hr: <strong>${(bevCartMetrics.revenuePerBevcartHour ?? 0).toFixed(0)}</strong></div>
+               </div>
+             </div>
+           )}
 
           {/* Technical Info */}
           <div style={{ borderTop: '1px solid #e9ecef', paddingTop: 8, fontSize: 10, color: '#999' }}>
-            <div>Waypoints: {totalWaypoints.toLocaleString()}</div>
-            <div>Center: ({center[1].toFixed(4)}, {center[0].toFixed(4)})</div>
           </div>
         </>
       )}
@@ -424,16 +434,23 @@ function ColorLegend({
 
 const DEFAULT_CONFIG: AppConfig = {
   data: { csvFileName: '/golfer_coordinates.csv', cartPathFileName: '/cart_paths.geojson', coordinatesDir: '/coordinates' },
-  animation: { speedMultiplier: 150, defaultMapStyle: 'satellite-streets', smoothing: { enabled: true, easing: 'catmull-rom', frameRate: 60 } },
-  mapStyles: { 'satellite-streets': { name: 'Satellite with Streets', url: 'mapbox://styles/mapbox/satellite-streets-v12', description: 'Satellite imagery with roads and labels' } },
+  animation: { speedMultiplier: 150, defaultMapStyle: 'outdoors-v12', smoothing: { enabled: true, easing: 'catmull-rom', frameRate: 60 } },
+  mapStyles: { 
+    'satellite-streets': { name: 'Satellite with Streets', url: 'mapbox://styles/mapbox/satellite-streets-v12', description: 'Satellite imagery with roads and labels' },
+    'streets-v12': { name: 'Streets', url: 'mapbox://styles/mapbox/streets-v12', description: 'Detailed street map with buildings' },
+    'outdoors-v12': { name: 'Outdoors', url: 'mapbox://styles/mapbox/outdoors-v12', description: 'Terrain and outdoor recreation' },
+    'light-v11': { name: 'Light', url: 'mapbox://styles/mapbox/light-v11', description: 'Clean, minimal design' },
+    'dark-v11': { name: 'Dark', url: 'mapbox://styles/mapbox/dark-v11', description: 'Dark theme with subtle details' },
+    'satellite-v9': { name: 'Satellite', url: 'mapbox://styles/mapbox/satellite-v9', description: 'Pure satellite imagery' }
+  },
   entityTypes: { 'golfer': { name: 'Golfer', color: '#007cbf', description: 'Golf players' }, 'bev-cart': { name: 'Beverage Cart', color: '#ff6b6b', description: 'Beverage service' }, 'runner': { name: 'Runner', color: '#FF8B00', description: 'Runners on course' }},
-  display: { golferTrails: { width: 2, opacity: 0.6 }, golferMarkers: { radius: 9, strokeWidth: 3, strokeColor: '#ffffff', strokeOpacity: 0.8 } },
+  display: { golferTrails: { width: 2, opacity: 1 }, golferMarkers: { radius: 7, strokeWidth: 2, strokeColor: '#ffffff', strokeOpacity: 0.8 } },
   golferColors: DEFAULT_COLORS
 };
 
 export default function AnimationView() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
-  const [currentMapStyle, setCurrentMapStyle] = useState<string>('satellite-streets');
+  const [currentMapStyle, setCurrentMapStyle] = useState<string>(DEFAULT_CONFIG.animation.defaultMapStyle);
   const [trackersData, setTrackersData] = useState<EntityData[]>([]);
   const [trackerPositions, setTrackerPositions] = useState<{ [key: string]: Coordinate | null }>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -442,6 +459,11 @@ export default function AnimationView() {
   const [displayedTimestamp, setDisplayedTimestamp] = useState<string>('00:00');
   const [originalMinTimestamp, setOriginalMinTimestamp] = useState<number>(0);
   const [animationDuration, setAnimationDuration] = useState<number>(0);
+  
+  // Timer slider state
+  const [isSliderControlled, setIsSliderControlled] = useState<boolean>(false);
+  const [sliderTime, setSliderTime] = useState<number>(0);
+  const [sliderMaxTime, setSliderMaxTime] = useState<number>(0);
   
   // Metrics loaded from simulation
   const [deliveryMetrics, setDeliveryMetrics] = useState<DeliveryMetrics | null>(null);
@@ -468,6 +490,10 @@ export default function AnimationView() {
   const lastRealTimeSecRef = useRef<number>(0);
   // Easing selection state
   const [currentEasing, setCurrentEasing] = useState<'linear' | 'cubic' | 'quart' | 'sine' | 'catmull-rom'>('catmull-rom');
+  
+  // Animation timing refs for smooth transitions
+  const animationStartTimeRef = useRef<number>(0);
+  const animationOffsetRef = useRef<number>(0);
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -477,15 +503,27 @@ export default function AnimationView() {
           ? process.env.REACT_APP_CONFIG_PATH
           : '/config.json';
         const response = await fetch(`${configPath}${cacheBuster}`);
-        const configData: AppConfig = await response.json();
-        setConfig(configData);
-        setCurrentMapStyle(configData.animation.defaultMapStyle);
-        if (typeof configData.animation?.speedMultiplier === 'number' && isFinite(configData.animation.speedMultiplier)) {
-          speedRef.current = configData.animation.speedMultiplier;
-          setCurrentSpeed(configData.animation.speedMultiplier);
+        // Gracefully handle non-OK responses
+        const loaded: any = response.ok ? await response.json() : {};
+        // Deep-merge with defaults to tolerate course-style configs
+        const safeConfig: AppConfig = {
+          ...DEFAULT_CONFIG,
+          ...(loaded || {}),
+          data: { ...DEFAULT_CONFIG.data, ...(loaded?.data || {}) },
+          animation: { ...DEFAULT_CONFIG.animation, ...(loaded?.animation || {}) },
+          mapStyles: { ...DEFAULT_CONFIG.mapStyles, ...(loaded?.mapStyles || {}) },
+          entityTypes: { ...DEFAULT_CONFIG.entityTypes, ...(loaded?.entityTypes || {}) },
+          display: { ...DEFAULT_CONFIG.display, ...(loaded?.display || {}) },
+          golferColors: Array.isArray(loaded?.golferColors) && loaded.golferColors.length > 0 ? loaded.golferColors : DEFAULT_CONFIG.golferColors,
+        };
+        setConfig(safeConfig);
+        setCurrentMapStyle(safeConfig.animation.defaultMapStyle);
+        if (typeof safeConfig.animation?.speedMultiplier === 'number' && isFinite(safeConfig.animation.speedMultiplier)) {
+          speedRef.current = safeConfig.animation.speedMultiplier;
+          setCurrentSpeed(safeConfig.animation.speedMultiplier);
         }
       } catch (error) {
-        // use defaults
+        // Keep defaults on any error
       }
     };
     loadConfig();
@@ -495,51 +533,104 @@ export default function AnimationView() {
   useEffect(() => {
     const loadCoordinates = async () => {
       try {
-        const csvPath = `${config.data.coordinatesDir}/coordinates.csv`;
+        const coordinatesDir = (config as any)?.data?.coordinatesDir || DEFAULT_CONFIG.data.coordinatesDir;
+        const csvPath = `${coordinatesDir}/coordinates.csv`;
         const csvResp = await fetch(`${csvPath}?t=${Date.now()}`);
         const csvText = await csvResp.text();
         Papa.parse(csvText, {
           header: true,
           skipEmptyLines: true,
           complete: (results) => {
-            const coords = results.data
-              .map((row: any, index: number) => ({
-                golfer_id: row.id || row.golfer_id || row.type || `entity_${index}`,
-                latitude: parseFloat(row.latitude),
-                longitude: parseFloat(row.longitude),
-                timestamp: parseFloat(row.timestamp),
-                type: row.type || 'golfer',
-                current_hole: row.current_hole || row.hole ? parseInt(row.current_hole || row.hole) : undefined
-              }))
+            const rawRows: any[] = results.data as any[];
+            // Normalize and filter rows
+            const normalizedRows = rawRows
+              .map((row: any) => {
+                const rawType = String(row.type || '').toLowerCase();
+                let normType = rawType;
+                if (rawType === 'bev_cart' || rawType === 'beverage_cart' || rawType === 'bevcart') {
+                  normType = 'bev-cart';
+                }
+                if (rawType === '') {
+                  // Default heuristics: infer type from id when possible
+                  const idLower = String(row.id || row.golfer_id || '').toLowerCase();
+                  if (idLower.includes('runner')) normType = 'runner';
+                  else if (idLower.includes('golfer')) normType = 'golfer';
+                }
+                // Drop unsupported utility rows (e.g., timeline)
+                if (normType === 'timeline') {
+                  return null;
+                }
+                const latitude = parseFloat(row.latitude);
+                const longitude = parseFloat(row.longitude);
+                const timestamp = parseFloat(row.timestamp);
+                const holeStr = (row.current_hole ?? row.hole);
+                const parsedHole = typeof holeStr === 'string' ? parseInt(holeStr, 10) : (Number.isFinite(holeStr) ? Number(holeStr) : undefined);
+                return {
+                  golfer_id: row.id || row.golfer_id || normType || `entity_${Math.random().toString(36).slice(2)}`,
+                  latitude,
+                  longitude,
+                  timestamp,
+                  type: normType || 'golfer',
+                  current_hole: Number.isFinite(parsedHole) ? (parsedHole as number) : undefined
+                } as Coordinate;
+              })
+              .filter((coord: Coordinate | null) => !!coord)
+              .map((coord) => coord as Coordinate)
               .filter((coord: Coordinate) => !isNaN(coord.latitude) && !isNaN(coord.longitude) && !isNaN(coord.timestamp));
-            const trackerGroups = coords.reduce((acc: { [key: string]: Coordinate[] }, coord) => {
+
+            const trackerGroups = normalizedRows.reduce((acc: { [key: string]: Coordinate[] }, coord) => {
               if (!acc[coord.golfer_id]) acc[coord.golfer_id] = [];
               acc[coord.golfer_id].push(coord);
               return acc;
             }, {});
             // Anchor animation start to the first golfer tee time when available
-            const golferTimestamps = coords
+            const golferTimestamps = normalizedRows
               .filter((c: any) => c.type === 'golfer')
               .map((c: any) => c.timestamp);
             const timestampsForStart = golferTimestamps.length
               ? golferTimestamps
-              : coords.map((c: any) => c.timestamp);
+              : normalizedRows.map((c: any) => c.timestamp);
             const minTimestamp = Math.min(...timestampsForStart);
-            const maxTimestamp = Math.max(...coords.map((c: any) => c.timestamp));
+            const maxTimestamp = Math.max(...normalizedRows.map((c: any) => c.timestamp));
             const duration = (maxTimestamp - minTimestamp); // keep in seconds
             setOriginalMinTimestamp(minTimestamp);
             setAnimationDuration(duration / 60); // convert to minutes only for UI display
-            const trackersArray: EntityData[] = Object.entries(trackerGroups).map(([trackerId, coordinates]) => {
-              const sortedCoords = coordinates
-                .sort((a, b) => a.timestamp - b.timestamp)
-                .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) })); // keep in seconds, just normalize to start at 0
-              let filteredCoords = sortedCoords;
-              if (sortedCoords[0]?.type === 'golfer') {
-                filteredCoords = sortedCoords.filter((_, index) => index % 3 === 0);
-              }
-              const entityType = filteredCoords[0]?.type || 'golfer';
-              return { name: trackerId, coordinates: filteredCoords, type: entityType, color: config.entityTypes[entityType]?.color || config.golferColors[0] };
-            });
+            
+            // Set slider time range: start from first tee time, end 5 hours after last tee time
+            setSliderTime(0); // Start at beginning
+            setSliderMaxTime((duration + (5 * 3600)) / 60); // Add 5 hours to duration, convert to minutes
+            
+            // Initialize animation timing refs
+            animationStartTimeRef.current = Date.now();
+            animationOffsetRef.current = 0;
+            
+            const trackersArray: EntityData[] = Object.entries(trackerGroups)
+              .map(([trackerId, coordinates]) => {
+                const sortedCoords = coordinates
+                  .sort((a, b) => a.timestamp - b.timestamp)
+                  .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) })); // keep in seconds, just normalize to start at 0
+                let filteredCoords = sortedCoords;
+                if (sortedCoords[0]?.type === 'golfer') {
+                  // Only show golfers from when they tee off (hole >= 1) until they finish
+                  const teeOffIndex = sortedCoords.findIndex(coord => 
+                    coord.current_hole !== undefined && coord.current_hole >= 1
+                  );
+                  const finishIndex = sortedCoords.length - 1 - [...sortedCoords].reverse().findIndex((coord: Coordinate) => 
+                    coord.current_hole !== undefined && coord.current_hole >= 1
+                  );
+
+                  if (teeOffIndex !== -1 && finishIndex !== -1 && teeOffIndex <= finishIndex) {
+                    // Start from tee-off (hole 1+) and end at last hole, apply sampling
+                    filteredCoords = sortedCoords.slice(teeOffIndex, finishIndex + 1).filter((_, index) => index % 3 === 0);
+                  } else {
+                    // This golfer never teed off or has no valid coordinates
+                    filteredCoords = [];
+                  }
+                }
+                const entityType = filteredCoords[0]?.type || sortedCoords[0]?.type || 'golfer';
+                return { name: trackerId, coordinates: filteredCoords, type: entityType, color: config.entityTypes[entityType]?.color || config.golferColors[0] };
+              })
+              .filter((e) => e.coordinates.length > 0); // Drop empty trackers entirely
             setTrackersData(trackersArray);
             const bounds = calculateBounds(trackersArray);
             setPathBounds(bounds);
@@ -602,7 +693,7 @@ export default function AnimationView() {
       if (!p) return;
       features.push({
         type: 'Feature',
-        properties: { id: tracker.name, color: tracker.color },
+        properties: { id: tracker.name, color: tracker.color, type: tracker.type },
         geometry: { type: 'Point', coordinates: [p.longitude, p.latitude] }
       });
     });
@@ -616,12 +707,25 @@ export default function AnimationView() {
     if (isLoading || trackersData.length === 0) return;
     
     let animationId: number;
-    let startTime = Date.now();
     let lastTimestampUpdate = 0; // Track when we last updated timestamp to avoid constant updates
     
     const animate = () => {
-      const elapsed = (Date.now() - startTime) * speedRef.current / 1000; // seconds
-      const elapsedMinutes = elapsed / 60; // convert to minutes
+      let elapsed: number;
+      let elapsedMinutes: number;
+      
+      if (isSliderControlled) {
+        // Use slider time when controlled by user
+        elapsedMinutes = sliderTime;
+        elapsed = sliderTime * 60; // convert to seconds
+      } else {
+        // Normal automatic animation with offset for smooth transitions
+        const currentTime = Date.now();
+        const realElapsed = (currentTime - animationStartTimeRef.current) * speedRef.current / 1000; // seconds
+        elapsedMinutes = (realElapsed + animationOffsetRef.current) / 60; // convert to minutes
+        
+        // Update slider position during automatic playback
+        setSliderTime(elapsedMinutes);
+      }
       
       const map = mapRef.current?.getMap?.();
       if (!map) {
@@ -641,7 +745,7 @@ export default function AnimationView() {
         if (position) {
           features.push({
             type: 'Feature',
-            properties: { id: tracker.name, color: tracker.color },
+            properties: { id: tracker.name, color: tracker.color, type: tracker.type },
             geometry: { type: 'Point', coordinates: [position.longitude, position.latitude] }
           });
         }
@@ -656,23 +760,55 @@ export default function AnimationView() {
       // Update the displayed timestamp only every few seconds to prevent constant rerenders
       const now = Date.now();
       if (now - lastTimestampUpdate > 2000) { // Update every 2 seconds instead of every frame
-        const newTimestamp = formatSimulationTime(elapsedMinutes, config.animation.startingHour || 9);
-        setDisplayedTimestamp(newTimestamp);
+        // Display actual clock time based on the current slider position - use same calculation as clock update
+        const absoluteSeconds = (originalMinTimestamp || 0) + (sliderTime * 60);
+        const newClock = secondsSince7amToClock(absoluteSeconds);
+        setDisplayedTimestamp(newClock);
         lastTimestampUpdate = now;
       }
       
       setElapsedTime(elapsedMinutes);
-      animationId = requestAnimationFrame(animate);
+      
+      // Only continue animation loop if not slider controlled
+      if (!isSliderControlled) {
+        animationId = requestAnimationFrame(animate);
+      }
     };
     
-    animationId = requestAnimationFrame(animate);
+    if (!isSliderControlled) {
+      animationId = requestAnimationFrame(animate);
+    } else {
+      // For slider control, run once to update positions
+      animate();
+    }
     
     return () => {
       if (animationId) {
         cancelAnimationFrame(animationId);
       }
     };
-  }, [isLoading, trackersData, currentEasing]); // Removed problematic dependencies
+  }, [isLoading, trackersData, currentEasing, originalMinTimestamp, isSliderControlled, sliderTime]);
+
+  // Update clock display immediately when slider changes
+  useEffect(() => {
+    if (originalMinTimestamp !== 0) {
+      // Calculate time consistently: slider time is in minutes, convert to seconds and add to original timestamp
+      const absoluteSeconds = originalMinTimestamp + (sliderTime * 60);
+      const newClock = secondsSince7amToClock(absoluteSeconds);
+      setDisplayedTimestamp(newClock);
+      
+      // Debug logging to understand time calculations
+      console.log('Time Debug:', {
+        sliderTime,
+        sliderTimeMinutes: sliderTime,
+        sliderTimeSeconds: sliderTime * 60,
+        originalMinTimestamp,
+        absoluteSeconds,
+        newClock,
+        expectedTime: `${Math.floor(sliderTime / 60)}:${Math.floor(sliderTime % 60).toString().padStart(2, '0')}`
+      });
+    }
+  }, [sliderTime, originalMinTimestamp]);
 
   // Cleanup terrain when component unmounts or map style changes
   useEffect(() => {
@@ -719,6 +855,33 @@ export default function AnimationView() {
       {/* Animation Control Panel */}
       <div style={{ position: 'absolute', top: 56, left: 10, zIndex: 11, background: 'rgba(255,255,255,0.95)', padding: '12px', borderRadius: 6, boxShadow: '0 2px 4px rgba(0,0,0,0.2)', minWidth: 280 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Timer Slider */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <label htmlFor="timer-slider" style={{ fontSize: 12, color: '#333', minWidth: 70, fontWeight: 600 }}>Timer</label>
+              <input
+                id="timer-slider"
+                type="range"
+                min="0"
+                max={sliderMaxTime}
+                step="0.1"
+                value={sliderTime}
+                onChange={(e) => {
+                  const newTime = parseFloat(e.target.value);
+                  setSliderTime(newTime);
+                  // When timer changes, update animation timing for smooth transition
+                  animationOffsetRef.current = newTime * 60; // convert to seconds
+                  animationStartTimeRef.current = Date.now();
+                  setIsSliderControlled(false); // Auto-play when timer is changed
+                }}
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: 11, color: '#666', minWidth: 30 }}>
+                {secondsSince7amToClock(originalMinTimestamp + (sliderTime * 60))}
+              </span>
+            </div>
+          </div>
+          
           {/* Speed Control */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <label htmlFor="speed-control" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Speed</label>
@@ -733,25 +896,30 @@ export default function AnimationView() {
                 const newSpeed = parseFloat(e.target.value);
                 speedRef.current = newSpeed;
                 setCurrentSpeed(newSpeed);
+                // When speed changes, maintain current position for smooth transition
+                animationOffsetRef.current = sliderTime * 60; // convert to seconds
+                animationStartTimeRef.current = Date.now();
+                setIsSliderControlled(false); // Auto-play when speed is changed
               }}
               style={{ flex: 1 }}
             />
             <span style={{ fontSize: 11, color: '#666', minWidth: 30 }}>{currentSpeed.toFixed(1)}x</span>
           </div>
-          {/* Easing Control */}
+          
+          {/* Map Style Selection */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <label htmlFor="easing-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Easing</label>
+            <label htmlFor="map-style-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Map Style</label>
             <select
-              id="easing-select"
-              value={currentEasing}
-              onChange={(e) => setCurrentEasing(e.target.value as 'linear' | 'cubic' | 'quart' | 'sine' | 'catmull-rom')}
+              id="map-style-select"
+              value={currentMapStyle}
+              onChange={(e) => setCurrentMapStyle(e.target.value)}
               style={{ flex: 1, padding: '4px', borderRadius: 4, border: '1px solid #ccc', fontSize: 12 }}
             >
-              <option value="linear">Linear</option>
-              <option value="cubic">Cubic</option>
-              <option value="quart">Quart</option>
-              <option value="sine">Sine</option>
-              <option value="catmull-rom">Catmull-Rom</option>
+              {Object.entries(config.mapStyles).map(([key, style]) => (
+                <option key={key} value={key}>
+                  {style.name}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -759,7 +927,7 @@ export default function AnimationView() {
       <Map
         ref={mapRef}
         initialViewState={getInitialViewState()}
-        mapStyle={(config.mapStyles[currentMapStyle]?.url) || (config.mapStyles[config.animation.defaultMapStyle]?.url)}
+        mapStyle={config.mapStyles[currentMapStyle]?.url || config.mapStyles[config.animation.defaultMapStyle]?.url}
         mapboxAccessToken={MAPBOX_TOKEN}
         reuseMaps
         onLoad={(e) => {
@@ -790,14 +958,22 @@ export default function AnimationView() {
               type="circle"
               paint={{
                 'circle-radius': ['case',
+                  ['==', ['get', 'type'], 'runner'],
+                  (config?.display.golferMarkers.radius ?? 9) * 1.125,
                   ['==', ['get', 'type'], 'golfer'],
-                  (config?.display.golferMarkers.radius ?? 9) * 0.65,
+                  (config?.display.golferMarkers.radius ?? 9) * 0.75,
                   (config?.display.golferMarkers.radius ?? 9)
                 ],
                 'circle-color': ['get', 'color'],
-                'circle-stroke-width': config?.display.golferMarkers.strokeWidth || 3,
+                'circle-stroke-width': config?.display.golferMarkers.strokeWidth || 1.5,
                 'circle-stroke-color': config?.display.golferMarkers.strokeColor || '#ffffff',
-                'circle-stroke-opacity': config?.display.golferMarkers.strokeOpacity || 0.8
+                'circle-stroke-opacity': config?.display.golferMarkers.strokeOpacity || 0.8,
+                // @ts-ignore - circle-sort-key is a valid Mapbox property for layer ordering but may not be in older type definitions
+                'circle-sort-key': ['case',
+                  ['==', ['get', 'type'], 'runner'], 3,
+                  ['==', ['get', 'type'], 'bev-cart'], 2,
+                  1
+                ]
               }}
             />
           </Source>
