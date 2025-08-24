@@ -44,6 +44,23 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 @dataclass
+class BlockingVariant:
+    key: str
+    cli_flags: List[str]
+
+BLOCKING_VARIANTS: List[BlockingVariant] = [
+    BlockingVariant(key="none", cli_flags=[]),
+    BlockingVariant(key="front", cli_flags=["--block-holes", "1", "2", "3"]),
+    BlockingVariant(key="mid", cli_flags=["--block-holes", "4", "5", "6"]),
+    BlockingVariant(key="back", cli_flags=["--block-holes", "10", "11", "12"]),
+    BlockingVariant(key="front_mid", cli_flags=["--block-holes", "1", "2", "3", "4", "5", "6"]),
+    BlockingVariant(key="front_back", cli_flags=["--block-holes", "1", "2", "3", "10", "11", "12"]),
+    BlockingVariant(key="mid_back", cli_flags=["--block-holes", "4", "5", "6", "10", "11", "12"]),
+    BlockingVariant(key="front_mid_back", cli_flags=["--block-holes", "1", "2", "3", "4", "5", "6", "10", "11", "12"]),
+]
+
+
+@dataclass
 class MetricsAggregate:
     on_time_rate_mean: float
     failed_rate_mean: float
@@ -96,6 +113,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true", help="Force rerun even if results exist (overrides --resume)")
     parser.add_argument("--base-seed", type=int, help="Base seed for reproducible runs (each run gets base_seed + run_number)")
     parser.add_argument("--max-retries", type=int, default=2, help="Maximum retries for failed runs")
+    parser.add_argument("--run-blocking-variants", action="store_true", help="Run all four blocking variants for each combination")
     return parser.parse_args()
 
 
@@ -168,6 +186,7 @@ def run_single_combo_with_retry(
     log_level: str,
     base_seed: Optional[int] = None,
     max_retries: int = 2,
+    extra_cli_args: Optional[List[str]] = None,
 ) -> bool:
     """Run a single combination with retry logic."""
     for attempt in range(max_retries + 1):
@@ -183,6 +202,7 @@ def run_single_combo_with_retry(
                 output_dir=output_dir,
                 log_level=log_level,
                 base_seed=base_seed,
+                extra_cli_args=extra_cli_args,
             )
             return True
         except subprocess.CalledProcessError as e:
@@ -212,6 +232,7 @@ def run_single_combo(
     output_dir: Path,
     log_level: str,
     base_seed: Optional[int] = None,
+    extra_cli_args: Optional[List[str]] = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -231,6 +252,10 @@ def run_single_combo(
     if base_seed is not None:
         cmd.extend(["--base-seed", str(base_seed)])
     
+    # Add any extra CLI flags for variants
+    if extra_cli_args:
+        cmd.extend(extra_cli_args)
+
     subprocess.run(cmd, check=True)
 
 
@@ -459,9 +484,11 @@ class ComboJob:
     log_level: str
     base_seed: Optional[int]
     max_retries: int
+    variant_key: str
+    extra_cli_args: Optional[List[str]]
 
 
-def run_combo_job(job: ComboJob) -> Tuple[str, int, int, bool, Optional[MetricsAggregate]]:
+def run_combo_job(job: ComboJob) -> Tuple[str, int, int, str, bool, Optional[MetricsAggregate]]:
     """Run a single combination job (for parallel execution)."""
     success = run_single_combo_with_retry(
         python_bin=job.python_bin,
@@ -475,14 +502,15 @@ def run_combo_job(job: ComboJob) -> Tuple[str, int, int, bool, Optional[MetricsA
         log_level=job.log_level,
         base_seed=job.base_seed,
         max_retries=job.max_retries,
+        extra_cli_args=job.extra_cli_args,
     )
     
     if success:
         metrics_items = load_metrics_from_output(job.output_dir, job.runs_per)
         agg = aggregate_metrics(metrics_items)
-        return (job.scenario, job.orders, job.num_runners, True, agg)
+        return (job.scenario, job.orders, job.num_runners, job.variant_key, True, agg)
     else:
-        return (job.scenario, job.orders, job.num_runners, False, None)
+        return (job.scenario, job.orders, job.num_runners, job.variant_key, False, None)
 
 
 def write_staffing_csv(
@@ -547,40 +575,46 @@ def main() -> None:
 
     # Prepare all jobs
     all_jobs = []
+    
+    variants_to_run = BLOCKING_VARIANTS if args.run_blocking_variants else [BLOCKING_VARIANTS[0]]
+
     for scenario in args.tee_scenarios:
         for orders in args.order_levels:
             # Update config in the copied course dir
             update_sim_config(course_copies[scenario], delivery_total_orders=orders, opening_ramp_min=args.opening_ramp_min)
 
             for n_runners in runner_values:
-                out_dir = exp_root / scenario / f"orders_{orders:03d}" / f"runners_{n_runners}"
-                
-                # Check if we should skip this combination
-                if args.resume and not args.force and is_combo_complete(out_dir, args.runs_per):
-                    print(f"Skipping {scenario}/orders_{orders:03d}/runners_{n_runners} (already complete)")
-                    continue
-                
-                # Calculate seed for this job
-                job_seed = None
-                if args.base_seed is not None:
-                    # Create unique seed based on scenario, orders, and runners
-                    job_seed = args.base_seed + hash(f"{scenario}_{orders}_{n_runners}") % 10000
-                
-                job = ComboJob(
-                    scenario=scenario,
-                    orders=orders,
-                    num_runners=n_runners,
-                    course_dir=course_copies[scenario],
-                    output_dir=out_dir,
-                    python_bin=args.python_bin,
-                    runs_per=args.runs_per,
-                    runner_speed=args.runner_speed,
-                    prep_time=args.prep_time,
-                    log_level=args.log_level,
-                    base_seed=job_seed,
-                    max_retries=args.max_retries,
-                )
-                all_jobs.append(job)
+                for variant in variants_to_run:
+                    out_dir = exp_root / scenario / f"orders_{orders:03d}" / f"runners_{n_runners}" / variant.key
+                    
+                    # Check if we should skip this combination
+                    if args.resume and not args.force and is_combo_complete(out_dir, args.runs_per):
+                        print(f"Skipping {scenario}/orders_{orders:03d}/runners_{n_runners}/{variant.key} (already complete)")
+                        continue
+                    
+                    # Calculate seed for this job
+                    job_seed = None
+                    if args.base_seed is not None:
+                        # Create unique seed based on scenario, orders, runners, and variant
+                        job_seed = args.base_seed + hash(f"{scenario}_{orders}_{n_runners}_{variant.key}") % 10000
+                    
+                    job = ComboJob(
+                        scenario=scenario,
+                        orders=orders,
+                        num_runners=n_runners,
+                        course_dir=course_copies[scenario],
+                        output_dir=out_dir,
+                        python_bin=args.python_bin,
+                        runs_per=args.runs_per,
+                        runner_speed=args.runner_speed,
+                        prep_time=args.prep_time,
+                        log_level=args.log_level,
+                        base_seed=job_seed,
+                        max_retries=args.max_retries,
+                        variant_key=variant.key,
+                        extra_cli_args=variant.cli_flags,
+                    )
+                    all_jobs.append(job)
 
     print(f"Prepared {len(all_jobs)} jobs to execute")
     
@@ -598,108 +632,110 @@ def main() -> None:
             for future in as_completed(future_to_job):
                 job = future_to_job[future]
                 try:
-                    scenario, orders, num_runners, success, agg = future.result()
+                    scenario, orders, num_runners, variant_key, success, agg = future.result()
                     if success and agg:
-                        job_results[(scenario, orders, num_runners)] = agg
-                        print(f"✅ Completed {scenario}/orders_{orders:03d}/runners_{num_runners}")
+                        job_results[(scenario, orders, num_runners, variant_key)] = agg
+                        print(f"✅ Completed {scenario}/orders_{orders:03d}/runners_{num_runners}/{variant_key}")
                     else:
-                        failed_jobs.append((scenario, orders, num_runners))
-                        print(f"❌ Failed {scenario}/orders_{orders:03d}/runners_{num_runners}")
+                        failed_jobs.append((scenario, orders, num_runners, variant_key))
+                        print(f"❌ Failed {scenario}/orders_{orders:03d}/runners_{num_runners}/{variant_key}")
                 except Exception as e:
-                    failed_jobs.append((job.scenario, job.orders, job.num_runners))
-                    print(f"❌ Exception in {job.scenario}/orders_{job.orders:03d}/runners_{job.num_runners}: {e}")
+                    failed_jobs.append((job.scenario, job.orders, job.num_runners, job.variant_key))
+                    print(f"❌ Exception in {job.scenario}/orders_{job.orders:03d}/runners_{job.num_runners}/{job.variant_key}: {e}")
     else:
         print("Running jobs sequentially")
         for job in all_jobs:
             try:
-                scenario, orders, num_runners, success, agg = run_combo_job(job)
+                scenario, orders, num_runners, variant_key, success, agg = run_combo_job(job)
                 if success and agg:
-                    job_results[(scenario, orders, num_runners)] = agg
-                    print(f"✅ Completed {scenario}/orders_{orders:03d}/runners_{num_runners}")
+                    job_results[(scenario, orders, num_runners, variant_key)] = agg
+                    print(f"✅ Completed {scenario}/orders_{orders:03d}/runners_{num_runners}/{variant_key}")
                 else:
-                    failed_jobs.append((scenario, orders, num_runners))
-                    print(f"❌ Failed {scenario}/orders_{orders:03d}/runners_{num_runners}")
+                    failed_jobs.append((scenario, orders, num_runners, variant_key))
+                    print(f"❌ Failed {scenario}/orders_{orders:03d}/runners_{num_runners}/{variant_key}")
             except Exception as e:
-                failed_jobs.append((job.scenario, job.orders, job.num_runners))
-                print(f"❌ Exception in {job.scenario}/orders_{job.orders:03d}/runners_{job.num_runners}: {e}")
+                failed_jobs.append((job.scenario, job.orders, job.num_runners, job.variant_key))
+                print(f"❌ Exception in {job.scenario}/orders_{job.orders:03d}/runners_{job.num_runners}/{job.variant_key}: {e}")
     
     # Load results for completed jobs (including resumed ones)
     for scenario in args.tee_scenarios:
         for orders in args.order_levels:
-            combos: List[Tuple[int, MetricsAggregate]] = []
-            
-            for n_runners in runner_values:
-                out_dir = exp_root / scenario / f"orders_{orders:03d}" / f"runners_{n_runners}"
+            for variant in variants_to_run:
+                combos: List[Tuple[int, MetricsAggregate]] = []
                 
-                # Try to get from job results first, then load from disk
-                agg = job_results.get((scenario, orders, n_runners))
-                if agg is None and is_combo_complete(out_dir, args.runs_per):
-                    # Load from existing results
-                    metrics_items = load_metrics_from_output(out_dir, args.runs_per)
-                    agg = aggregate_metrics(metrics_items)
-                
-                if agg:
-                    combos.append((n_runners, agg))
-                    if n_runners == 1:
-                        one_runner_aggs[(scenario, orders)] = agg
+                for n_runners in runner_values:
+                    out_dir = exp_root / scenario / f"orders_{orders:03d}" / f"runners_{n_runners}" / variant.key
+                    
+                    # Try to get from job results first, then load from disk
+                    agg = job_results.get((scenario, orders, n_runners, variant.key))
+                    if agg is None and is_combo_complete(out_dir, args.runs_per):
+                        # Load from existing results
+                        metrics_items = load_metrics_from_output(out_dir, args.runs_per)
+                        agg = aggregate_metrics(metrics_items)
+                    
+                    if agg:
+                        combos.append((n_runners, agg))
+                        if n_runners == 1:
+                            one_runner_aggs[(scenario, orders, variant.key)] = agg
 
-            # Perform frontier analysis after all combinations are complete
-            frontier_points = identify_frontier_points(combos)
-            knee_runners = identify_knee_point(frontier_points)
-            
-            # Mark knee point
-            if knee_runners:
+                # Perform frontier analysis after all combinations are complete
+                frontier_points = identify_frontier_points(combos)
+                knee_runners = identify_knee_point(frontier_points)
+                
+                # Mark knee point
+                if knee_runners:
+                    for n_runners, agg in combos:
+                        if n_runners == knee_runners:
+                            agg.is_knee_point = True
+                            break
+
+                # Add rows to staffing data with enhanced metrics
                 for n_runners, agg in combos:
-                    if n_runners == knee_runners:
-                        agg.is_knee_point = True
+                    # Check stability
+                    agg.is_stable = is_stable(agg, target_on_time=args.target_on_time, max_failed=args.max_failed_rate, max_p90=args.max_p90)
+                    
+                    row = {
+                        "tee_scenario": scenario,
+                        "orders": orders,
+                        "variant": variant.key,
+                        "num_runners": n_runners,
+                        "runs": agg.runs_count,
+                        "on_time_rate_mean": round(agg.on_time_rate_mean, 4),
+                        "failed_rate_mean": round(agg.failed_rate_mean, 4),
+                        "p90_mean": round(agg.p90_mean, 2),
+                        "orders_per_runner_hour_mean": round(agg.orders_per_runner_hour_mean, 3),
+                        "second_runner_break_even_orders_mean": round(agg.second_runner_break_even_orders_mean, 2),
+                        "meets_targets": meets_targets(agg, target_on_time=args.target_on_time, max_failed=args.max_failed_rate, max_p90=args.max_p90),
+                        # New confidence interval fields
+                        "on_time_rate_std": round(agg.on_time_rate_std, 4),
+                        "failed_rate_std": round(agg.failed_rate_std, 4),
+                        "p90_std": round(agg.p90_std, 2),
+                        "on_time_rate_ci_lower": round(agg.on_time_rate_ci_lower, 4),
+                        "on_time_rate_ci_upper": round(agg.on_time_rate_ci_upper, 4),
+                        "failed_rate_ci_lower": round(agg.failed_rate_ci_lower, 4),
+                        "failed_rate_ci_upper": round(agg.failed_rate_ci_upper, 4),
+                        "p90_ci_lower": round(agg.p90_ci_lower, 2),
+                        "p90_ci_upper": round(agg.p90_ci_upper, 2),
+                        # Efficiency frontier fields
+                        "composite_score": round(agg.composite_score, 4),
+                        "is_frontier_point": agg.is_frontier_point,
+                        "is_knee_point": agg.is_knee_point,
+                        "is_stable": agg.is_stable,
+                    }
+                    staffing_rows.append(row)
+
+                # Determine minimal staffing for this orders level
+                minimal: Optional[int] = None
+                for n_runners, agg in sorted(combos, key=lambda t: t[0]):
+                    if meets_targets(agg, target_on_time=args.target_on_time, max_failed=args.max_failed_rate, max_p90=args.max_p90):
+                        minimal = n_runners
                         break
+                if minimal is not None:
+                    minimal_choices[(scenario, orders, variant.key)] = minimal
 
-            # Add rows to staffing data with enhanced metrics
-            for n_runners, agg in combos:
-                # Check stability
-                agg.is_stable = is_stable(agg, target_on_time=args.target_on_time, max_failed=args.max_failed_rate, max_p90=args.max_p90)
-                
-                row = {
-                    "tee_scenario": scenario,
-                    "orders": orders,
-                    "num_runners": n_runners,
-                    "runs": agg.runs_count,
-                    "on_time_rate_mean": round(agg.on_time_rate_mean, 4),
-                    "failed_rate_mean": round(agg.failed_rate_mean, 4),
-                    "p90_mean": round(agg.p90_mean, 2),
-                    "orders_per_runner_hour_mean": round(agg.orders_per_runner_hour_mean, 3),
-                    "second_runner_break_even_orders_mean": round(agg.second_runner_break_even_orders_mean, 2),
-                    "meets_targets": meets_targets(agg, target_on_time=args.target_on_time, max_failed=args.max_failed_rate, max_p90=args.max_p90),
-                    # New confidence interval fields
-                    "on_time_rate_std": round(agg.on_time_rate_std, 4),
-                    "failed_rate_std": round(agg.failed_rate_std, 4),
-                    "p90_std": round(agg.p90_std, 2),
-                    "on_time_rate_ci_lower": round(agg.on_time_rate_ci_lower, 4),
-                    "on_time_rate_ci_upper": round(agg.on_time_rate_ci_upper, 4),
-                    "failed_rate_ci_lower": round(agg.failed_rate_ci_lower, 4),
-                    "failed_rate_ci_upper": round(agg.failed_rate_ci_upper, 4),
-                    "p90_ci_lower": round(agg.p90_ci_lower, 2),
-                    "p90_ci_upper": round(agg.p90_ci_upper, 2),
-                    # Efficiency frontier fields
-                    "composite_score": round(agg.composite_score, 4),
-                    "is_frontier_point": agg.is_frontier_point,
-                    "is_knee_point": agg.is_knee_point,
-                    "is_stable": agg.is_stable,
-                }
-                staffing_rows.append(row)
-
-            # Determine minimal staffing for this orders level
-            minimal: Optional[int] = None
-            for n_runners, agg in sorted(combos, key=lambda t: t[0]):
-                if meets_targets(agg, target_on_time=args.target_on_time, max_failed=args.max_failed_rate, max_p90=args.max_p90):
-                    minimal = n_runners
-                    break
-            if minimal is not None:
-                minimal_choices[(scenario, orders)] = minimal
-
-            # Write hole policy recommendation for 1 runner
-            policy_md = exp_root / scenario / f"orders_{orders:03d}" / "hole_policy_1_runner.md"
-            write_hole_policy_md(policy_md, scenario=scenario, order_level=orders, one_runner_agg=one_runner_aggs.get((scenario, orders)), top_k=args.top_holes)
+                # Write hole policy recommendation for 1 runner
+                policy_md = exp_root / scenario / f"orders_{orders:03d}" / variant.key / "hole_policy_1_runner.md"
+                write_hole_policy_md(policy_md, scenario=scenario, order_level=orders, one_runner_agg=one_runner_aggs.get((scenario, orders, variant.key)), top_k=args.top_holes)
 
     # Write staffing curve CSV
     staffing_csv = exp_root / "staffing_summary.csv"
@@ -715,28 +751,34 @@ def main() -> None:
         lines.append("No combinations met targets. Consider relaxing thresholds or increasing runners.\n")
     else:
         # Group by scenario
-        by_scenario: Dict[str, List[Tuple[int, int]]] = {}
-        for (scenario, orders), minimal in minimal_choices.items():
-            by_scenario.setdefault(scenario, []).append((orders, minimal))
+        by_scenario: Dict[str, List[Tuple[int, int, str]]] = {}
+        for (scenario, orders, variant_key), minimal in minimal_choices.items():
+            by_scenario.setdefault(scenario, []).append((orders, minimal, variant_key))
         for scenario, pairs in by_scenario.items():
             lines.append(f"- **{scenario}**:\n")
-            for orders, minimal in sorted(pairs, key=lambda t: t[0]):
-                lines.append(f"  - Orders {orders}: minimal runners = {minimal}\n")
+            # group by variant
+            from itertools import groupby
+            pairs.sort(key=lambda t: t[2]) # sort by variant key
+            for variant_key, group in groupby(pairs, key=lambda t: t[2]):
+                lines.append(f"  - **Variant: {variant_key}**\n")
+                for orders, minimal, _ in sorted(list(group), key=lambda t: t[0]):
+                    lines.append(f"    - Orders {orders}: minimal runners = {minimal}\n")
+
     lines.append("\nTargets: on_time_rate ≥ {:.0%}, failed_rate ≤ {:.0%}, p90 ≤ {:.0f} min\n".format(args.target_on_time, args.max_failed_rate, args.max_p90))
     
     # Add failed jobs summary if any
     if failed_jobs:
         lines.append(f"\n### Failed Jobs ({len(failed_jobs)} total)\n\n")
         lines.append("The following combinations failed to complete:\n\n")
-        for scenario, orders, num_runners in failed_jobs:
-            lines.append(f"- {scenario}, orders {orders}, runners {num_runners}\n")
+        for scenario, orders, num_runners, variant_key in failed_jobs:
+            lines.append(f"- {scenario}, orders {orders}, runners {num_runners}, variant {variant_key}\n")
         lines.append("\nConsider rerunning with `--max-retries` increased or check logs for errors.\n")
     
     summary_md.write_text("".join(lines), encoding="utf-8")
 
     # Print final summary
-    total_combinations = len(args.tee_scenarios) * len(args.order_levels) * len(runner_values)
-    completed_combinations = total_combinations - len(failed_jobs)
+    total_combinations = len(args.tee_scenarios) * len(args.order_levels) * len(runner_values) * len(variants_to_run)
+    completed_combinations = len(job_results)
     
     print(f"\nExperiment Summary:")
     print(f"  Directory: {exp_root}")

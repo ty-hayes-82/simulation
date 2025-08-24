@@ -20,6 +20,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 import csv
+from dataclasses import dataclass
+
+
+@dataclass
+class BlockingVariant:
+    key: str
+    cli_flags: List[str]
+
+BLOCKING_VARIANTS: List[BlockingVariant] = [
+    BlockingVariant(key="none", cli_flags=[]),
+    BlockingVariant(key="front", cli_flags=["--block-holes", "1", "2", "3"]),
+    BlockingVariant(key="mid", cli_flags=["--block-holes", "4", "5", "6"]),
+    BlockingVariant(key="back", cli_flags=["--block-holes", "10", "11", "12"]),
+    BlockingVariant(key="front_mid", cli_flags=["--block-holes", "1", "2", "3", "4", "5", "6"]),
+    BlockingVariant(key="front_back", cli_flags=["--block-holes", "1", "2", "3", "10", "11", "12"]),
+    BlockingVariant(key="mid_back", cli_flags=["--block-holes", "4", "5", "6", "10", "11", "12"]),
+    BlockingVariant(key="front_mid_back", cli_flags=["--block-holes", "1", "2", "3", "4", "5", "6", "10", "11", "12"]),
+]
 
 
 def cleanup_old_simulation_outputs(output_root: Path) -> None:
@@ -95,10 +113,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--log-level", default="INFO")
     p.add_argument("--minimal-outputs", action="store_true", default=False, help="Only write coordinates.csv, simulation_metrics.json, results.json for each run")
     p.add_argument("--keep-old-outputs", action="store_true", default=False, help="Keep existing simulation outputs (default: clean them up)")
+    p.add_argument("--run-blocking-variants", action="store_true", help="Run all four blocking variants for each combination")
     return p.parse_args()
 
 
-def run_one(*, py: str, course_dir: Path, scenario: str, runners: int, orders: int, runs: int, groups_count: int, first_tee: Optional[str], speed: float | None, prep: int | None, out_dir: Path, log_level: str, minimal_outputs: bool, keep_old_outputs: bool) -> None:
+def run_one(*, py: str, course_dir: Path, scenario: str, runners: int, orders: int, runs: int, groups_count: int, first_tee: Optional[str], speed: float | None, prep: int | None, out_dir: Path, log_level: str, minimal_outputs: bool, keep_old_outputs: bool, extra_cli_args: Optional[List[str]] = None) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     project_root = Path(__file__).resolve().parent.parent.parent
     run_new_py = str(project_root / "scripts" / "sim" / "run_new.py")
@@ -124,6 +143,8 @@ def run_one(*, py: str, course_dir: Path, scenario: str, runners: int, orders: i
         cmd += ["--minimal-outputs"]
     if keep_old_outputs:
         cmd += ["--keep-old-outputs"]
+    if extra_cli_args:
+        cmd.extend(extra_cli_args)
     subprocess.run(cmd, check=True)
 
 
@@ -143,34 +164,38 @@ def main() -> None:
         course_dir_abs = (project_root / a.course_dir)
     course_dir_abs = course_dir_abs.resolve()
     combos = list(itertools.product(sorted(set(a.runners)), sorted(set(a.orders))))
+    variants_to_run = BLOCKING_VARIANTS if a.run_blocking_variants else [BLOCKING_VARIANTS[0]]
 
     # Track unique top-level runner directories; we'll scan them after the loop
     runner_roots_set = set()
     all_metrics_files: List[Path] = []
 
     for r, o in combos:
-        runner_root = root / f"{stamp}_delivery_runner_{r}_runners_{a.tee_scenario}"
-        out = runner_root / f"orders_{o:03d}"
-        run_one(
-            py=a.python_bin,
-            course_dir=course_dir_abs,
-            scenario=a.tee_scenario,
-            runners=r,
-            orders=o,
-            runs=a.runs_per,
-            groups_count=a.groups_count,
-            first_tee=a.first_tee,
-            speed=a.runner_speed,
-            prep=a.prep_time,
-            out_dir=out,
-            log_level=a.log_level,
-            minimal_outputs=a.minimal_outputs,
-            keep_old_outputs=a.keep_old_outputs,
-        )
-        print(f"✅ Generated runners={r}, orders={o} → {out}")
+        for variant in variants_to_run:
+            runner_root = root / f"{stamp}_delivery_runner_{r}_runners_{a.tee_scenario}"
+            out = runner_root / f"orders_{o:03d}" / variant.key
+            run_one(
+                py=a.python_bin,
+                course_dir=course_dir_abs,
+                scenario=a.tee_scenario,
+                runners=r,
+                orders=o,
+                runs=a.runs_per,
+                groups_count=a.groups_count,
+                first_tee=a.first_tee,
+                speed=a.runner_speed,
+                prep=a.prep_time,
+                out_dir=out,
+                log_level=a.log_level,
+                minimal_outputs=a.minimal_outputs,
+                # After the main script's initial cleanup, all sub-runs should keep outputs.
+                keep_old_outputs=True,
+                extra_cli_args=variant.cli_flags,
+            )
+            print(f"✅ Generated runners={r}, orders={o}, variant={variant.key} → {out}")
 
-        # Track this runner root; we'll scan once after all combos to avoid duplicates
-        runner_roots_set.add(runner_root)
+            # Track this runner root; we'll scan once after all combos to avoid duplicates
+            runner_roots_set.add(runner_root)
 
     # After all runs complete, collect metrics once to avoid duplicates
     runner_roots: defaultdict[Path, List[Path]] = defaultdict(list)
@@ -258,7 +283,7 @@ def main() -> None:
         def _gather_delivery_metrics_files() -> List[Path]:
             files: List[Path] = []
             for rr in sorted(runner_roots_set):
-                files.extend(sorted(rr.rglob("orders_*/run_*/delivery_runner_metrics_run_*.json")))
+                files.extend(sorted(rr.rglob("orders_*/*/run_*/delivery_runner_metrics_run_*.json")))
             return files
 
         def _parse_runner_orders_run(fp: Path) -> tuple[int | None, int | None, int | None, str | None]:

@@ -157,6 +157,7 @@ def generate_delivery_orders_by_hour_distribution(
     course_dir: Optional[str] = None,
     rng_seed: Optional[int] = None,
     service_open_s: Optional[int] = None,
+    blocked_holes: Optional[set[int]] = None,
 ) -> List[DeliveryOrder]:
     if rng_seed is not None:
         random.seed(int(rng_seed))
@@ -207,6 +208,8 @@ def generate_delivery_orders_by_hour_distribution(
         return max(1, min(18, hole))
 
     orders: List[DeliveryOrder] = []
+    _blocked_holes = set(blocked_holes) if blocked_holes else set()
+
     for idx, (hh, cnt) in enumerate(zip(hour_labels, counts)):
         start_s = hhmm_to_s(hh)
         end_s = min(start_s + 3600, close_s)
@@ -214,63 +217,65 @@ def generate_delivery_orders_by_hour_distribution(
             continue
         
         for _ in range(cnt):
-            order_time_s = random.randint(start_s, end_s - 1)
-            # Ensure order time is not before service opening
-            if service_open_s is not None:
-                order_time_s = max(order_time_s, service_open_s)
-            
-            active_groups = group_active_at(order_time_s)
-            if not active_groups:
-                continue
+            for attempt in range(5):  # Try up to 5 times to place an order on an allowed hole
+                order_time_s = random.randint(start_s, end_s - 1)
+                if service_open_s is not None:
+                    order_time_s = max(order_time_s, service_open_s)
+                
+                active_groups = group_active_at(order_time_s)
+                if not active_groups:
+                    continue
 
-            group = random.choice(active_groups)
-            hole = infer_hole_for_group_at_time(group, order_time_s)
-            
-            orders.append(
-                DeliveryOrder(
-                    order_id=None,
-                    golfer_group_id=group.get("group_id"),
-                    golfer_id=f"G{group.get('group_id')}",
-                    order_time_s=order_time_s,
-                    hole_num=hole,
-                )
-            )
+                group = random.choice(active_groups)
+                hole = infer_hole_for_group_at_time(group, order_time_s)
+                
+                if hole not in _blocked_holes:
+                    orders.append(
+                        DeliveryOrder(
+                            order_id=None,
+                            golfer_group_id=group.get("group_id"),
+                            golfer_id=f"G{group.get('group_id')}",
+                            order_time_s=order_time_s,
+                            hole_num=hole,
+                        )
+                    )
+                    break  # Successfully placed order, move to the next one
+    
+    # --- Fill remainder orders on allowed holes if necessary ---
+    if len(orders) < total_orders:
+        num_to_add = total_orders - len(orders)
+        
+        fallback_group = groups[0] if groups else {"group_id": 1, "tee_time_s": open_s}
+
+        for _ in range(num_to_add):
+            for attempt in range(20): # More attempts to find a valid spot
+                order_time_s = random.randint(open_s, close_s - 1)
+                
+                active_groups = group_active_at(order_time_s)
+                group = random.choice(active_groups) if active_groups else fallback_group
+                hole = infer_hole_for_group_at_time(group, order_time_s)
+
+                if hole not in _blocked_holes:
+                    orders.append(
+                        DeliveryOrder(
+                            order_id=None,
+                            golfer_group_id=group.get("group_id"),
+                            golfer_id=f"G{group.get('group_id')}",
+                            order_time_s=order_time_s,
+                            hole_num=hole,
+                        )
+                    )
+                    break
 
     orders.sort(key=lambda o: float(getattr(o, "order_time_s", 0.0)))
     for i, o in enumerate(orders, start=1):
         o.order_id = f"{i:03d}"
 
-    # --- Start of new code ---
-    # If not enough orders were generated due to no active groups, fill the remainder
-    if len(orders) < total_orders:
-        num_to_add = total_orders - len(orders)
-        
-        # Try to find any group to assign the order to
-        fallback_group = groups[0] if groups else {"group_id": 1, "tee_time_s": open_s}
-
-        for _ in range(num_to_add):
-            # Place new orders randomly within the service window
-            order_time_s = random.randint(open_s, close_s - 1)
-            
-            # Find active groups at this time, or use fallback
-            active_groups = group_active_at(order_time_s)
-            group = random.choice(active_groups) if active_groups else fallback_group
-            hole = infer_hole_for_group_at_time(group, order_time_s)
-
-            orders.append(
-                DeliveryOrder(
-                    order_id=None,
-                    golfer_group_id=group.get("group_id"),
-                    golfer_id=f"G{group.get('group_id')}",
-                    order_time_s=order_time_s,
-                    hole_num=hole,
-                )
-            )
-        
-        # Re-sort and re-assign IDs
-        orders.sort(key=lambda o: float(getattr(o, "order_time_s", 0.0)))
+    # Trim any excess orders that might have been created
+    if len(orders) > total_orders:
+        orders = orders[:total_orders]
+        # Re-assign IDs after trimming
         for i, o in enumerate(orders, start=1):
             o.order_id = f"{i:03d}"
-    # --- End of new code ---
-
+            
     return orders

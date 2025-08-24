@@ -66,6 +66,39 @@ import logging
 
 logger = get_logger(__name__)
 
+
+def _determine_variant_key(blocked_holes: set[int]) -> str:
+    if not blocked_holes:
+        return "none"
+    
+    front = {1, 2, 3}
+    mid = {4, 5, 6}
+    back = {10, 11, 12}
+    
+    has_front = front.issubset(blocked_holes)
+    has_mid = mid.issubset(blocked_holes)
+    has_back = back.issubset(blocked_holes)
+    
+    # Build key from parts
+    parts = []
+    if has_front: parts.append("front")
+    if has_mid: parts.append("mid")
+    if has_back: parts.append("back")
+    
+    key = "_".join(parts)
+    
+    # Check if the key exactly matches the combination of sets
+    expected_holes = set()
+    if has_front: expected_holes.update(front)
+    if has_mid: expected_holes.update(mid)
+    if has_back: expected_holes.update(back)
+    
+    if blocked_holes == expected_holes and key:
+        return key
+    
+    return "custom" if blocked_holes else "none"
+
+
 def run_multi_golfer_simulation(
     course_dir: str,
     groups: List[Dict[str, Any]],
@@ -229,17 +262,28 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
         scenario_groups_base = build_groups_from_scenario(config.course_dir, str(config.tee_scenario))
         if scenario_groups_base:
             groups = scenario_groups_base
-            # If a first tee override is provided, shift entire scenario to match desired first tee
-            try:
+            # Only shift scenario times if first_tee was explicitly provided (not using default)
+            # For detailed tee times scenarios, use the exact times from the scenario
+            should_shift_times = (
+                hasattr(args, 'first_tee') and args.first_tee is not None and args.first_tee != "09:00"
+            ) if args else False
+            
+            if should_shift_times:
+                # If a first tee override is provided, shift entire scenario to match desired first tee
+                try:
+                    if isinstance(groups, list) and groups:
+                        current_min = min(int(g.get("tee_time_s", 0) or 0) for g in groups)
+                        delta = int(first_tee_s - current_min)
+                        if delta != 0:
+                            for g in groups:
+                                g["tee_time_s"] = max(0, int(g.get("tee_time_s", 0) or 0) + delta)
+                            logger.info("Shifted scenario tee times by %+ds to align first tee to %s", delta, str(config.first_tee))
+                except Exception:
+                    pass
+            else:
+                # Use scenario times as-is for detailed tee times
                 if isinstance(groups, list) and groups:
-                    current_min = min(int(g.get("tee_time_s", 0) or 0) for g in groups)
-                    delta = int(first_tee_s - current_min)
-                    if delta != 0:
-                        for g in groups:
-                            g["tee_time_s"] = max(0, int(g.get("tee_time_s", 0) or 0) + delta)
-                        logger.info("Shifted scenario tee times by %+ds to align first tee to %s", delta, str(config.first_tee))
-            except Exception:
-                pass
+                    logger.info("Using detailed tee times from scenario '%s' without shifting", str(config.tee_scenario))
             # Respect groups_count when a scenario is used by taking the first N groups by tee time
             try:
                 max_groups = int(getattr(config, "groups_count", 0) or 0)
@@ -290,6 +334,38 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
         orders: list[DeliveryOrder] = []
         orders_all: list[DeliveryOrder] = []
         if groups:
+            # --- Start: New blocked holes logic ---
+            blocked_holes: set[int] = set()
+            
+            block_up_to_hole = getattr(args, "block_up_to_hole", 0)
+            if block_up_to_hole > 0:
+                blocked_holes.update(range(1, int(block_up_to_hole) + 1))
+
+            if getattr(args, "block_holes_10_12", False):
+                blocked_holes.update([10, 11, 12])
+
+            block_holes_list = getattr(args, "block_holes", None)
+            if block_holes_list:
+                try:
+                    blocked_holes.update(int(h) for h in block_holes_list)
+                except (ValueError, TypeError):
+                    logger.warning("Invalid value in --block-holes list; expected integers.")
+
+            block_holes_range = getattr(args, "block_holes_range", None)
+            if isinstance(block_holes_range, str) and "-" in block_holes_range:
+                try:
+                    a_str, b_str = block_holes_range.split("-", 1)
+                    a = int(a_str); b = int(b_str)
+                    blocked_holes.update(range(min(a, b), max(a, b) + 1))
+                except (ValueError, TypeError):
+                     logger.warning("Invalid value for --block-holes-range; expected format like '1-3'.")
+
+            if blocked_holes:
+                logger.info(f"Generating orders with blocked holes: {sorted(list(blocked_holes))}")
+            
+            variant_key = _determine_variant_key(blocked_holes)
+            # --- End: New blocked holes logic ---
+
             orders_all = generate_delivery_orders_by_hour_distribution(
                 groups=groups,
                 hourly_distribution=hourly_dist,
@@ -300,49 +376,9 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                 course_dir=config.course_dir,
                 rng_seed=config.random_seed,
                 service_open_s=int(delivery_service.service_open_s),
+                blocked_holes=blocked_holes if blocked_holes else None,
             )
             
-            block_up_to_hole = getattr(args, "block_up_to_hole", 0)
-            block_holes_10_12 = getattr(args, "block_holes_10_12", False)
-            block_holes_list = getattr(args, "block_holes", None)
-            block_holes_range = getattr(args, "block_holes_range", None)
-            
-            if block_up_to_hole > 0:
-                original_count = len(orders_all)
-                orders_all = [o for o in orders_all if int(getattr(o, "hole_num", 0)) > block_up_to_hole]
-                blocked_count = original_count - len(orders_all)
-                logger.info(f"After blocking up to hole {block_up_to_hole}: {len(orders_all)} orders remaining (blocked {blocked_count} orders)")
-            
-            if block_holes_10_12:
-                original_count = len(orders_all)
-                orders_all = [o for o in orders_all if int(getattr(o, "hole_num", 0)) not in [10, 11, 12]]
-                blocked_count = original_count - len(orders_all)
-                logger.info(f"After blocking holes 10-12: {len(orders_all)} orders remaining (blocked {blocked_count} orders)")
-
-            # Generic blocking for specific holes
-            try:
-                if block_holes_list:
-                    blocked = set(int(h) for h in block_holes_list)
-                    original_count = len(orders_all)
-                    orders_all = [o for o in orders_all if int(getattr(o, "hole_num", 0)) not in blocked]
-                    blocked_count = original_count - len(orders_all)
-                    logger.info("After blocking holes %s: %d orders remaining (blocked %d orders)", sorted(blocked), len(orders_all), blocked_count)
-            except Exception:
-                pass
-
-            # Range-based blocking like "3-5"
-            try:
-                if isinstance(block_holes_range, str) and "-" in block_holes_range:
-                    a_str, b_str = block_holes_range.split("-", 1)
-                    a = int(a_str); b = int(b_str)
-                    rng = set(range(min(a, b), max(a, b) + 1))
-                    original_count = len(orders_all)
-                    orders_all = [o for o in orders_all if int(getattr(o, "hole_num", 0)) not in rng]
-                    blocked_count = original_count - len(orders_all)
-                    logger.info("After blocking holes %d-%d: %d orders remaining (blocked %d orders)", min(a,b), max(a,b), len(orders_all), blocked_count)
-            except Exception:
-                pass
-
             orders = orders_all
 
         def order_arrival_process():
@@ -414,6 +450,8 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                 "course_dir": str(config.course_dir),
                 "service_open_s": int(delivery_service.service_open_s),
                 "service_close_s": int(delivery_service.service_close_s),
+                "blocked_holes": sorted(list(blocked_holes)),
+                "variant_key": variant_key,
             },
         }
 
@@ -472,7 +510,9 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                 service_hours=float(config.service_hours_duration),
                 sla_minutes=int(config.sla_minutes),
                 revenue_per_order=config.delivery_avg_order_usd,
-                avg_bev_order_value=float(getattr(args, "avg_order_usd", 12.0))
+                avg_bev_order_value=float(getattr(args, "avg_order_usd", 12.0)),
+                variant_key=sim_result.get("metadata", {}).get("variant_key"),
+                blocked_holes=sim_result.get("metadata", {}).get("blocked_holes"),
             )
         except Exception as e:
             logger.warning("Failed to write simulation metrics JSON: %s", e)

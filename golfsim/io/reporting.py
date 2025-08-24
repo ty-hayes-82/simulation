@@ -192,11 +192,22 @@ def write_order_logs_csv(sim_result: Dict[str, Any], save_path: Path) -> None:
 def generate_simulation_metrics_json(
     sim_result: Dict[str, Any], save_path: Path, service_hours: float = 10.0,
     sla_minutes: int = 30, revenue_per_order: float = 25.0,
-    avg_bev_order_value: float = 12.0
+    avg_bev_order_value: float = 12.0,
+    variant_key: Optional[str] = None,
+    blocked_holes: Optional[List[int]] = None
 ) -> None:
     """Generate standardized metrics JSON file for map animation display."""
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics = {"deliveryMetrics": None, "bevCartMetrics": None, "hasRunners": False, "hasBevCart": False}
+    
+    # Start with variant metadata at the top level
+    metrics = {
+        "variantKey": variant_key or "none",
+        "blockedHoles": blocked_holes or [],
+        "deliveryMetrics": None,
+        "bevCartMetrics": None,
+        "hasRunners": False,
+        "hasBevCart": False
+    }
     
     delivery_stats = sim_result.get("delivery_stats", []) or []
     activity_log = sim_result.get("activity_log", []) or []

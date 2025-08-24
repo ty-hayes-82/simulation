@@ -9,6 +9,17 @@ type LoadedMetrics = {
   bevCartMetrics?: any;
 };
 
+const HEADER_MAP: Record<string, string> = {
+  'none': 'None',
+  'front': '1-3',
+  'mid': '4-6',
+  'back': '10-12',
+  'front_mid': '1-6',
+  'front_back': '1-3 & 10-12',
+  'mid_back': '4-6 & 10-12',
+  'front_mid_back': '1-6 & 10-12',
+};
+
 export default function SimulationMatrix() {
   const { manifest, filters, setFilters } = useSimulation();
   const [metricsById, setMetricsById] = useState<Record<string, LoadedMetrics>>({});
@@ -52,15 +63,58 @@ export default function SimulationMatrix() {
     return () => { cancelled = true; };
   }, [sims]);
 
+  const { blockFront, blockMid, blockBack } = filters;
+  const currentVariantKey = useMemo(() => {
+    const parts = [];
+    if (blockFront) parts.push('front');
+    if (blockMid) parts.push('mid');
+    if (blockBack) parts.push('back');
+    return parts.length > 0 ? parts.join('_') : 'none';
+  }, [blockFront, blockMid, blockBack]);
+
   const getSimFor = (runners: number, orders: number) =>
-    sims.find(s => (s.meta?.runners ?? NaN) === runners && (s.meta?.orders ?? NaN) === orders);
+    sims.find(s => (s.meta?.runners ?? NaN) === runners && (s.meta?.orders ?? NaN) === orders && s.variantKey === currentVariantKey);
 
   const formatOnTime = (metrics?: LoadedMetrics): string => {
     if (!metrics || !metrics.deliveryMetrics) return '—';
     const dm: any = metrics.deliveryMetrics || {};
     const pct = Number((dm.onTimePercentage ?? dm.onTimeRate ?? 0));
     if (!Number.isFinite(pct)) return '—';
-    return `${pct.toFixed(1)}%`;
+    return `${pct.toFixed(0)}%`;
+  };
+
+  const buildTooltipData = (metrics?: LoadedMetrics): { label: string, value: string }[] => {
+    if (!metrics || !metrics.deliveryMetrics) return [];
+    const dm: any = metrics.deliveryMetrics || {};
+    const onTime = Number(dm.onTimePercentage ?? dm.onTimeRate ?? 0);
+    return [
+      { label: 'Orders', value: `${Number(dm.totalOrders ?? dm.orderCount ?? 0)}` },
+      { label: 'Revenue', value: `$${Number(dm.revenue ?? 0).toFixed(0)}` },
+      { label: 'Avg Order Time', value: `${Number(dm.avgOrderTime ?? 0).toFixed(1)}m` },
+      { label: 'On-Time %', value: `${Number.isFinite(onTime) ? onTime.toFixed(0) : '—'}%` },
+      { label: 'Failed', value: `${Number(dm.failedDeliveries ?? dm.failedOrderCount ?? 0)}` },
+      { label: 'Queue Wait', value: `${Number(dm.queueWaitAvg ?? 0).toFixed(1)}m` },
+      { label: 'P90 Cycle', value: `${Number(dm.deliveryCycleTimeP90 ?? 0).toFixed(1)}m` },
+      { label: 'Orders / Runner-Hr', value: `${Number(dm.ordersPerRunnerHour ?? 0).toFixed(1)}` },
+      { label: 'Revenue / Runner-Hr', value: `$${Number(dm.revenuePerRunnerHour ?? 0).toFixed(0)}` },
+    ];
+  };
+
+  const TooltipContent = ({ metrics }: { metrics?: LoadedMetrics }) => {
+    const data = buildTooltipData(metrics);
+    if (data.length === 0) {
+      return <Text as="div" size="2">No metrics available</Text>;
+    }
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '4px 12px', alignItems: 'center' }}>
+        {data.map(({ label, value }) => (
+          <React.Fragment key={label}>
+            <Text size="2" style={{ justifySelf: 'start' }}>{label}:</Text>
+            <Text size="2" weight="bold" style={{ justifySelf: 'end' }}>{value}</Text>
+          </React.Fragment>
+        ))}
+      </div>
+    );
   };
 
   const buildTooltipText = (metrics?: LoadedMetrics): string => {
@@ -71,7 +125,7 @@ export default function SimulationMatrix() {
       `Orders: ${Number(dm.totalOrders ?? dm.orderCount ?? 0)}`,
       `Revenue: $${Number(dm.revenue ?? 0).toFixed(0)}`,
       `Avg Order Time: ${Number(dm.avgOrderTime ?? 0).toFixed(1)}m`,
-      `On-Time %: ${Number.isFinite(onTime) ? onTime.toFixed(1) : '—'}%`,
+      `On-Time %: ${Number.isFinite(onTime) ? onTime.toFixed(0) : '—'}%`,
       `Failed: ${Number(dm.failedDeliveries ?? dm.failedOrderCount ?? 0)}`,
       `Queue Wait: ${Number(dm.queueWaitAvg ?? 0).toFixed(1)}m`,
       `P90 Cycle: ${Number(dm.deliveryCycleTimeP90 ?? 0).toFixed(1)}m`,
@@ -81,13 +135,21 @@ export default function SimulationMatrix() {
     return lines.join('\n');
   };
 
+  const title = useMemo(() => {
+    const header = HEADER_MAP[currentVariantKey] || 'Custom';
+    if (header === 'None') {
+      return 'On-Time % (Baseline)';
+    }
+    return `On-Time % (Blocked: ${header})`;
+  }, [currentVariantKey]);
+
   if (runnerCounts.length === 0 || orderCounts.length === 0) return null;
 
   return (
-    <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 25 }}>
-      <Card variant="surface">
+    <div style={{ position: 'absolute', bottom: 200, right: 20, zIndex: 25 }}>
+      <Card style={{ background: 'rgba(255,255,255,0.95)' }}>
         <Flex direction="column" gap="2" p="3">
-          <Text size="2" weight="bold" style={{ alignSelf: 'center' }}>On-Time %</Text>
+          <Text size="2" weight="bold" style={{ alignSelf: 'center' }}>{title}</Text>
           <Table.Root size="2" variant="surface" layout="auto">
             <Table.Header>
               <Table.Row>
@@ -139,8 +201,8 @@ export default function SimulationMatrix() {
                           <HoverCard.Trigger>
                             <Text weight={isActive ? 'bold' : 'regular'}>{label}</Text>
                           </HoverCard.Trigger>
-                          <HoverCard.Content size="2" maxWidth="280px">
-                            <Text as="div" size="2" style={{ whiteSpace: 'pre-line' }}>{tip}</Text>
+                          <HoverCard.Content size="2" maxWidth="340px">
+                            <TooltipContent metrics={m} />
                           </HoverCard.Content>
                         </HoverCard.Root>
                       </Table.Cell>

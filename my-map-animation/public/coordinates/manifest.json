@@ -1,22 +1,11 @@
 {
   "simulations": [
     {
-      "id": "20250824_103655_delivery_runner_1_runners_real_tee_sheet_orders_002_run_01_coordinates",
-      "name": "Other Simulations: orders_002 | RUN_01 | GPS Coordinates",
-      "filename": "20250824_103655_delivery_runner_1_runners_real_tee_sheet_orders_002_run_01_coordinates.csv",
-      "description": "903 coordinate points",
-      "meta": {
-        "runners": 1,
-        "bevCarts": 0,
-        "golfers": 0,
-        "scenario": "delivery_runner_1_runners_real_tee_sheet",
-        "orders": 2,
-        "lastModified": "2025-08-24T10:37:00.591073"
-      },
-      "heatmapFilename": "20250824_103655_delivery_runner_1_runners_real_tee_sheet_orders_002_run_01_coordinates_delivery_heatmap.png",
-      "metricsFilename": "20250824_103655_delivery_runner_1_runners_real_tee_sheet_orders_002_run_01_coordinates_metrics.json",
-      "holeDeliveryGeojson": "hole_delivery_times_20250824_103655_delivery_runner_1_runners_real_tee_sheet_orders_002_run_01_coordinates.geojson"
+      "id": "coordinates",
+      "name": "Simulation",
+      "filename": "coordinates.csv",
+      "description": "Delivery runner simulation (1 runner)"
     }
   ],
-  "defaultSimulation": "20250824_103655_delivery_runner_1_runners_real_tee_sheet_orders_002_run_01_coordinates"
+  "defaultSimulation": "coordinates"
 }

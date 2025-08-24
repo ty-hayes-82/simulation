@@ -10,6 +10,7 @@ import SimulationTable from './components/SimulationTable';
 import ViewSwitcher from './components/ViewSwitcher';
 import SimulationMatrix from './components/SimulationMatrix';
 import { useSimulation } from './context/SimulationContext';
+import BlockedHolesMatrix from './components/BlockedHolesMatrix';
 
 function SimulationTimePanel() {
   const { baselineTimestampSeconds, timelineMinutes } = useSimulation();
@@ -45,6 +46,7 @@ export default function App() {
           {!isHeatmap && <SimulationTimePanel />}
           <TopBarControls />
           <SimulationMatrix />
+          <BlockedHolesMatrix />
           <Routes>
             <Route path="/" element={<AnimationView />} />
             <Route path="/animation" element={<AnimationView />} />

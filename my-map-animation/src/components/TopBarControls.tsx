@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Flex, Text, Select, Card, Slider, Separator } from '@radix-ui/themes';
+import { Flex, Text, Select, Card, Slider, Separator, CheckboxGroup } from '@radix-ui/themes';
 import { useSimulation } from '../context/SimulationContext';
 import { useLocation } from 'react-router-dom';
 import { distinctRunnerCounts, distinctOrderCounts } from '../lib/manifest';
+import { secondsSince7amToClock } from '../lib/format';
 
 export default function TopBarControls() {
-  const { manifest, selectedSim, filters, setFilters, timelineMinutes, setTimelineMinutes, timelineMaxMinutes, baselineTimestampSeconds, isSliderControlled, setIsSliderControlled } = useSimulation();
-  const [animationSpeed, setAnimationSpeed] = useState([1]);
+  const { manifest, selectedSim, filters, setFilters, timelineMinutes, setTimelineMinutes, timelineMaxMinutes, baselineTimestampSeconds, isSliderControlled, setIsSliderControlled, animationSpeed, setAnimationSpeed } = useSimulation();
   const location = useLocation();
   const isHeatmap = (location.pathname || '').toLowerCase().includes('/heatmap');
   const runnerOptions = useMemo(() => distinctRunnerCounts(manifest || { simulations: [] }), [manifest]);
@@ -22,17 +22,6 @@ export default function TopBarControls() {
     const val = filters.orders ?? fallback;
     return orderOptions.includes(val) ? val : fallback;
   }, [filters.orders, orderOptions]);
-
-  const secondsSince7amToClock = (totalSeconds: number): string => {
-    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return '--:--';
-    const total = Math.max(0, Math.floor(totalSeconds));
-    const hoursSinceStart = Math.floor(total / 3600);
-    const minutes = Math.floor((total % 3600) / 60);
-    const hour24 = (7 + hoursSinceStart) % 24;
-    const period = hour24 >= 12 ? 'PM' : 'AM';
-    const hour12 = (hour24 % 12) === 0 ? 12 : (hour24 % 12);
-    return `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-  };
 
   return (
     <Card style={{ position: 'absolute', top: 20, left: 20, zIndex: 20, background: 'rgba(255,255,255,0.95)', minWidth: '320px' }}>
@@ -75,23 +64,57 @@ export default function TopBarControls() {
             </Select.Root>
           </Flex>
 
+          {/* --- Start: Blocked Holes Controls --- */}
+          <Flex direction="column" gap="2">
+            <Text size="2" weight="medium">Block Holes</Text>
+            <CheckboxGroup.Root 
+              value={
+                [
+                  filters.blockFront ? 'front' : '',
+                  filters.blockMid ? 'mid' : '',
+                  filters.blockBack ? 'back' : ''
+                ].filter(Boolean)
+              }
+              onValueChange={(v: string[]) => {
+                setFilters({
+                  ...filters,
+                  blockFront: v.includes('front'),
+                  blockMid: v.includes('mid'),
+                  blockBack: v.includes('back'),
+                });
+              }}
+              name="blockedHoles" 
+              variant="soft" 
+              size="2"
+            >
+              <Flex direction="column" gap="2">
+                <Text as="label" size="2">
+                  <Flex gap="2"><CheckboxGroup.Item value="front" /> 1–3</Flex>
+                </Text>
+                <Text as="label" size="2">
+                  <Flex gap="2"><CheckboxGroup.Item value="mid" /> 4–6</Flex>
+                </Text>
+                <Text as="label" size="2">
+                  <Flex gap="2"><CheckboxGroup.Item value="back" /> 10–12</Flex>
+                </Text>
+              </Flex>
+            </CheckboxGroup.Root>
+          </Flex>
+          {/* --- End: Blocked Holes Controls --- */}
+
           {!isHeatmap && (
             <>
               <Separator size="2" />
-              <Flex direction="column" gap="2">
-                <Text size="2" weight="medium">Animation Speed: {animationSpeed[0].toFixed(1)}x</Text>
-                <Flex align="center" gap="2">
-                  <Text size="1" color="gray">0.5x</Text>
-                  <Slider
-                    value={animationSpeed}
-                    onValueChange={setAnimationSpeed}
-                    min={0.5}
-                    max={3}
-                    step={0.1}
-                    style={{ flex: 1 }}
-                  />
-                  <Text size="1" color="gray">3x</Text>
-                </Flex>
+              <Flex direction="column" gap="3">
+                <Text size="2" weight="medium">Animation Speed</Text>
+                <Slider
+                  value={[animationSpeed]}
+                  onValueChange={(val) => setAnimationSpeed(val[0])}
+                  min={1}
+                  max={400}
+                  step={1}
+                  style={{ width: '100%' }}
+                />
               </Flex>
 
               <Separator size="2" />

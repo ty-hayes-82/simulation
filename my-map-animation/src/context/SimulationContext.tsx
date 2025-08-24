@@ -2,7 +2,13 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import type { SimulationEntry, SimulationManifest } from '../lib/manifest';
 import { loadManifest, selectBestMatch } from '../lib/manifest';
 
-type Filters = { runners?: number; orders?: number };
+type Filters = {
+  runners?: number;
+  orders?: number;
+  blockFront?: boolean;
+  blockBack?: boolean;
+  blockMid?: boolean;
+};
 
 // Add ViewState type
 type ViewState = {
@@ -19,6 +25,8 @@ type SimulationContextValue = {
   setFilters: (f: Filters) => void;
   setSelectedId: (id: string) => void;
   refreshManifest: () => Promise<void>;
+  animationSpeed: number;
+  setAnimationSpeed: (speed: number) => void;
   // Timeline controls (minutes-based scrubbing)
   timelineMinutes: number;
   setTimelineMinutes: (m: number) => void;
@@ -48,13 +56,14 @@ const INITIAL_VIEW_STATE: ViewState = {
 
 export function SimulationProvider({ children }: { children: React.ReactNode }) {
   const [manifest, setManifest] = useState<SimulationManifest | null>(null);
-  const [filters, setFilters] = useState<Filters>({ runners: 1, orders: 20 });
+  const [filters, setFilters] = useState<Filters>({ runners: 1, orders: 20, blockFront: false, blockBack: false, blockMid: false });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Timeline state shared across views/controls
   const [timelineMinutes, setTimelineMinutes] = useState<number>(0);
   const [timelineMaxMinutes, setTimelineMaxMinutes] = useState<number>(0);
   const [baselineTimestampSeconds, setBaselineTimestampSeconds] = useState<number>(0);
   const [isSliderControlled, setIsSliderControlled] = useState<boolean>(false);
+  const [animationSpeed, setAnimationSpeed] = useState<number>(200);
   // Shared map view state
   const [viewState, setViewState] = useState<ViewState>(INITIAL_VIEW_STATE);
   // Animation timestamp preservation
@@ -80,8 +89,18 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     if (!manifest || (manifest.simulations || []).length === 0) return null;
     const byId = selectedId ? manifest.simulations.find(s => s.id === selectedId) || null : null;
     if (byId) return byId;
+
+    const { runners, orders, blockFront, blockBack, blockMid } = filters;
+    const parts = [];
+    if (blockFront) parts.push('front');
+    if (blockMid) parts.push('mid');
+    if (blockBack) parts.push('back');
+    const variantKey = parts.length > 0 ? parts.join('_') : 'none';
+
+    // Use selectBestMatch with the full filter set including variantKey
+    const filtersWithVariant = { runners, orders, variantKey };
     const fallbackId = manifest.defaultSimulation;
-    return selectBestMatch(manifest, filters, fallbackId);
+    return selectBestMatch(manifest, filtersWithVariant, fallbackId);
   }, [manifest, selectedId, filters]);
 
   // Persist selection to URL when id changes
@@ -98,14 +117,22 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     // Only clear if a different sim would be chosen by filters
     if (manifest && (manifest.simulations || []).length > 0) {
-      const byFilters = selectBestMatch(manifest, filters, manifest.defaultSimulation);
+      const { runners, orders, blockFront, blockBack, blockMid } = filters;
+      const parts = [];
+      if (blockFront) parts.push('front');
+      if (blockMid) parts.push('mid');
+      if (blockBack) parts.push('back');
+      const variantKey = parts.length > 0 ? parts.join('_') : 'none';
+      
+      const filtersWithVariant = { runners, orders, variantKey };
+      const byFilters = selectBestMatch(manifest, filtersWithVariant, manifest.defaultSimulation);
       if (byFilters && byFilters.id !== selectedId) {
         setSelectedId(null);
       }
     } else {
       setSelectedId(null);
     }
-  }, [filters, manifest]);
+  }, [filters, manifest, selectedId]);
 
   const value = useMemo<SimulationContextValue>(() => ({
     manifest,
@@ -115,6 +142,8 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     setFilters,
     setSelectedId,
     refreshManifest,
+    animationSpeed,
+    setAnimationSpeed,
     timelineMinutes,
     setTimelineMinutes,
     timelineMaxMinutes,
@@ -132,6 +161,7 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     selectedSim,
     selectedId,
     filters,
+    animationSpeed,
     timelineMinutes,
     timelineMaxMinutes,
     baselineTimestampSeconds,

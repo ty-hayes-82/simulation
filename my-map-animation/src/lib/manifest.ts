@@ -5,6 +5,7 @@ export type SimulationMeta = {
   scenario?: string;
   orders?: number;
   lastModified?: string;
+  blockedHoles?: number[]; // new
 };
 
 export type SimulationEntry = {
@@ -15,6 +16,7 @@ export type SimulationEntry = {
   metricsFilename?: string;       // JSON (optional)
   holeDeliveryGeojson?: string;   // GEOJSON (optional)
   description?: string;
+  variantKey?: 'none' | 'front' | 'mid' | 'back' | 'front_mid' | 'front_back' | 'mid_back' | 'front_mid_back' | 'custom'; // new
   meta?: SimulationMeta;
 };
 
@@ -45,7 +47,7 @@ export function distinctRunnerCounts(manifest: SimulationManifest): number[] {
 
 export function selectBestMatch(
   manifest: SimulationManifest,
-  filters: { runners?: number; orders?: number },
+  filters: { runners?: number; orders?: number; variantKey?: string },
   fallbackId?: string
 ): SimulationEntry | null {
   const sims = manifest.simulations || [];
@@ -53,8 +55,23 @@ export function selectBestMatch(
 
   const targetR = typeof filters.runners === 'number' ? filters.runners : undefined;
   const targetO = typeof filters.orders === 'number' ? filters.orders : undefined;
+  const targetV = filters.variantKey;
 
   let candidates = sims;
+  
+  // --- Start of new filtering logic ---
+  // 1. Exact match for variantKey
+  if (targetV) {
+    const exactVariant = candidates.filter(s => s.variantKey === targetV);
+    if (exactVariant.length > 0) {
+      candidates = exactVariant;
+    } else {
+      // Fallback: if requested variant is missing, try to find a 'none' for the same combo
+      const noneVariant = candidates.filter(s => s.variantKey === 'none');
+      if (noneVariant.length > 0) candidates = noneVariant;
+    }
+  }
+  // --- End of new filtering logic ---
   
   // Filter by runners
   if (typeof targetR === 'number') {

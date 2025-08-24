@@ -54,7 +54,7 @@ const DEFAULT_CONFIG: AppConfig = {
   }
 };
 
-const Legend = ({ minTime, maxTime }: { minTime: number, maxTime: number }) => (
+const Legend = () => (
   <div style={{
     position: 'absolute',
     bottom: 20,
@@ -67,7 +67,7 @@ const Legend = ({ minTime, maxTime }: { minTime: number, maxTime: number }) => (
   }}>
     <div style={{ marginBottom: '5px', fontWeight: 'bold', fontSize: '12px' }}>Avg Delivery Time (min)</div>
     <div style={{ display: 'flex', alignItems: 'center' }}>
-      <span style={{ fontSize: '12px' }}>{minTime.toFixed(1)}</span>
+      <span style={{ fontSize: '12px' }}>0</span>
       <div style={{
         width: '100px',
         height: '20px',
@@ -75,7 +75,7 @@ const Legend = ({ minTime, maxTime }: { minTime: number, maxTime: number }) => (
         margin: '0 10px',
         border: '1px solid #ccc'
       }} />
-      <span style={{ fontSize: '12px' }}>{maxTime.toFixed(1)}</span>
+      <span style={{ fontSize: '12px' }}>10+</span>
     </div>
   </div>
 );
@@ -85,8 +85,7 @@ export default function HeatmapView() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [currentMapStyle, setCurrentMapStyle] = useState<string>('outdoors');
   const [holesGeojson, setHolesGeojson] = useState<any | null>(null);
-  const [holesMinTime, setHolesMinTime] = useState<number>(0);
-  const [holesMaxTime, setHolesMaxTime] = useState<number>(1);
+
   const [hoverInfo, setHoverInfo] = useState<{ lngLat: [number, number]; hole: number; avg: number; count: number } | null>(null);
   const [deliveryMetrics, setDeliveryMetrics] = useState<DeliveryMetrics | null>(null);
   const [bevCartMetrics, setBevCartMetrics] = useState<BevCartMetrics | null>(null);
@@ -172,19 +171,6 @@ export default function HeatmapView() {
         }
         if (!gj) return;
         setHolesGeojson(gj);
-        try {
-          const times: number[] = (gj.features || [])
-            .filter((f: any) => f?.properties?.has_data)
-            .map((f: any) => Number(f?.properties?.avg_time))
-            .filter((x: any) => Number.isFinite(x));
-          if (times.length > 0) {
-            setHolesMinTime(Math.min(...times));
-            setHolesMaxTime(Math.max(...times));
-          } else {
-            setHolesMinTime(0);
-            setHolesMaxTime(1);
-          }
-        } catch {}
       } catch {}
     };
     loadHoles();
@@ -335,15 +321,10 @@ export default function HeatmapView() {
               id="holes-fill"
               type="fill"
               paint={{
-                'fill-color': holesMinTime >= holesMaxTime ? [
+                'fill-color': [
                   'case',
                   ['==', ['get', 'has_data'], true],
-                  '#ff0000',
-                  'rgba(0,0,0,0)'
-                ] : [
-                  'case',
-                  ['==', ['get', 'has_data'], true],
-                  ['interpolate', ['linear'], ['get', 'avg_time'], holesMinTime, '#ffffff', holesMaxTime, '#ff0000'],
+                  ['interpolate', ['linear'], ['get', 'avg_time'], 0, '#ffffff', 10, '#ff0000'],
                   'rgba(0,0,0,0)'
                 ],
                 'fill-opacity': [
@@ -450,7 +431,7 @@ export default function HeatmapView() {
           </div>
         )}
       </div>
-      {holesGeojson && <Legend minTime={holesMinTime} maxTime={holesMaxTime} />}
+      {holesGeojson && <Legend />}
     </div>
   );
 }

@@ -33,15 +33,14 @@ export default function DeliveryMetricsGrid({ deliveryMetrics }: DeliveryMetrics
   const successful = Number.isFinite(dm.successfulDeliveries)
     ? Number(dm.successfulDeliveries)
     : Math.max(0, totalOrders - (Number.isFinite(failed) ? failed : 0));
-  const onTimePctDelivered = Number(dm.onTimePercentage ?? dm.onTimeRate);
-  const onTimeCount = Number.isFinite(onTimePctDelivered)
-    ? (onTimePctDelivered / 100) * successful
-    : 0;
+  const onTimePct = Number(dm.onTimePercentage ?? dm.onTimeRate ?? 0);
+  const onTimeCount = (onTimePct / 100) * successful;
+
   // Use late orders from the data if available, otherwise calculate
   const late = Number.isFinite(dm.lateOrders) 
     ? Number(dm.lateOrders)
-    : Math.max(0, Math.floor(successful - onTimeCount));
-  const onTimePctTotal = totalOrders > 0 ? (onTimeCount / totalOrders) * 100 : 0;
+    : Math.max(0, Math.round(successful - onTimeCount));
+  
   const avgOrderTimeMin = Number(dm.avgOrderTime ?? 0);
   const queueWaitMin = Number(dm.queueWaitAvg ?? 0);
   const runnerUtilPct = dm.runnerUtilizationPct;
@@ -61,7 +60,7 @@ export default function DeliveryMetricsGrid({ deliveryMetrics }: DeliveryMetrics
         <span style={{ justifySelf: 'start' }}>Late Orders:</span><strong style={{ justifySelf: 'end' }}>{late}</strong>
         <span style={{ justifySelf: 'start' }}>Failed Orders:</span><strong style={{ justifySelf: 'end' }}>{Number.isFinite(failed) ? failed : 0}</strong>
         <span style={{ justifySelf: 'start' }}>Runner Utilization %:</span><strong style={{ justifySelf: 'end' }}>{Number.isFinite(runnerUtilPct) ? `${Number(runnerUtilPct).toFixed(0)}%` : '—'}</strong>
-        <span style={{ justifySelf: 'start' }}>On-Time %:</span><strong style={{ justifySelf: 'end' }}>{onTimePctTotal.toFixed(0)}%</strong>
+        <span style={{ justifySelf: 'start' }}>On-Time %:</span><strong style={{ justifySelf: 'end' }}>{Number.isFinite(onTimePct) ? `${onTimePct.toFixed(0)}%` : '—'}</strong>
         <span style={{ justifySelf: 'start' }}>Total Revenue:</span><strong style={{ justifySelf: 'end' }}>${revenue.toFixed(0)}</strong>
         <span style={{ justifySelf: 'start' }}>Runner Drive Minutes:</span><strong style={{ justifySelf: 'end' }}>{Math.round(totalRunnerDriveMin)}m</strong>
         <span style={{ justifySelf: 'start' }}>Runner Shift Minutes:</span><strong style={{ justifySelf: 'end' }}>{Math.round(totalRunnerShiftMin)}m</strong>

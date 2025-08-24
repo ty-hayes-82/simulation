@@ -135,6 +135,10 @@ def _format_simulation_name(parsed: Dict[str, str]) -> str:
         scenario_name = _humanize(parsed['scenario'])
         components.append(scenario_name)
     
+    # Add variant if available
+    if 'variant_key' in parsed and parsed['variant_key'] != 'none':
+        components.append(f"({_humanize(parsed['variant_key'])})")
+
     # Add date/time if available
     if parsed['date'] and parsed['time']:
         try:
@@ -169,6 +173,10 @@ def _format_simple_simulation_name(parsed: Dict[str, str]) -> str:
         scenario_name = _humanize(parsed['scenario'])
         components.append(scenario_name)
     
+    # Add variant if available
+    if 'variant_key' in parsed and parsed['variant_key'] != 'none':
+        components.append(f"({_humanize(parsed['variant_key'])})")
+
     return ' | '.join(components) if components else parsed['original']
 
 
@@ -391,17 +399,17 @@ def find_all_simulations() -> Dict[str, List[Tuple[str, str, str]]]:
 
 
 def _derive_combo_key_from_path(csv_path: str) -> Optional[str]:
-    """Derive a (scenario, orders, runners) grouping key from a run CSV path.
+    """Derive a (scenario, orders, runners, variant) grouping key from a run CSV path.
 
-    Supports both timestamped folders (e.g., 20250823_..._delivery_runner_2_runners_typical_weekday_orders_028/run_01/coordinates.csv)
-    and experiment folders (e.g., outputs/experiments/<exp>/typical_weekday/orders_028/runners_2/run_01/coordinates.csv).
+    Supports experiment folders (e.g., outputs/experiments/<exp>/typical_weekday/orders_028/runners_2/variant_key/run_01/coordinates.csv).
     """
     try:
         p = Path(csv_path)
         # Expect .../run_xx/coordinates.csv → start from run folder
         run_dir = p.parent
-        runners_dir = run_dir.parent
-        orders_dir = runners_dir.parent if runners_dir.name.startswith("runners_") else run_dir.parent
+        variant_dir = run_dir.parent if run_dir.name.startswith("run_") else p.parent # Handle cases where there is no run_xx folder
+        runners_dir = variant_dir.parent
+        orders_dir = runners_dir.parent
         scenario_dir = orders_dir.parent
 
         # Pattern A: experiments layout
@@ -415,8 +423,9 @@ def _derive_combo_key_from_path(csv_path: str) -> Optional[str]:
             except Exception:
                 orders_val = None
             scenario = scenario_dir.name
-            if n_runners and orders_val:
-                return f"{scenario}|orders_{orders_val:03d}|runners_{n_runners}"
+            variant_key = variant_dir.name
+            if n_runners is not None and orders_val is not None:
+                return f"{scenario}|orders_{orders_val:03d}|runners_{n_runners}|{variant_key}"
 
         # Pattern B: timestamped folder with encoded tokens
         # Walk upward to find a segment that contains both 'runners' and (optionally) 'orders'
@@ -650,6 +659,17 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                 return None
             return None
 
+        def _extract_variant_info_from_metrics(metrics_path: str) -> Tuple[Optional[str], Optional[List[int]]]:
+            try:
+                with open(metrics_path, "r", encoding="utf-8") as f:
+                    import json as _json
+                    data = _json.load(f)
+                variant_key = data.get("variantKey")
+                blocked_holes = data.get("blockedHoles")
+                return variant_key, blocked_holes
+            except Exception:
+                return None, None
+
         # Build a flat list of all candidates to allow representative selection
         flat_items: List[Tuple[str, str, str]] = []
         for gname, items in all_simulations.items():
@@ -721,6 +741,8 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                     found_metrics_filename: str | None = None
                     found_hole_geojson_filename: str | None = None
                     orders_value: int | None = None
+                    variant_key: str | None = "none"
+                    blocked_holes: list[int] | None = []
 
                     # Heatmap files
                     for fname in os.listdir(csv_dir):
@@ -757,8 +779,11 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                         # Try to parse orders from metrics
                         try:
                             orders_value = _extract_orders_from_metrics(metrics_source)
+                            variant_key, blocked_holes = _extract_variant_info_from_metrics(metrics_source)
                         except Exception:
                             orders_value = None
+                            variant_key = None
+                            blocked_holes = None
 
                     # Optional per-run hole delivery geojson: generate if missing, then copy
                     try:
@@ -825,6 +850,7 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                         "scenario": parsed.get("scenario") if isinstance(parsed, dict) else None,
                         "orders": (int(orders_value) if isinstance(orders_value, (int, float)) else None) or extracted_orders,
                         "lastModified": last_modified_iso,
+                        "blockedHoles": blocked_holes,
                     }
 
                     entry = {
@@ -832,6 +858,7 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                         "name": f"{group_name}: {display_name}",
                         "filename": target_filename,
                         "description": file_info,
+                        "variantKey": variant_key or "none",
                         "meta": {k: v for k, v in meta.items() if v is not None}
                     }
                     if found_heatmap_filename:

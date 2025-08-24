@@ -8,6 +8,7 @@ import '../App.css';
 import { MAPBOX_TOKEN } from '../mapbox';
 import { useSimulation } from '../context/SimulationContext';
 import DeliveryMetricsGrid from '../components/DeliveryMetricsGrid';
+import { secondsSince7amToClock } from '../lib/format';
 
 interface Coordinate {
   golfer_id: string;
@@ -135,18 +136,6 @@ function formatSimulationTime(elapsedMinutes: number, startingHour: number = 9):
   const currentHour = (startingHour + totalHours) % 24;
   const minutes = Math.floor(roundedMinutes % 60);
   return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-}
-
-// Render HH:MM clock for absolute seconds since 7:00 AM baseline
-function secondsSince7amToClock(totalSeconds: number): string {
-  const total = Math.max(0, Math.floor(totalSeconds));
-  const hoursSinceStart = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  // Convert to 24h clock relative to 7:00 AM baseline
-  const hour24 = (7 + hoursSinceStart) % 24;
-  const period = hour24 >= 12 ? 'PM' : 'AM';
-  const hour12 = (hour24 % 12) === 0 ? 12 : (hour24 % 12);
-  return `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
 }
 
 function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic', stopInfoForTracker?: boolean[]): Coordinate | null {
@@ -467,7 +456,7 @@ const DEFAULT_CONFIG: AppConfig = {
 };
 
 export default function AnimationView() {
-  const { selectedSim, viewState, setViewState, savedAnimationTimestamp, setSavedAnimationTimestamp, manifest } = useSimulation();
+  const { selectedSim, viewState, setViewState, savedAnimationTimestamp, setSavedAnimationTimestamp, manifest, animationSpeed } = useSimulation();
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [currentMapStyle, setCurrentMapStyle] = useState<string>(DEFAULT_CONFIG.animation.defaultMapStyle);
   const [trackersData, setTrackersData] = useState<EntityData[]>([]);
@@ -498,9 +487,7 @@ export default function AnimationView() {
   // removed unused initialSourceDataRef to satisfy linter
   const trackersGeoJsonRef = useRef<any>({ type: 'FeatureCollection', features: [] });
   const styleReadyRef = useRef<boolean>(false);
-  // Speed control for smooth animation without resets
-  const speedRef = useRef<number>(150);
-  const [currentSpeed, setCurrentSpeed] = useState<number>(150);
+  // Speed control now comes from SimulationContext
   const simulatedElapsedRef = useRef<number>(0);
   const lastRealTimeSecRef = useRef<number>(0);
   // Easing selection state
@@ -511,6 +498,13 @@ export default function AnimationView() {
   const animationStartTimeRef = useRef<number>(0);
   const animationOffsetRef = useRef<number>(0);
   const currentTimelineMinutesRef = useRef<number>(0);
+
+  // When animationSpeed changes, reset the animation timer to prevent jumps
+  useEffect(() => {
+    animationOffsetRef.current = timelineMinutes * 60; // convert to seconds
+    animationStartTimeRef.current = Date.now();
+    setIsSliderControlled(false); // Ensure animation continues playing
+  }, [animationSpeed]);
 
   // Keep ref updated with current timeline minutes
   useEffect(() => {
@@ -548,10 +542,6 @@ export default function AnimationView() {
         };
         setConfig(safeConfig);
         setCurrentMapStyle(safeConfig.animation.defaultMapStyle);
-        if (typeof safeConfig.animation?.speedMultiplier === 'number' && isFinite(safeConfig.animation.speedMultiplier)) {
-          speedRef.current = safeConfig.animation.speedMultiplier;
-          setCurrentSpeed(safeConfig.animation.speedMultiplier);
-        }
       } catch (error) {
         // Keep defaults on any error
       }
@@ -814,7 +804,7 @@ export default function AnimationView() {
       } else {
         // Normal automatic animation with offset for smooth transitions
         const currentTime = Date.now();
-        const realElapsed = (currentTime - animationStartTimeRef.current) * speedRef.current / 1000; // seconds
+        const realElapsed = (currentTime - animationStartTimeRef.current) * animationSpeed / 1000; // seconds
         elapsedMinutes = (realElapsed + animationOffsetRef.current) / 60;
         setTimelineMinutes(elapsedMinutes);
       }
@@ -879,7 +869,7 @@ export default function AnimationView() {
         cancelAnimationFrame(animationId);
       }
     };
-  }, [isLoading, trackersData, currentEasing, baselineTimestampSeconds, isSliderControlled, timelineMinutes]);
+  }, [isLoading, trackersData, currentEasing, baselineTimestampSeconds, isSliderControlled, timelineMinutes, animationSpeed]);
 
   // Update clock display immediately when slider changes
   useEffect(() => {
@@ -940,53 +930,7 @@ export default function AnimationView() {
 
   return (
     <div style={{ width: '100vw', height: '100vh' }}>
-      {/* Animation Control Panel */}
-      <div style={{ position: 'absolute', top: 56, left: 10, zIndex: 11, background: 'rgba(255,255,255,0.95)', padding: '12px', borderRadius: 6, boxShadow: '0 2px 4px rgba(0,0,0,0.2)', minWidth: 280 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {/* Timer control is moved to TopBarControls via Radix Slider */}
-          
-          {/* Speed Control */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <label htmlFor="speed-control" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Speed</label>
-            <input
-              id="speed-control"
-              type="range"
-              min="0.1"
-              max="300"
-              step="1"
-              value={currentSpeed}
-              onChange={(e) => {
-                const newSpeed = parseFloat(e.target.value);
-                speedRef.current = newSpeed;
-                setCurrentSpeed(newSpeed);
-                // When speed changes, maintain current position for smooth transition
-                animationOffsetRef.current = timelineMinutes * 60; // convert to seconds
-                animationStartTimeRef.current = Date.now();
-                setIsSliderControlled(false); // Auto-play when speed is changed
-              }}
-              style={{ flex: 1 }}
-            />
-            <span style={{ fontSize: 11, color: '#666', minWidth: 30 }}>{currentSpeed.toFixed(1)}x</span>
-          </div>
-          
-          {/* Map Style Selection */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <label htmlFor="map-style-select" style={{ fontSize: 12, color: '#333', minWidth: 70 }}>Map Style</label>
-            <select
-              id="map-style-select"
-              value={currentMapStyle}
-              onChange={(e) => setCurrentMapStyle(e.target.value)}
-              style={{ flex: 1, padding: '4px', borderRadius: 4, border: '1px solid #ccc', fontSize: 12 }}
-            >
-              {Object.entries(config.mapStyles).map(([key, style]) => (
-                <option key={key} value={key}>
-                  {style.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
+      {/* Animation Control Panel is now handled by TopBarControls */}
       <Map
         ref={mapRef}
         initialViewState={getInitialViewState()}
