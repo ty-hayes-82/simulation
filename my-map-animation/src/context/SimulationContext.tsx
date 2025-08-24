@@ -21,9 +21,11 @@ type SimulationContextValue = {
   manifest: SimulationManifest | null;
   selectedSim: SimulationEntry | null;
   selectedId: string | null;
+  selectedCourseId: string | null;
   filters: Filters;
   setFilters: (f: Filters) => void;
   setSelectedId: (id: string) => void;
+  setSelectedCourseId: (id: string | null) => void;
   refreshManifest: () => Promise<void>;
   animationSpeed: number;
   setAnimationSpeed: (speed: number) => void;
@@ -58,6 +60,7 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
   const [manifest, setManifest] = useState<SimulationManifest | null>(null);
   const [filters, setFilters] = useState<Filters>({ runners: 1, orders: 20, blockFront: false, blockBack: false, blockMid: false });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>('pinetree_country_club');
   // Timeline state shared across views/controls
   const [timelineMinutes, setTimelineMinutes] = useState<number>(0);
   const [timelineMaxMinutes, setTimelineMaxMinutes] = useState<number>(0);
@@ -82,6 +85,8 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     const sp = new URLSearchParams(window.location.search);
     const urlSim = sp.get('sim');
     if (urlSim) setSelectedId(urlSim);
+    const urlCourse = sp.get('course');
+    if (urlCourse) setSelectedCourseId(urlCourse);
   }, []);
 
   // Resolve selected simulation by id or best match to filters
@@ -97,10 +102,16 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     if (blockBack) parts.push('back');
     const variantKey = parts.length > 0 ? parts.join('_') : 'none';
 
-    // Use selectBestMatch with the full filter set including variantKey
+    // Filter by course first if selected
+    const pool = selectedCourseId
+      ? (manifest.simulations || []).filter(s => (s.courseId || '') === selectedCourseId)
+      : (manifest.simulations || []);
+
+    // Use selectBestMatch with the full filter set including variantKey, restricted to course pool
+    const filteredManifest = { ...manifest, simulations: pool } as SimulationManifest;
     const filtersWithVariant = { runners, orders, variantKey };
-    const fallbackId = manifest.defaultSimulation;
-    return selectBestMatch(manifest, filtersWithVariant, fallbackId);
+    const fallbackId = filteredManifest.defaultSimulation ?? manifest.defaultSimulation;
+    return selectBestMatch(filteredManifest, filtersWithVariant, fallbackId);
   }, [manifest, selectedId, filters]);
 
   // Persist selection to URL when id changes
@@ -108,10 +119,11 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     if (selectedSim?.id) {
       const sp = new URLSearchParams(window.location.search);
       sp.set('sim', selectedSim.id);
+      if (selectedCourseId) sp.set('course', selectedCourseId); else sp.delete('course');
       const newUrl = `${window.location.pathname}?${sp.toString()}`;
       if (newUrl !== window.location.href) window.history.replaceState(null, '', newUrl);
     }
-  }, [selectedSim?.id]);
+  }, [selectedSim?.id, selectedCourseId]);
 
   // When filters change, clear explicit selection so filters drive the choice
   useEffect(() => {
@@ -138,9 +150,11 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     manifest,
     selectedSim,
     selectedId: selectedSim?.id || selectedId,
+    selectedCourseId,
     filters,
     setFilters,
     setSelectedId,
+    setSelectedCourseId,
     refreshManifest,
     animationSpeed,
     setAnimationSpeed,
@@ -160,6 +174,7 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     manifest,
     selectedSim,
     selectedId,
+    selectedCourseId,
     filters,
     animationSpeed,
     timelineMinutes,

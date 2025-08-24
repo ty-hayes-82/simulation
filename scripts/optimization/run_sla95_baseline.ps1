@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
 param(
-    [switch]$GenerateRecommendations,
+    [Alias('GenerateRecommendations')]
+    [switch]$DoRecommendations,
     [string]$CourseName = 'Pinetree Country Club'
 )
 
@@ -50,7 +51,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Run completed. Staffing summary at: $expRoot\staffing_summary.csv" -ForegroundColor Green
 
-if ($GenerateRecommendations) {
+if ($DoRecommendations) {
     $outMd = Join-Path $repoRoot "docs/recommendations_${expName}.md"
     Write-Host "Generating recommendations → $outMd" -ForegroundColor Cyan
     & $pythonExe 'scripts/optimization/generate_recommendations.py' `

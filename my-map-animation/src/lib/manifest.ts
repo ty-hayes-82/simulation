@@ -18,11 +18,16 @@ export type SimulationEntry = {
   description?: string;
   variantKey?: 'none' | 'front' | 'mid' | 'back' | 'front_mid' | 'front_back' | 'mid_back' | 'front_mid_back' | 'custom'; // new
   meta?: SimulationMeta;
+  // Added for course selection
+  courseId?: string;
+  courseName?: string;
 };
 
 export type SimulationManifest = {
   simulations: SimulationEntry[];
   defaultSimulation?: string;
+  // Optional list of distinct courses present in the manifest
+  courses?: { id: string; name: string }[];
 };
 
 let manifestCache: SimulationManifest | null = null;

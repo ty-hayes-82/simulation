@@ -633,8 +633,11 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
         # Create flattened manifest for the React app (will be enriched per entry)
         manifest = {
             "simulations": [],
-            "defaultSimulation": None
+            "defaultSimulation": None,
+            "courses": []
         }
+        # Track discovered courses for dropdown
+        discovered_courses: Dict[str, str] = {}
         
         copied_count = 0
         total_size = 0
@@ -785,6 +788,29 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                             variant_key = None
                             blocked_holes = None
 
+                    # Derive course info (id/name) best-effort from results.json metadata
+                    course_id: Optional[str] = None
+                    course_name: Optional[str] = None
+                    try:
+                        results_path = os.path.join(csv_dir, "results.json")
+                        if os.path.exists(results_path):
+                            with open(results_path, "r", encoding="utf-8") as f:
+                                _results = json.load(f)
+                            course_dir_str = None
+                            try:
+                                course_dir_str = _results.get("metadata", {}).get("course_dir")
+                            except Exception:
+                                course_dir_str = None
+                            if isinstance(course_dir_str, str) and course_dir_str:
+                                course_id = os.path.basename(course_dir_str.replace("\\", "/").rstrip("/"))
+                                course_name = _humanize(course_id)
+                    except Exception:
+                        course_id = None
+                        course_name = None
+
+                    if course_id and course_name:
+                        discovered_courses[course_id] = course_name
+
                     # Optional per-run hole delivery geojson: generate if missing, then copy
                     try:
                         existing_geo = None
@@ -861,6 +887,10 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                         "variantKey": variant_key or "none",
                         "meta": {k: v for k, v in meta.items() if v is not None}
                     }
+                    if course_id:
+                        entry["courseId"] = course_id
+                    if course_name:
+                        entry["courseName"] = course_name
                     if found_heatmap_filename:
                         entry["heatmapFilename"] = found_heatmap_filename
                     if found_metrics_filename:
@@ -905,6 +935,13 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
             manifest["defaultSimulation"] = selected_default["id"]
             print(f"Set default simulation: {selected_default['name']}")
         
+        # Populate courses list for dropdown; prefer Pinetree first when present
+        if discovered_courses:
+            # Ensure Pinetree appears first if discovered
+            items = list(discovered_courses.items())
+            items.sort(key=lambda kv: (0 if kv[0] == "pinetree_country_club" else 1, kv[1].lower()))
+            manifest["courses"] = [{"id": cid, "name": cname} for cid, cname in items]
+
         # Write manifest files to all coordinates directories
         for coordinates_dir in coordinates_dirs:
             manifest_path = os.path.join(coordinates_dir, "manifest.json")

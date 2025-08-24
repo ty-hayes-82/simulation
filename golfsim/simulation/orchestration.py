@@ -333,6 +333,9 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
 
         orders: list[DeliveryOrder] = []
         orders_all: list[DeliveryOrder] = []
+        # Initialize defaults so metadata below is safe even when no groups
+        blocked_holes: set[int] = set()
+        variant_key: str = "none"
         if groups:
             # --- Start: New blocked holes logic ---
             blocked_holes: set[int] = set()
