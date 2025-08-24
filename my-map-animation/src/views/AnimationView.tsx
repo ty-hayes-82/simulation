@@ -6,6 +6,8 @@ import Papa from 'papaparse';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import '../App.css';
 import { MAPBOX_TOKEN } from '../mapbox';
+import { useSimulation } from '../context/SimulationContext';
+import DeliveryMetricsGrid from '../components/DeliveryMetricsGrid';
 
 interface Coordinate {
   golfer_id: string;
@@ -14,6 +16,7 @@ interface Coordinate {
   timestamp: number;
   type: string;
   current_hole?: number;
+  color?: string;
 }
 
 interface EntityData {
@@ -56,6 +59,7 @@ interface DeliveryMetrics {
   deliveryCycleTimeP90: number;
   ordersPerRunnerHour: number;
   revenuePerRunnerHour: number;
+  runnerUtilizationPct?: number;
 }
 
 interface BevCartMetrics {
@@ -299,7 +303,7 @@ function getCatmullRomPositionOnPath(coordinates: Coordinate[], elapsedTime: num
   };
 }
 
-function calculateBounds(entitiesData: EntityData[]) {
+function calculateBounds(entitiesData: EntityData[]): { center: [number, number], zoom: number } {
   const allCoordinates = entitiesData.flatMap(e => e.coordinates);
   if (allCoordinates.length === 0) return { center: [0, 0] as [number, number], zoom: 2 };
   const lats = allCoordinates.map(c => c.latitude);
@@ -313,12 +317,11 @@ function calculateBounds(entitiesData: EntityData[]) {
 }
 
 function ControlPanel({ 
-  trackersData, isLoading, center, timestamp, deliveryMetrics, bevCartMetrics, hasRunners, hasBevCart
+  trackersData, isLoading, center, deliveryMetrics, bevCartMetrics, hasRunners, hasBevCart
 }: {
   trackersData: EntityData[];
   isLoading: boolean;
   center: [number, number];
-  timestamp: string;
   deliveryMetrics?: DeliveryMetrics | null;
   bevCartMetrics?: BevCartMetrics | null;
   hasRunners?: boolean;
@@ -328,15 +331,6 @@ function ControlPanel({
   
   return (
     <div style={{ position: 'absolute', top: 0, right: 0, maxWidth: 340, background: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.3)', padding: '12px 20px', margin: 20, fontSize: 12, lineHeight: 1.4, color: '#6b6b76', outline: 'none', borderRadius: 4 }}>
-      {/* Timestamp Display */}
-      <div style={{ textAlign: 'center', marginBottom: 16, padding: '8px 12px', background: '#f8f9fa', borderRadius: 4, border: '1px solid #e9ecef' }}>
-        <div style={{ fontSize: 18, fontWeight: 600, color: '#333', fontFamily: 'monospace' }}>
-          {timestamp}
-        </div>
-        <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>
-          Simulation Time
-        </div>
-      </div>
 
       {isLoading ? (
         <p>Loading simulation data...</p>
@@ -344,22 +338,7 @@ function ControlPanel({
         <>
                      {/* Delivery Runner Metrics */}
            {hasRunners && deliveryMetrics && (
-             <div style={{ marginBottom: 16 }}>
-               <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 14, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
-                 Delivery Metrics
-               </h4>
-               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 13 }}>
-                 <div>Order Count: <strong>{(deliveryMetrics as any).totalOrders ?? deliveryMetrics.orderCount ?? 0}</strong></div>
-                 <div>Revenue: <strong>${(deliveryMetrics.revenue ?? 0).toFixed(0)}</strong></div>
-                 <div>Avg Order Time: <strong>{(deliveryMetrics.avgOrderTime ?? 0).toFixed(1)}m</strong></div>
-                 <div>On-Time %: <strong>{((deliveryMetrics as any).onTimePercentage ?? deliveryMetrics.onTimeRate ?? 0).toFixed(1)}%</strong></div>
-                 <div>Failed Orders: <strong>{(deliveryMetrics as any).failedDeliveries ?? deliveryMetrics.failedOrderCount ?? 0}</strong></div>
-                 <div>Queue Wait: <strong>{(deliveryMetrics.queueWaitAvg ?? 0).toFixed(1)}m</strong></div>
-                 <div>Cycle Time (P90): <strong>{(deliveryMetrics.deliveryCycleTimeP90 ?? 0).toFixed(1)}m</strong></div>
-                 <div>Orders/Runner-Hr: <strong>{(deliveryMetrics.ordersPerRunnerHour ?? 0).toFixed(1)}</strong></div>
-                 <div style={{ gridColumn: 'span 2' }}>Revenue/Runner-Hr: <strong>${(deliveryMetrics.revenuePerRunnerHour ?? 0).toFixed(0)}</strong></div>
-               </div>
-             </div>
+              <DeliveryMetricsGrid deliveryMetrics={deliveryMetrics} />
            )}
 
                      {/* Bev-Cart Metrics */}
@@ -449,27 +428,24 @@ const DEFAULT_CONFIG: AppConfig = {
 };
 
 export default function AnimationView() {
+  const { selectedSim, viewState, setViewState } = useSimulation();
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [currentMapStyle, setCurrentMapStyle] = useState<string>(DEFAULT_CONFIG.animation.defaultMapStyle);
   const [trackersData, setTrackersData] = useState<EntityData[]>([]);
   const [trackerPositions, setTrackerPositions] = useState<{ [key: string]: Coordinate | null }>({});
   const [isLoading, setIsLoading] = useState(true);
-  const [pathBounds, setPathBounds] = useState({ center: [0, 0] as [number, number], zoom: 2 });
   const [elapsedTime, setElapsedTime] = useState(0);
   const [displayedTimestamp, setDisplayedTimestamp] = useState<string>('00:00');
-  const [originalMinTimestamp, setOriginalMinTimestamp] = useState<number>(0);
-  const [animationDuration, setAnimationDuration] = useState<number>(0);
-  
-  // Timer slider state
-  const [isSliderControlled, setIsSliderControlled] = useState<boolean>(false);
-  const [sliderTime, setSliderTime] = useState<number>(0);
-  const [sliderMaxTime, setSliderMaxTime] = useState<number>(0);
+  const { timelineMinutes, setTimelineMinutes, timelineMaxMinutes, setTimelineMaxMinutes, baselineTimestampSeconds, setBaselineTimestampSeconds, isSliderControlled, setIsSliderControlled } = useSimulation();
   
   // Metrics loaded from simulation
   const [deliveryMetrics, setDeliveryMetrics] = useState<DeliveryMetrics | null>(null);
   const [bevCartMetrics, setBevCartMetrics] = useState<BevCartMetrics | null>(null);
   const [hasRunners, setHasRunners] = useState<boolean>(false);
   const [hasBevCart, setHasBevCart] = useState<boolean>(false);
+  // Derived fallbacks from CSV when not present in metrics JSON
+  const [derivedRevenue, setDerivedRevenue] = useState<number | null>(null);
+  const [derivedUtilPct, setDerivedUtilPct] = useState<number | null>(null);
   // Simplified - no need for simulation selection since we only have one simulation
   // Animation timing is integrated incrementally to allow live speed changes without jumps
   const [animationStartTime, setAnimationStartTime] = useState<number | null>(null); // retained for backward-compat but not used
@@ -529,12 +505,32 @@ export default function AnimationView() {
     loadConfig();
   }, []);
 
+  // Reset animation and sources when selected simulation changes
+  useEffect(() => {
+    // Clear existing sources so new data mounts cleanly
+    sourcesInitializedRef.current = false;
+    setSourcesReady(false);
+    setTrackersData([]);
+    setTrackerPositions({});
+    setIsLoading(true);
+    setDeliveryMetrics(null);
+    setBevCartMetrics(null);
+    // Reset animation timing and timeline
+    animationOffsetRef.current = 0;
+    animationStartTimeRef.current = Date.now();
+    setTimelineMinutes(0);
+    setBaselineTimestampSeconds(0);
+    // Ensure autoplay resumes
+    setIsSliderControlled(false);
+  }, [selectedSim?.id]);
+
   // Load coordinates directly from the single simulation
   useEffect(() => {
     const loadCoordinates = async () => {
       try {
-        const coordinatesDir = (config as any)?.data?.coordinatesDir || DEFAULT_CONFIG.data.coordinatesDir;
-        const csvPath = `${coordinatesDir}/coordinates.csv`;
+        const baseDir = (config as any)?.data?.coordinatesDir || DEFAULT_CONFIG.data.coordinatesDir;
+        const csvFile = selectedSim?.filename || 'coordinates.csv';
+        const csvPath = `${baseDir}/${csvFile}`;
         const csvResp = await fetch(`${csvPath}?t=${Date.now()}`);
         const csvText = await csvResp.text();
         Papa.parse(csvText, {
@@ -565,13 +561,15 @@ export default function AnimationView() {
                 const timestamp = parseFloat(row.timestamp);
                 const holeStr = (row.current_hole ?? row.hole);
                 const parsedHole = typeof holeStr === 'string' ? parseInt(holeStr, 10) : (Number.isFinite(holeStr) ? Number(holeStr) : undefined);
+                const color = (row.color && typeof row.color === 'string') ? String(row.color) : undefined;
                 return {
                   golfer_id: row.id || row.golfer_id || normType || `entity_${Math.random().toString(36).slice(2)}`,
                   latitude,
                   longitude,
                   timestamp,
                   type: normType || 'golfer',
-                  current_hole: Number.isFinite(parsedHole) ? (parsedHole as number) : undefined
+                  current_hole: Number.isFinite(parsedHole) ? (parsedHole as number) : undefined,
+                  color
                 } as Coordinate;
               })
               .filter((coord: Coordinate | null) => !!coord)
@@ -592,13 +590,10 @@ export default function AnimationView() {
               : normalizedRows.map((c: any) => c.timestamp);
             const minTimestamp = Math.min(...timestampsForStart);
             const maxTimestamp = Math.max(...normalizedRows.map((c: any) => c.timestamp));
-            const duration = (maxTimestamp - minTimestamp); // keep in seconds
-            setOriginalMinTimestamp(minTimestamp);
-            setAnimationDuration(duration / 60); // convert to minutes only for UI display
-            
-            // Set slider time range: start from first tee time, end 5 hours after last tee time
-            setSliderTime(0); // Start at beginning
-            setSliderMaxTime((duration + (5 * 3600)) / 60); // Add 5 hours to duration, convert to minutes
+            const duration = (maxTimestamp - minTimestamp); // seconds
+            setBaselineTimestampSeconds(minTimestamp);
+            setTimelineMinutes(0);
+            setTimelineMaxMinutes((duration + (5 * 3600)) / 60); // minutes
             
             // Initialize animation timing refs
             animationStartTimeRef.current = Date.now();
@@ -608,7 +603,7 @@ export default function AnimationView() {
               .map(([trackerId, coordinates]) => {
                 const sortedCoords = coordinates
                   .sort((a, b) => a.timestamp - b.timestamp)
-                  .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) })); // keep in seconds, just normalize to start at 0
+                  .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) }));
                 let filteredCoords = sortedCoords;
                 if (sortedCoords[0]?.type === 'golfer') {
                   // Only show golfers from when they tee off (hole >= 1) until they finish
@@ -628,14 +623,62 @@ export default function AnimationView() {
                   }
                 }
                 const entityType = filteredCoords[0]?.type || sortedCoords[0]?.type || 'golfer';
-                return { name: trackerId, coordinates: filteredCoords, type: entityType, color: config.entityTypes[entityType]?.color || config.golferColors[0] };
+                // Determine base color: prefer per-point color if consistent, else fallback per-entity default
+                const firstColor = filteredCoords.find(c => !!c.color)?.color;
+                return { name: trackerId, coordinates: filteredCoords, type: entityType, color: firstColor || config.entityTypes[entityType]?.color || config.golferColors[0] };
               })
               .filter((e) => e.coordinates.length > 0); // Drop empty trackers entirely
             setTrackersData(trackersArray);
+            
+            // Set the shared map view based on the bounds of this simulation's data
             const bounds = calculateBounds(trackersArray);
-            setPathBounds(bounds);
+            setViewState({
+              ...viewState,
+              longitude: bounds.center[0],
+              latitude: bounds.center[1],
+              zoom: bounds.zoom,
+            });
+
             setIsLoading(false);
             setSourcesReady(false);
+
+            // Compute derived revenue from CSV if present (max cumulative total_revenue)
+            try {
+              let maxRevenue = 0;
+              for (const row of rawRows) {
+                const val = parseFloat(row.total_revenue ?? row.totalRevenue ?? '');
+                if (Number.isFinite(val)) maxRevenue = Math.max(maxRevenue, val);
+              }
+              setDerivedRevenue(Number.isFinite(maxRevenue) ? maxRevenue : 0);
+            } catch {}
+
+            // Compute runner utilization % from coordinates (moving time / total shift time)
+            try {
+              const runnerTracks = trackersArray.filter(e => (e.type || '').toLowerCase() === 'runner').map(e => e.coordinates);
+              let totalShiftSeconds = 0;
+              let movingSeconds = 0;
+              const minMoveMeters = 2; // threshold to count as moving over 60s sample
+              for (const coords of runnerTracks) {
+                if (!coords || coords.length < 2) continue;
+                const startTs = coords[0].timestamp;
+                const endTs = coords[coords.length - 1].timestamp;
+                if (Number.isFinite(startTs) && Number.isFinite(endTs) && endTs > startTs) {
+                  totalShiftSeconds += (endTs - startTs);
+                }
+                for (let i = 0; i < coords.length - 1; i++) {
+                  const p1 = coords[i];
+                  const p2 = coords[i + 1];
+                  const timeDiff = Math.max(0, (p2.timestamp - p1.timestamp));
+                  if (timeDiff <= 0) continue;
+                  // Reuse velocity calc to estimate distance moved
+                  const v = calculateVelocity(p1 as any, p2 as any); // m/s
+                  const distance = v * timeDiff; // meters
+                  if (distance >= minMoveMeters) movingSeconds += timeDiff;
+                }
+              }
+              const util = totalShiftSeconds > 0 ? (movingSeconds / totalShiftSeconds) * 100 : 0;
+              setDerivedUtilPct(util);
+            } catch {}
           },
           error: () => setIsLoading(false)
         });
@@ -644,14 +687,16 @@ export default function AnimationView() {
       }
     };
     loadCoordinates();
-  }, [config]);
+  }, [config, selectedSim?.filename]);
 
   // Load simulation metrics
   useEffect(() => {
     const loadMetrics = async () => {
       try {
         const cacheBuster = `?t=${Date.now()}`;
-        const response = await fetch(`${config.data.coordinatesDir}/simulation_metrics.json${cacheBuster}`);
+        const baseDir = (config as any)?.data?.coordinatesDir || DEFAULT_CONFIG.data.coordinatesDir;
+        const metricsFile = selectedSim?.metricsFilename || 'simulation_metrics.json';
+        const response = await fetch(`${baseDir}/${metricsFile}${cacheBuster}`);
         if (!response.ok) {
           console.log('No simulation metrics found, using defaults');
           return;
@@ -682,7 +727,25 @@ export default function AnimationView() {
     if (config.data?.coordinatesDir) {
       loadMetrics();
     }
-  }, [config]);
+  }, [config, selectedSim?.metricsFilename]);
+
+  // Merge in derived fallbacks when available
+  useEffect(() => {
+    if (!hasRunners) return;
+    if (derivedRevenue == null && derivedUtilPct == null) return;
+    setDeliveryMetrics((prev) => {
+      const dm: any = { ...(prev || {}) };
+      // Prefer existing revenue if provided and positive; otherwise use derived
+      const existingRevenue = Number(dm.revenue ?? 0);
+      if (!(Number.isFinite(existingRevenue) && existingRevenue > 0) && Number.isFinite(derivedRevenue)) {
+        dm.revenue = derivedRevenue ?? 0;
+      }
+      if (Number.isFinite(derivedUtilPct)) {
+        dm.runnerUtilizationPct = derivedUtilPct;
+      }
+      return dm as DeliveryMetrics;
+    });
+  }, [derivedRevenue, derivedUtilPct, hasRunners]);
 
   useEffect(() => {
     if (!styleReady || isLoading || trackersData.length === 0 || sourcesInitializedRef.current) return;
@@ -714,17 +777,14 @@ export default function AnimationView() {
       let elapsedMinutes: number;
       
       if (isSliderControlled) {
-        // Use slider time when controlled by user
-        elapsedMinutes = sliderTime;
-        elapsed = sliderTime * 60; // convert to seconds
+        elapsedMinutes = timelineMinutes;
+        elapsed = timelineMinutes * 60;
       } else {
         // Normal automatic animation with offset for smooth transitions
         const currentTime = Date.now();
         const realElapsed = (currentTime - animationStartTimeRef.current) * speedRef.current / 1000; // seconds
-        elapsedMinutes = (realElapsed + animationOffsetRef.current) / 60; // convert to minutes
-        
-        // Update slider position during automatic playback
-        setSliderTime(elapsedMinutes);
+        elapsedMinutes = (realElapsed + animationOffsetRef.current) / 60;
+        setTimelineMinutes(elapsedMinutes);
       }
       
       const map = mapRef.current?.getMap?.();
@@ -745,7 +805,7 @@ export default function AnimationView() {
         if (position) {
           features.push({
             type: 'Feature',
-            properties: { id: tracker.name, color: tracker.color, type: tracker.type },
+            properties: { id: tracker.name, color: position.color || tracker.color, type: tracker.type },
             geometry: { type: 'Point', coordinates: [position.longitude, position.latitude] }
           });
         }
@@ -759,9 +819,8 @@ export default function AnimationView() {
       
       // Update the displayed timestamp only every few seconds to prevent constant rerenders
       const now = Date.now();
-      if (now - lastTimestampUpdate > 2000) { // Update every 2 seconds instead of every frame
-        // Display actual clock time based on the current slider position - use same calculation as clock update
-        const absoluteSeconds = (originalMinTimestamp || 0) + (sliderTime * 60);
+      if (now - lastTimestampUpdate > 2000) {
+        const absoluteSeconds = (baselineTimestampSeconds || 0) + (timelineMinutes * 60);
         const newClock = secondsSince7amToClock(absoluteSeconds);
         setDisplayedTimestamp(newClock);
         lastTimestampUpdate = now;
@@ -787,46 +846,40 @@ export default function AnimationView() {
         cancelAnimationFrame(animationId);
       }
     };
-  }, [isLoading, trackersData, currentEasing, originalMinTimestamp, isSliderControlled, sliderTime]);
+  }, [isLoading, trackersData, currentEasing, baselineTimestampSeconds, isSliderControlled, timelineMinutes]);
 
   // Update clock display immediately when slider changes
   useEffect(() => {
-    if (originalMinTimestamp !== 0) {
-      // Calculate time consistently: slider time is in minutes, convert to seconds and add to original timestamp
-      const absoluteSeconds = originalMinTimestamp + (sliderTime * 60);
+    if (baselineTimestampSeconds !== 0) {
+      const absoluteSeconds = baselineTimestampSeconds + (timelineMinutes * 60);
       const newClock = secondsSince7amToClock(absoluteSeconds);
       setDisplayedTimestamp(newClock);
-      
-      // Debug logging to understand time calculations
-      console.log('Time Debug:', {
-        sliderTime,
-        sliderTimeMinutes: sliderTime,
-        sliderTimeSeconds: sliderTime * 60,
-        originalMinTimestamp,
-        absoluteSeconds,
-        newClock,
-        expectedTime: `${Math.floor(sliderTime / 60)}:${Math.floor(sliderTime % 60).toString().padStart(2, '0')}`
-      });
     }
-  }, [sliderTime, originalMinTimestamp]);
+  }, [timelineMinutes, baselineTimestampSeconds]);
+
+  // When user finishes scrubbing, align animation clocks to the chosen time
+  useEffect(() => {
+    if (!isSliderControlled) {
+      // Align offset to current slider position (in seconds) and restart wall clock
+      animationOffsetRef.current = timelineMinutes * 60;
+      animationStartTimeRef.current = Date.now();
+    }
+  }, [isSliderControlled]);
 
   // Cleanup terrain when component unmounts or map style changes
   useEffect(() => {
     return () => {
       const map = mapRef.current?.getMap?.();
       if (map) {
+        // Be extra defensive here; Mapbox GL can throw if style is mid-transition
         try {
-          // Remove terrain first to avoid the undefined source error
-          if (map.getTerrain()) {
-            map.setTerrain(null);
+          if (typeof (map as any).getTerrain === 'function') {
+            const terrain = (map as any).getTerrain();
+            if (terrain && typeof (map as any).setTerrain === 'function') {
+              try { (map as any).setTerrain(null); } catch {}
+            }
           }
-          // Then remove the source if it exists
-          if (map.getSource('mapbox-dem')) {
-            map.removeSource('mapbox-dem');
-          }
-        } catch (error) {
-          console.warn('Error during terrain cleanup:', error);
-        }
+        } catch {}
       }
     };
   }, [currentMapStyle]); // Also cleanup when map style changes
@@ -834,10 +887,10 @@ export default function AnimationView() {
 
 
   const getInitialViewState = () => {
-    if (isLoading || (pathBounds.center[0] === 0 && pathBounds.center[1] === 0)) {
+    if (isLoading) {
       return { latitude: 0, longitude: 0, zoom: 2 };
     }
-    return { latitude: pathBounds.center[1], longitude: pathBounds.center[0], zoom: pathBounds.zoom };
+    return viewState;
   };
 
   if (isLoading) return (<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontSize: 18, color: '#666' }}>Loading tracker coordinates...</div>);
@@ -855,32 +908,7 @@ export default function AnimationView() {
       {/* Animation Control Panel */}
       <div style={{ position: 'absolute', top: 56, left: 10, zIndex: 11, background: 'rgba(255,255,255,0.95)', padding: '12px', borderRadius: 6, boxShadow: '0 2px 4px rgba(0,0,0,0.2)', minWidth: 280 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {/* Timer Slider */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <label htmlFor="timer-slider" style={{ fontSize: 12, color: '#333', minWidth: 70, fontWeight: 600 }}>Timer</label>
-              <input
-                id="timer-slider"
-                type="range"
-                min="0"
-                max={sliderMaxTime}
-                step="0.1"
-                value={sliderTime}
-                onChange={(e) => {
-                  const newTime = parseFloat(e.target.value);
-                  setSliderTime(newTime);
-                  // When timer changes, update animation timing for smooth transition
-                  animationOffsetRef.current = newTime * 60; // convert to seconds
-                  animationStartTimeRef.current = Date.now();
-                  setIsSliderControlled(false); // Auto-play when timer is changed
-                }}
-                style={{ flex: 1 }}
-              />
-              <span style={{ fontSize: 11, color: '#666', minWidth: 30 }}>
-                {secondsSince7amToClock(originalMinTimestamp + (sliderTime * 60))}
-              </span>
-            </div>
-          </div>
+          {/* Timer control is moved to TopBarControls via Radix Slider */}
           
           {/* Speed Control */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -897,7 +925,7 @@ export default function AnimationView() {
                 speedRef.current = newSpeed;
                 setCurrentSpeed(newSpeed);
                 // When speed changes, maintain current position for smooth transition
-                animationOffsetRef.current = sliderTime * 60; // convert to seconds
+                animationOffsetRef.current = timelineMinutes * 60; // convert to seconds
                 animationStartTimeRef.current = Date.now();
                 setIsSliderControlled(false); // Auto-play when speed is changed
               }}
@@ -927,25 +955,13 @@ export default function AnimationView() {
       <Map
         ref={mapRef}
         initialViewState={getInitialViewState()}
+        viewState={viewState as any}
+        onMove={evt => setViewState(evt.viewState)}
         mapStyle={config.mapStyles[currentMapStyle]?.url || config.mapStyles[config.animation.defaultMapStyle]?.url}
         mapboxAccessToken={MAPBOX_TOKEN}
         reuseMaps
         onLoad={(e) => {
-          // Ensure DEM source exists before enabling terrain
-          try {
-            const map = e.target as any;
-            if (!map.getSource('mapbox-dem')) {
-              map.addSource('mapbox-dem', {
-                type: 'raster-dem',
-                url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
-                tileSize: 512,
-                maxzoom: 14
-              });
-            }
-            map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
-          } catch (error) {
-            console.warn('Failed to set up terrain:', error);
-          }
+          // Terrain disabled to avoid Mapbox GL removeSource/updateTerrain crash during unmount/style switches
           styleReadyRef.current = true;
           setStyleReady(true);
         }}
@@ -982,8 +998,7 @@ export default function AnimationView() {
       <ControlPanel 
         trackersData={trackersData}
         isLoading={isLoading}
-        center={pathBounds.center}
-        timestamp={displayedTimestamp}
+        center={[viewState.longitude, viewState.latitude]}
         deliveryMetrics={deliveryMetrics}
         bevCartMetrics={bevCartMetrics}
         hasRunners={hasRunners}

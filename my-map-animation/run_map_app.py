@@ -6,6 +6,8 @@ This script scans for simulation directories and loads coordinate files
 for map visualization with hierarchical selection.
 """
 
+from __future__ import annotations
+
 import os
 import glob
 import shutil
@@ -16,6 +18,12 @@ import re
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 from datetime import datetime
+try:
+    # Make stdout UTF-8 capable on Windows PowerShell to avoid emoji crash
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[attr-defined]
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[attr-defined]
+except Exception:
+    pass
 
 # --- Start of new path configuration ---
 # Make paths robust to script's location and execution directory
@@ -79,8 +87,8 @@ def _parse_simulation_folder_name(folder_name: str) -> Dict[str, str]:
                 if bev_match:
                     result['bev_carts'] = bev_match.group(1)
                 
-                # Extract runners
-                runner_match = re.search(r'(\d+)runners?', config_str, re.IGNORECASE)
+                # Extract runners (handle both "1runners" and "1_runners")
+                runner_match = re.search(r'(\d+)_?runners?', config_str, re.IGNORECASE)
                 if runner_match:
                     result['runners'] = runner_match.group(1)
                 
@@ -183,6 +191,90 @@ def _create_group_name(parsed: Dict[str, str]) -> str:
         return "Other Simulations"
 
 
+def _sanitize_and_copy_coordinates_csv(source_path: str, target_path: str) -> None:
+    """Copy coordinates.csv while removing leading runner clubhouse idle points and de-duping id+timestamp.
+
+    Rules:
+    - For each runner stream (type == 'runner' or id startswith 'runner'), drop rows where hole == 'clubhouse'
+      that occur strictly before the first non-clubhouse row for that runner.
+    - If multiple rows share the same (id, timestamp), prefer the non-clubhouse row; otherwise keep the first.
+    - Preserve original column order from the source file.
+    """
+    import csv as _csv
+
+    with open(source_path, 'r', newline='', encoding='utf-8') as fsrc:
+        reader = _csv.DictReader(fsrc)
+        fieldnames = reader.fieldnames or []
+        rows = list(reader)
+
+    # Determine first movement timestamp per runner id
+    first_move_ts_by_id: Dict[str, Optional[int]] = {}
+    for r in rows:
+        rid = str(r.get('id', '') or '')
+        rtype = (r.get('type') or '').strip().lower()
+        if rtype != 'runner' and not rid.startswith('runner'):
+            continue
+        hole = (r.get('hole') or '').strip().lower()
+        try:
+            ts = int(float(r.get('timestamp') or 0))
+        except Exception:
+            continue
+        if hole != 'clubhouse':
+            prev = first_move_ts_by_id.get(rid)
+            if prev is None or ts < prev:
+                first_move_ts_by_id[rid] = ts
+
+    # Filter out leading clubhouse rows
+    filtered: List[Dict[str, str]] = []
+    for r in rows:
+        rid = str(r.get('id', '') or '')
+        rtype = (r.get('type') or '').strip().lower()
+        hole = (r.get('hole') or '').strip().lower()
+        try:
+            ts = int(float(r.get('timestamp') or 0))
+        except Exception:
+            filtered.append(r)
+            continue
+        first_move_ts = first_move_ts_by_id.get(rid)
+        if (rtype == 'runner' or rid.startswith('runner')) and hole == 'clubhouse' and first_move_ts is not None and ts < int(first_move_ts):
+            # Skip leading clubhouse idle point
+            continue
+        filtered.append(r)
+
+    # De-duplicate by (id, timestamp), preferring non-clubhouse
+    chosen: Dict[Tuple[str, int], Dict[str, str]] = {}
+    for r in filtered:
+        rid = str(r.get('id', '') or '')
+        try:
+            ts = int(float(r.get('timestamp') or 0))
+        except Exception:
+            # If timestamp is bad, just keep it as-is by using a unique fake key
+            filtered.append(r)
+            continue
+        key = (rid, ts)
+        hole = (r.get('hole') or '').strip().lower()
+        if key not in chosen:
+            chosen[key] = r
+        else:
+            # Prefer non-clubhouse
+            prev_hole = (chosen[key].get('hole') or '').strip().lower()
+            if prev_hole == 'clubhouse' and hole != 'clubhouse':
+                chosen[key] = r
+
+    deduped = list(chosen.values())
+    # Sort stable by id then timestamp
+    try:
+        deduped.sort(key=lambda d: (str(d.get('id', '')), int(float(d.get('timestamp') or 0))))
+    except Exception:
+        pass
+
+    # Write out
+    with open(target_path, 'w', newline='', encoding='utf-8') as fdst:
+        writer = _csv.DictWriter(fdst, fieldnames=fieldnames, extrasaction='ignore')
+        writer.writeheader()
+        for r in deduped:
+            writer.writerow(r)
+
 def find_all_simulations() -> Dict[str, List[Tuple[str, str, str]]]:
     """
     Recursively scan for all coordinate CSV files under the outputs directory.
@@ -192,10 +284,13 @@ def find_all_simulations() -> Dict[str, List[Tuple[str, str, str]]]:
     """
     simulations: Dict[str, List[Tuple[str, str, str]]] = {}
 
-    # Add local file if it exists
+    # Add local file if it exists AND there are no outputs at all
+    # This avoids polluting dropdowns with a stale local file when real outputs exist
     if os.path.exists(LOCAL_CSV_FILE):
-        simulations.setdefault("Local", []).append(("coordinates", "GPS Coordinates", LOCAL_CSV_FILE))
-        print(f"Found local simulation file: {LOCAL_CSV_FILE}")
+        any_outputs = any(True for _ in Path(SIM_BASE_DIR).rglob('coordinates.csv')) if os.path.exists(SIM_BASE_DIR) else False
+        if not any_outputs:
+            simulations.setdefault("Local", []).append(("coordinates", "GPS Coordinates", LOCAL_CSV_FILE))
+            print(f"Found local simulation file: {LOCAL_CSV_FILE}")
 
     base_dir = SIM_BASE_DIR
     if not os.path.exists(base_dir):
@@ -295,6 +390,191 @@ def find_all_simulations() -> Dict[str, List[Tuple[str, str, str]]]:
 
 
 
+def _derive_combo_key_from_path(csv_path: str) -> Optional[str]:
+    """Derive a (scenario, orders, runners) grouping key from a run CSV path.
+
+    Supports both timestamped folders (e.g., 20250823_..._delivery_runner_2_runners_typical_weekday_orders_028/run_01/coordinates.csv)
+    and experiment folders (e.g., outputs/experiments/<exp>/typical_weekday/orders_028/runners_2/run_01/coordinates.csv).
+    """
+    try:
+        p = Path(csv_path)
+        # Expect .../run_xx/coordinates.csv → start from run folder
+        run_dir = p.parent
+        runners_dir = run_dir.parent
+        orders_dir = runners_dir.parent if runners_dir.name.startswith("runners_") else run_dir.parent
+        scenario_dir = orders_dir.parent
+
+        # Pattern A: experiments layout
+        if runners_dir.name.startswith("runners_") and orders_dir.name.startswith("orders_"):
+            try:
+                n_runners = int(runners_dir.name.split("_")[1])
+            except Exception:
+                n_runners = None
+            try:
+                orders_val = int(orders_dir.name.split("_")[1])
+            except Exception:
+                orders_val = None
+            scenario = scenario_dir.name
+            if n_runners and orders_val:
+                return f"{scenario}|orders_{orders_val:03d}|runners_{n_runners}"
+
+        # Pattern B: timestamped folder with encoded tokens
+        # Walk upward to find a segment that contains both 'runners' and (optionally) 'orders'
+        for ancestor in p.parents:
+            name = ancestor.name
+            if ("runners" in name) and ("delivery_runner" in name or "runners_" in name):
+                # Extract scenario best-effort
+                scenario = None
+                # Try to detect 'orders_XXX'
+                orders_val = None
+                m_orders = re.search(r"orders[_-]?([0-9]{2,3})", name, re.IGNORECASE)
+                if m_orders:
+                    try:
+                        orders_val = int(m_orders.group(1))
+                    except Exception:
+                        orders_val = None
+                m_runners = re.search(r"runners[_-]?([0-9]+)", name, re.IGNORECASE)
+                n_runners = int(m_runners.group(1)) if m_runners else None
+                if n_runners and orders_val:
+                    # Use next directory up as scenario hint when possible
+                    scenario = ancestor.parent.name
+                    return f"{scenario}|orders_{orders_val:03d}|runners_{n_runners}"
+        return None
+    except Exception:
+        return None
+
+
+def _select_representative_runs(all_items: List[Tuple[str, str, str]]) -> Dict[str, str]:
+    """From a flat list of (sim_id, display_name, csv_path), select one representative csv per combo key.
+
+    Strategy: For each combo key, read per-run metrics in the same run folder, compute the mean across runs
+    for core delivery metrics, then pick the run whose metrics vector is closest (z-score distance) to the mean.
+    Returns a mapping from csv_path → 'selected' (value is the same path for quick lookup).
+    """
+    # Group candidates by combo key derived from path
+    groups: Dict[str, List[Tuple[str, str, str]]] = {}
+    for sim_id, display_name, csv_path in all_items:
+        key = _derive_combo_key_from_path(csv_path)
+        if key:
+            groups.setdefault(key, []).append((sim_id, display_name, csv_path))
+
+    selected: Dict[str, str] = {}
+
+    def load_metrics_for_run(run_dir: Path) -> Dict[str, float]:
+        # Prefer delivery_runner_metrics_run_XX.json if present, else simulation_metrics.json
+        metrics: Dict[str, float] = {}
+        try:
+            # Try to find a run-specific metrics file
+            candidates = [
+                *[f for f in os.listdir(run_dir) if f.startswith("delivery_runner_metrics_run_") and f.endswith(".json")],
+            ]
+            chosen = None
+            if candidates:
+                # Prefer the one matching the run folder name when possible
+                run_name = run_dir.name.lower()
+                chosen = None
+                for c in candidates:
+                    if run_name in c.lower():
+                        chosen = c
+                        break
+                if not chosen:
+                    chosen = sorted(candidates)[0]
+            elif (run_dir / "simulation_metrics.json").exists():
+                chosen = "simulation_metrics.json"
+            if not chosen:
+                return metrics
+            with open(run_dir / chosen, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return metrics
+
+        # Normalize possible schemas
+        try:
+            # delivery_runner_metrics_run schema
+            on_time = data.get("on_time_rate")
+            failed = data.get("failed_rate")
+            p90 = data.get("delivery_cycle_time_p90")
+            oph = data.get("orders_per_runner_hour")
+            if on_time is None or p90 is None or oph is None:
+                # simulation_metrics.json schema under deliveryMetrics
+                dm = data.get("deliveryMetrics") or {}
+                on_time = dm.get("onTimeRate") if dm is not None else None
+                # Some schemas use percentage 0-100
+                if isinstance(on_time, (int, float)) and on_time > 1.5:
+                    on_time = float(on_time) / 100.0
+                p90 = dm.get("deliveryCycleTimeP90") if dm is not None else None
+                oph = dm.get("ordersPerRunnerHour") if dm is not None else None
+                # failed rate best-effort
+                failed = dm.get("failedRate") if isinstance(dm, dict) else data.get("failed_rate")
+                if isinstance(failed, (int, float)) and failed > 1.5:
+                    failed = float(failed) / 100.0
+            # Build numeric-only dict
+            for k, v in {
+                "on_time": on_time,
+                "failed": failed,
+                "p90": p90,
+                "oph": oph,
+            }.items():
+                if isinstance(v, (int, float)) and float("inf") != v and float("-inf") != v:
+                    metrics[k] = float(v)
+        except Exception:
+            pass
+        return metrics
+
+    for key, items in groups.items():
+        # Detect unique run folders under the combo
+        per_run: List[Tuple[str, Path]] = []  # (csv_path, run_dir)
+        for _, __, csv_path in items:
+            run_dir = Path(csv_path).parent
+            per_run.append((csv_path, run_dir))
+
+        if len(per_run) <= 1:
+            # Single run, select it
+            selected[per_run[0][0]] = per_run[0][0]
+            continue
+
+        # Load metrics for each run
+        run_metrics: List[Tuple[str, Dict[str, float]]] = []
+        for csv_path, run_dir in per_run:
+            m = load_metrics_for_run(run_dir)
+            run_metrics.append((csv_path, m))
+
+        # Compute mean across observed metrics
+        keys = ["on_time", "failed", "p90", "oph"]
+        means: Dict[str, float] = {}
+        stds: Dict[str, float] = {}
+        for k in keys:
+            vals = [m.get(k) for _, m in run_metrics if isinstance(m.get(k), (int, float))]
+            if vals:
+                mu = sum(vals) / len(vals)
+                means[k] = mu
+                if len(vals) >= 2:
+                    var = sum((x - mu) ** 2 for x in vals) / (len(vals) - 1)
+                    stds[k] = (var ** 0.5) if var > 0 else 1.0
+                else:
+                    stds[k] = 1.0
+            else:
+                means[k] = 0.0
+                stds[k] = 1.0
+
+        # Pick run with minimal z-score distance to mean
+        best_csv = per_run[0][0]
+        best_dist = float("inf")
+        for csv_path, m in run_metrics:
+            dist = 0.0
+            for k in keys:
+                v = m.get(k)
+                if isinstance(v, (int, float)):
+                    z = (v - means[k]) / (stds.get(k) or 1.0)
+                    dist += z * z
+            if dist < best_dist:
+                best_dist = dist
+                best_csv = csv_path
+        selected[best_csv] = best_csv
+
+    return selected
+
+
 def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, str]]], preferred_default_id: Optional[str] = None) -> bool:
     """
     Copy all coordinate files to both public directories and create hierarchical manifests.
@@ -309,9 +589,27 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
         # Create coordinates directories in both locations
         coordinates_dirs = []
         for public_dir in PUBLIC_DIRS:
+            # Proactively clean top-level public artifacts that may become stale
+            try:
+                stale_files = [
+                    os.path.join(public_dir, 'coordinates.csv'),
+                    os.path.join(public_dir, 'hole_delivery_times.geojson'),
+                    os.path.join(public_dir, 'hole_delivery_times_debug.geojson'),
+                    os.path.join(public_dir, 'simulation_metrics.json'),
+                ]
+                for f in stale_files:
+                    if os.path.exists(f):
+                        try:
+                            os.remove(f)
+                            print(f"🧹 Removed stale file: {f}")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             coordinates_dir = os.path.join(public_dir, COORDINATES_DIR)
             coordinates_dirs.append(coordinates_dir)
-            
+
             # Fully clear out existing coordinate directory first (including manifest and any stale files)
             if os.path.exists(coordinates_dir):
                 try:
@@ -320,10 +618,10 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                 except Exception as e:
                     print(f"Error clearing coordinates directory {coordinates_dir}: {e}")
                     return False
-            
+
             os.makedirs(coordinates_dir, exist_ok=True)
         
-        # Create flattened manifest for the React app
+        # Create flattened manifest for the React app (will be enriched per entry)
         manifest = {
             "simulations": [],
             "defaultSimulation": None
@@ -333,28 +631,82 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
         total_size = 0
         id_to_mtime: Dict[str, float] = {}
         
+        def _extract_orders_from_metrics(metrics_path: str) -> int | None:
+            try:
+                with open(metrics_path, "r", encoding="utf-8") as f:
+                    import json as _json
+                    data = _json.load(f)
+                # Prefer deliveryMetrics.totalOrders if present
+                dm = data.get("deliveryMetrics") or {}
+                if isinstance(dm, dict):
+                    orders = dm.get("totalOrders") or dm.get("orderCount")
+                    if isinstance(orders, (int, float)):
+                        return int(orders)
+                # Fallback tolerant keys at root
+                for key in ("totalOrders", "orderCount"):
+                    if key in data and isinstance(data[key], (int, float)):
+                        return int(data[key])
+            except Exception:
+                return None
+            return None
+
+        # Build a flat list of all candidates to allow representative selection
+        flat_items: List[Tuple[str, str, str]] = []
+        for gname, items in all_simulations.items():
+            for sim_id, disp, src in items:
+                flat_items.append((sim_id, disp, src))
+
+        # Determine representative runs per (scenario, orders, runners)
+        selected_csvs = _select_representative_runs(flat_items)
+        selected_mode_active = len(selected_csvs) > 0
+
         for group_name, file_options in all_simulations.items():
             for scenario_id, display_name, source_path in file_options:
+                # If representative selection is active and this csv is not selected for its combo, skip it
+                if selected_mode_active:
+                    key = _derive_combo_key_from_path(source_path)
+                    if key and source_path not in selected_csvs:
+                        # Skip non-representative runs for this combo
+                        continue
+                # Skip entries whose source CSV no longer exists
+                if not os.path.exists(source_path):
+                    print(f"⚠️  Skipping missing source CSV: {source_path}")
+                    continue
                 # Create target filename
                 target_filename = f"{scenario_id}.csv"
                 
                 # Copy the file to all coordinates directories
                 all_copies_successful = True
+                sanitized_mode = (os.path.basename(source_path) == 'coordinates.csv')
                 for coordinates_dir in coordinates_dirs:
                     target_path = os.path.join(coordinates_dir, target_filename)
                     
-                    # Copy the file
-                    shutil.copy2(source_path, target_path)
+                    # Copy the file (with optional sanitization for runner coordinates)
+                    try:
+                        if os.path.basename(source_path) == 'coordinates.csv':
+                            _sanitize_and_copy_coordinates_csv(source_path, target_path)
+                        else:
+                            shutil.copy2(source_path, target_path)
+                    except Exception as e:
+                        print(f"❌ Error copying {display_name} to {coordinates_dir}: {e}")
+                        all_copies_successful = False
+                        break
                     
                     # Verify the copy
                     if os.path.exists(target_path):
                         source_size = os.path.getsize(source_path)
                         target_size = os.path.getsize(target_path)
-                        
-                        if source_size != target_size:
-                            print(f"❌ Failed to verify copy for {display_name} to {coordinates_dir}")
-                            all_copies_successful = False
-                            break
+                        # For sanitized coordinates.csv, sizes may differ; ensure non-empty only
+                        if sanitized_mode:
+                            if target_size <= 0:
+                                print(f"❌ Sanitized copy appears empty for {display_name} in {coordinates_dir}")
+                                all_copies_successful = False
+                                break
+                        else:
+                            if source_size != target_size:
+                                print(f"❌ Failed to verify copy for {display_name} to {coordinates_dir}")
+                                all_copies_successful = False
+                                break
                     else:
                         print(f"❌ Failed to copy {display_name} to {coordinates_dir}")
                         all_copies_successful = False
@@ -363,20 +715,133 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                 if all_copies_successful:
                     copied_count += 1
                     total_size += source_size
-                    
-                    # Add to flattened simulations list (only once)
+                    # Discover accompanying artifacts in the source directory (heatmap, metrics, optional per-run hole geojson)
+                    csv_dir = os.path.dirname(source_path)
+                    found_heatmap_filename: str | None = None
+                    found_metrics_filename: str | None = None
+                    found_hole_geojson_filename: str | None = None
+                    orders_value: int | None = None
+
+                    # Heatmap files
+                    for fname in os.listdir(csv_dir):
+                        if fname in {"delivery_heatmap.png", "heatmap.png"}:
+                            heatmap_source = os.path.join(csv_dir, fname)
+                            for coordinates_dir in coordinates_dirs:
+                                heatmap_filename = f"{scenario_id}_{fname}"
+                                heatmap_target = os.path.join(coordinates_dir, heatmap_filename)
+                                try:
+                                    shutil.copy2(heatmap_source, heatmap_target)
+                                    found_heatmap_filename = heatmap_filename
+                                except Exception as e:
+                                    print(f"⚠️  Warning: Could not copy heatmap {fname}: {e}")
+                            break
+
+                    # Metrics files: prefer simulation_metrics.json, fallback to delivery_runner_metrics_run_XX.json
+                    metrics_candidates = []
+                    for fname in os.listdir(csv_dir):
+                        if fname == "simulation_metrics.json":
+                            metrics_candidates = [fname]
+                            break
+                        if fname.startswith("delivery_runner_metrics_run_") and fname.endswith(".json"):
+                            metrics_candidates.append(fname)
+                    if metrics_candidates:
+                        metrics_source = os.path.join(csv_dir, metrics_candidates[0])
+                        for coordinates_dir in coordinates_dirs:
+                            metrics_filename = f"{scenario_id}_metrics.json"
+                            metrics_target = os.path.join(coordinates_dir, metrics_filename)
+                            try:
+                                shutil.copy2(metrics_source, metrics_target)
+                                found_metrics_filename = metrics_filename
+                            except Exception as e:
+                                print(f"⚠️  Warning: Could not copy metrics {metrics_candidates[0]}: {e}")
+                        # Try to parse orders from metrics
+                        try:
+                            orders_value = _extract_orders_from_metrics(metrics_source)
+                        except Exception:
+                            orders_value = None
+
+                    # Optional per-run hole delivery geojson: generate if missing, then copy
+                    try:
+                        existing_geo = None
+                        for fname in os.listdir(csv_dir):
+                            if fname.startswith("hole_delivery_times") and fname.endswith(".geojson"):
+                                existing_geo = os.path.join(csv_dir, fname)
+                                break
+                        if not existing_geo:
+                            maybe = _generate_per_run_hole_geojson(Path(csv_dir))
+                            if maybe and os.path.exists(maybe):
+                                existing_geo = str(maybe)
+                        if existing_geo:
+                            for coordinates_dir in coordinates_dirs:
+                                hole_geojson_filename = f"hole_delivery_times_{scenario_id}.geojson"
+                                hole_geojson_target = os.path.join(coordinates_dir, hole_geojson_filename)
+                                try:
+                                    shutil.copy2(existing_geo, hole_geojson_target)
+                                    found_hole_geojson_filename = hole_geojson_filename
+                                except Exception as e:
+                                    print(f"⚠️  Warning: Could not copy hole geojson {os.path.basename(existing_geo)}: {e}")
+                    except Exception as e:
+                        print(f"⚠️  Warning: Hole geojson handling failed in {csv_dir}: {e}")
+
+                    # Add to flattened simulations list (only once), enriched with meta
                     file_info = get_file_info(source_path)
-                    manifest["simulations"].append({
+                    try:
+                        from datetime import datetime
+                        mtime = os.path.getmtime(source_path)
+                        id_to_mtime[scenario_id] = mtime
+                        last_modified_iso = datetime.fromtimestamp(mtime).isoformat()
+                    except Exception:
+                        last_modified_iso = None
+
+                    # Parse runner count and scenario for meta using multiple strategies
+                    path_parts = Path(source_path).parts
+                    sim_folder_name = None
+                    for i, part in enumerate(path_parts):
+                        if 'delivery_runner' in part and 'runners' in part:
+                            sim_folder_name = part
+                            break
+
+                    parsed = _parse_simulation_folder_name(sim_folder_name) if sim_folder_name else {}
+                    # Fallback: extract runners/orders from path segments like runners_N and orders_XXX
+                    extracted_runners: Optional[int] = None
+                    extracted_orders: Optional[int] = None
+                    for part in path_parts:
+                        m_r = re.match(r"runners[_-]?([0-9]+)", part, re.IGNORECASE)
+                        if m_r:
+                            try:
+                                extracted_runners = int(m_r.group(1))
+                            except Exception:
+                                pass
+                        m_o = re.match(r"orders[_-]?([0-9]{2,3})", part, re.IGNORECASE)
+                        if m_o:
+                            try:
+                                extracted_orders = int(m_o.group(1))
+                            except Exception:
+                                pass
+                    meta = {
+                        "runners": (int(parsed.get("runners", "0") or 0) if isinstance(parsed, dict) else None) or extracted_runners,
+                        "bevCarts": int(parsed.get("bev_carts", "0") or 0) if isinstance(parsed, dict) else None,
+                        "golfers": int(parsed.get("golfers", "0") or 0) if isinstance(parsed, dict) else None,
+                        "scenario": parsed.get("scenario") if isinstance(parsed, dict) else None,
+                        "orders": (int(orders_value) if isinstance(orders_value, (int, float)) else None) or extracted_orders,
+                        "lastModified": last_modified_iso,
+                    }
+
+                    entry = {
                         "id": scenario_id,
                         "name": f"{group_name}: {display_name}",
                         "filename": target_filename,
-                        "description": file_info
-                    })
-                    try:
-                        id_to_mtime[scenario_id] = os.path.getmtime(source_path)
-                    except Exception:
-                        pass
-                    
+                        "description": file_info,
+                        "meta": {k: v for k, v in meta.items() if v is not None}
+                    }
+                    if found_heatmap_filename:
+                        entry["heatmapFilename"] = found_heatmap_filename
+                    if found_metrics_filename:
+                        entry["metricsFilename"] = found_metrics_filename
+                    if found_hole_geojson_filename:
+                        entry["holeDeliveryGeojson"] = found_hole_geojson_filename
+
+                    manifest["simulations"].append(entry)
                     print(f"✅ {display_name} ({source_size//1024:,} KB) - copied to all locations")
                 else:
                     return False
@@ -431,8 +896,7 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                 except Exception as e:
                     print(f"⚠️  Warning: Could not copy simulation_metrics.json to {coordinates_dir}: {e}")
         
-        # Copy heatmap files from simulation outputs
-        copy_heatmaps_to_coordinates_dirs(all_simulations, coordinates_dirs)
+        # Heatmaps are copied per simulation above
         
         # Copy hole_delivery_times.geojson if it exists
         copy_hole_delivery_geojson(coordinates_dirs)
@@ -458,6 +922,71 @@ def get_file_info(file_path: str) -> str:
                 return "Empty file"
     except Exception as e:
         return f"Error reading file: {e}"
+
+def _generate_per_run_hole_geojson(run_dir: Path) -> Optional[Path]:
+    """Generate hole_delivery_times.geojson inside a run directory from its results.json.
+
+    Returns the path if created, else None. Best-effort, failures are swallowed with a warning.
+    """
+    try:
+        results_path = run_dir / "results.json"
+        if not results_path.exists():
+            return None
+        with results_path.open("r", encoding="utf-8") as f:
+            results = json.load(f)
+
+        # Resolve course directory from results metadata when available
+        course_dir = None
+        try:
+            course_dir = results.get("metadata", {}).get("course_dir")
+        except Exception:
+            course_dir = None
+        if not course_dir:
+            course_dir = str(PROJECT_ROOT / "courses" / "pinetree_country_club")
+
+        # Lazily import heavy deps only when needed
+        from golfsim.viz.heatmap_viz import (
+            load_geofenced_holes,
+            extract_order_data,
+            calculate_delivery_time_stats,
+        )
+        import geopandas as _gpd  # noqa: F401 - used to convert shapely to geojson
+
+        # Build feature collection (inline minimal builder to avoid cross-script import)
+        hole_polygons = load_geofenced_holes(course_dir)
+        order_data = extract_order_data(results)
+        hole_stats = calculate_delivery_time_stats(order_data)
+
+        import json as _json
+        import geopandas as gpd
+
+        features = []
+        for hole_num, geom in hole_polygons.items():
+            props = {"hole": int(hole_num)}
+            stats = hole_stats.get(hole_num)
+            if stats:
+                props.update({
+                    "has_data": True,
+                    "avg_time": float(stats.get("avg_time", 0.0)),
+                    "min_time": float(stats.get("min_time", 0.0)),
+                    "max_time": float(stats.get("max_time", 0.0)),
+                    "count": int(stats.get("count", 0)),
+                })
+            else:
+                props.update({"has_data": False})
+
+            gdf = gpd.GeoDataFrame({"geometry": [geom]}, crs="EPSG:4326")
+            feature_geom = _json.loads(gdf.to_json())["features"][0]["geometry"]
+            features.append({"type": "Feature", "properties": props, "geometry": feature_geom})
+
+        fc = {"type": "FeatureCollection", "features": features}
+        out_path = run_dir / "hole_delivery_times.geojson"
+        with out_path.open("w", encoding="utf-8") as f:
+            _json.dump(fc, f)
+        return out_path
+    except Exception as e:
+        print(f"⚠️  Warning: Failed to generate per-run hole geojson in {run_dir}: {e}")
+        return None
 
 def copy_heatmaps_to_coordinates_dirs(all_simulations: Dict[str, List[Tuple[str, str, str]]], coordinates_dirs: List[str]) -> None:
     """Copy heatmap files from simulation outputs to coordinates directories."""

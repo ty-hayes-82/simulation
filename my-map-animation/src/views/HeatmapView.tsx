@@ -4,6 +4,8 @@ import {Map, Source, Layer, Popup} from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import '../App.css';
 import { MAPBOX_TOKEN } from '../mapbox';
+import { useSimulation } from '../context/SimulationContext';
+import DeliveryMetricsGrid from '../components/DeliveryMetricsGrid';
 
 interface MapStyle {
   name: string;
@@ -21,6 +23,7 @@ interface DeliveryMetrics {
   deliveryCycleTimeP90: number;
   ordersPerRunnerHour: number;
   revenuePerRunnerHour: number;
+  runnerUtilizationPct?: number;
 }
 
 interface BevCartMetrics {
@@ -78,6 +81,7 @@ const Legend = ({ minTime, maxTime }: { minTime: number, maxTime: number }) => (
 );
 
 export default function HeatmapView() {
+  const { selectedSim, viewState, setViewState } = useSimulation();
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [currentMapStyle, setCurrentMapStyle] = useState<string>('outdoors');
   const [holesGeojson, setHolesGeojson] = useState<any | null>(null);
@@ -88,6 +92,9 @@ export default function HeatmapView() {
   const [bevCartMetrics, setBevCartMetrics] = useState<BevCartMetrics | null>(null);
   const [hasRunners, setHasRunners] = useState<boolean>(false);
   const [hasBevCart, setHasBevCart] = useState<boolean>(false);
+  // Derived fallbacks when not present in metrics JSON
+  const [derivedRevenue, setDerivedRevenue] = useState<number | null>(null);
+  const [derivedUtilPct, setDerivedUtilPct] = useState<number | null>(null);
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -122,7 +129,8 @@ export default function HeatmapView() {
       try {
         const cacheBuster = `?t=${Date.now()}`;
         const coordinatesDir = (config?.data?.coordinatesDir) || '/coordinates';
-        const response = await fetch(`${coordinatesDir}/simulation_metrics.json${cacheBuster}`);
+        const metricsFile = (selectedSim?.metricsFilename) || 'simulation_metrics.json';
+        const response = await fetch(`${coordinatesDir}/${metricsFile}${cacheBuster}`);
         if (!response.ok) {
           return;
         }
@@ -134,14 +142,18 @@ export default function HeatmapView() {
       } catch {}
     };
     loadMetrics();
-  }, [config]);
+  }, [config, selectedSim?.metricsFilename]);
 
   useEffect(() => {
     const loadHoles = async () => {
       const cacheBuster = `?t=${Date.now()}`;
-      const primaryPath = (process.env.REACT_APP_HOLES_PATH && process.env.REACT_APP_HOLES_PATH.trim().length > 0)
+      let primaryPath = (process.env.REACT_APP_HOLES_PATH && process.env.REACT_APP_HOLES_PATH.trim().length > 0)
         ? process.env.REACT_APP_HOLES_PATH
         : '/hole_delivery_times.geojson';
+      // If per-sim geojson exists, prefer it
+      if (selectedSim?.holeDeliveryGeojson) {
+        primaryPath = `/coordinates/${selectedSim.holeDeliveryGeojson}`;
+      }
       const fallbackPath = '/hole_delivery_times_debug.geojson';
       try {
         // Try primary first
@@ -176,7 +188,103 @@ export default function HeatmapView() {
       } catch {}
     };
     loadHoles();
-  }, []);
+  }, [selectedSim?.holeDeliveryGeojson, selectedSim?.id]);
+
+  // Also load CSV for derived metrics calculation (reuses AnimationView path conventions)
+  useEffect(() => {
+    const loadCsvForDerived = async () => {
+      try {
+        const coordinatesDir = (config?.data?.coordinatesDir) || '/coordinates';
+        const csvFile = selectedSim?.filename || 'coordinates.csv';
+        const csvResp = await fetch(`${coordinatesDir}/${csvFile}?t=${Date.now()}`);
+        if (!csvResp.ok) return;
+        const csvText = await csvResp.text();
+        const rows: any[] = [];
+        try {
+          const PapaAny: any = (window as any).Papa;
+          if (PapaAny && typeof PapaAny.parse === 'function') {
+            const result = PapaAny.parse(csvText, { header: true, skipEmptyLines: true });
+            rows.push(...(result.data || []));
+          }
+        } catch {}
+        // Fallback simplistic parser if Papa not on window
+        if (rows.length === 0) {
+          const lines = csvText.split(/\r?\n/).filter(Boolean);
+          const header = (lines.shift() || '').split(',');
+          for (const line of lines) {
+            const vals = line.split(',');
+            const obj: any = {};
+            header.forEach((h, i) => obj[h.trim()] = vals[i]);
+            rows.push(obj);
+          }
+        }
+        // Derived revenue: maximum cumulative total_revenue across rows
+        let maxRevenue = 0;
+        for (const row of rows) {
+          const val = parseFloat(row.total_revenue ?? row.totalRevenue ?? '');
+          if (Number.isFinite(val)) maxRevenue = Math.max(maxRevenue, val);
+        }
+        setDerivedRevenue(Number.isFinite(maxRevenue) ? maxRevenue : 0);
+
+        // Derived utilization from runner tracks
+        const grouped: Record<string, any[]> = {};
+        for (const r of rows) {
+          const id = String(r.id || '').trim();
+          if (!id) continue;
+          if (!grouped[id]) grouped[id] = [];
+          grouped[id].push(r);
+        }
+        const isRunner = (id: string, type: string) => (String(type || '').toLowerCase() === 'runner') || id.toLowerCase().includes('runner');
+        const toNum = (x: any) => parseFloat(x);
+        const toCoord = (r: any) => ({
+          latitude: toNum(r.latitude),
+          longitude: toNum(r.longitude),
+          timestamp: toNum(r.timestamp)
+        });
+        let totalShiftSeconds = 0;
+        let movingSeconds = 0;
+        for (const [id, arr] of Object.entries(grouped)) {
+          const type = arr[0]?.type;
+          if (!isRunner(id, type)) continue;
+          const coords = arr.map(toCoord).filter(c => Number.isFinite(c.latitude) && Number.isFinite(c.longitude) && Number.isFinite(c.timestamp)).sort((a, b) => a.timestamp - b.timestamp);
+          if (coords.length < 2) continue;
+          totalShiftSeconds += Math.max(0, coords[coords.length - 1].timestamp - coords[0].timestamp);
+          for (let i = 0; i < coords.length - 1; i++) {
+            const p1 = coords[i];
+            const p2 = coords[i + 1];
+            const timeDiff = Math.max(0, p2.timestamp - p1.timestamp);
+            if (timeDiff <= 0) continue;
+            const lat1 = p1.latitude * Math.PI / 180;
+            const lat2 = p2.latitude * Math.PI / 180;
+            const dLat = (p2.latitude - p1.latitude) * Math.PI / 180;
+            const dLng = (p2.longitude - p1.longitude) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distance = 6371000 * c;
+            if (distance >= 2) movingSeconds += timeDiff;
+          }
+        }
+        const util = totalShiftSeconds > 0 ? (movingSeconds / totalShiftSeconds) * 100 : 0;
+        setDerivedUtilPct(util);
+      } catch {}
+    };
+    loadCsvForDerived();
+  }, [config?.data?.coordinatesDir, selectedSim?.filename]);
+
+  // Merge derived values into displayed metrics
+  useEffect(() => {
+    if (!hasRunners) return;
+    if (derivedRevenue == null && derivedUtilPct == null) return;
+    setDeliveryMetrics((prev) => {
+      const dm: any = { ...(prev || {}) };
+      const existingRevenue = Number(dm.revenue ?? 0);
+      if (!(Number.isFinite(existingRevenue) && existingRevenue > 0) && Number.isFinite(derivedRevenue)) {
+        dm.revenue = derivedRevenue ?? 0;
+      }
+      if (Number.isFinite(derivedUtilPct)) dm.runnerUtilizationPct = derivedUtilPct;
+      return dm as DeliveryMetrics;
+    });
+  }, [derivedRevenue, derivedUtilPct, hasRunners]);
 
   return (
     <div style={{ width: '100vw', height: '100vh' }}>
@@ -195,7 +303,9 @@ export default function HeatmapView() {
         </select>
       </div>
       <Map
-        initialViewState={{ latitude: 34.0405, longitude: -84.5955, zoom: 14 }}
+        initialViewState={viewState}
+        viewState={viewState as any}
+        onMove={evt => setViewState(evt.viewState)}
         mapStyle={
           config.mapStyles?.[currentMapStyle]?.url
           || config.mapStyles?.[config.animation?.defaultMapStyle || 'outdoors']?.url
@@ -317,22 +427,7 @@ export default function HeatmapView() {
       <div style={{ position: 'absolute', top: 0, right: 0, maxWidth: 340, background: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.3)', padding: '12px 20px', margin: 20, fontSize: 12, lineHeight: 1.4, color: '#6b6b76', outline: 'none', borderRadius: 4 }}>
         {/* Delivery Runner Metrics */}
         {hasRunners && deliveryMetrics && (
-          <div style={{ marginBottom: 16 }}>
-            <h4 style={{ margin: '0 0 8px 0', color: '#333', fontSize: 14, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #e9ecef', paddingBottom: 4 }}>
-              Delivery Metrics
-            </h4>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 13 }}>
-              <div>Order Count: <strong>{(deliveryMetrics as any).totalOrders ?? deliveryMetrics.orderCount ?? 0}</strong></div>
-              <div>Revenue: <strong>${(deliveryMetrics.revenue ?? 0).toFixed(0)}</strong></div>
-              <div>Avg Order Time: <strong>{(deliveryMetrics.avgOrderTime ?? 0).toFixed(1)}m</strong></div>
-              <div>On-Time %: <strong>{((deliveryMetrics as any).onTimePercentage ?? deliveryMetrics.onTimeRate ?? 0).toFixed(1)}%</strong></div>
-              <div>Failed Orders: <strong>{(deliveryMetrics as any).failedDeliveries ?? deliveryMetrics.failedOrderCount ?? 0}</strong></div>
-              <div>Queue Wait: <strong>{(deliveryMetrics.queueWaitAvg ?? 0).toFixed(1)}m</strong></div>
-              <div>Cycle Time (P90): <strong>{(deliveryMetrics.deliveryCycleTimeP90 ?? 0).toFixed(1)}m</strong></div>
-              <div>Orders/Runner-Hr: <strong>{(deliveryMetrics.ordersPerRunnerHour ?? 0).toFixed(1)}</strong></div>
-              <div style={{ gridColumn: 'span 2' }}>Revenue/Runner-Hr: <strong>${(deliveryMetrics.revenuePerRunnerHour ?? 0).toFixed(0)}</strong></div>
-            </div>
-          </div>
+          <DeliveryMetricsGrid deliveryMetrics={deliveryMetrics} />
         )}
         {/* Bev-Cart Metrics */}
         {hasBevCart && bevCartMetrics && (
