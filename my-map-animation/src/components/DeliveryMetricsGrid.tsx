@@ -11,6 +11,9 @@ interface DeliveryMetrics {
   ordersPerRunnerHour: number;
   revenuePerRunnerHour: number;
   runnerUtilizationPct?: number;
+  lateOrders?: number;
+  totalRunnerDriveMinutes?: number;
+  totalRunnerShiftMinutes?: number;
   // Allow other properties from the simulation
   [key: string]: any;
 }
@@ -34,12 +37,17 @@ export default function DeliveryMetricsGrid({ deliveryMetrics }: DeliveryMetrics
   const onTimeCount = Number.isFinite(onTimePctDelivered)
     ? (onTimePctDelivered / 100) * successful
     : 0;
-  const late = Math.max(0, Math.floor(successful - onTimeCount));
+  // Use late orders from the data if available, otherwise calculate
+  const late = Number.isFinite(dm.lateOrders) 
+    ? Number(dm.lateOrders)
+    : Math.max(0, Math.floor(successful - onTimeCount));
   const onTimePctTotal = totalOrders > 0 ? (onTimeCount / totalOrders) * 100 : 0;
   const avgOrderTimeMin = Number(dm.avgOrderTime ?? 0);
   const queueWaitMin = Number(dm.queueWaitAvg ?? 0);
   const runnerUtilPct = dm.runnerUtilizationPct;
   const revenue = Number(dm.revenue ?? 0);
+  const totalRunnerDriveMin = Number(dm.totalRunnerDriveMinutes ?? 0);
+  const totalRunnerShiftMin = Number(dm.totalRunnerShiftMinutes ?? 0);
 
   return (
     <div style={{ marginBottom: 16 }}>
@@ -55,6 +63,8 @@ export default function DeliveryMetricsGrid({ deliveryMetrics }: DeliveryMetrics
         <span style={{ justifySelf: 'start' }}>Runner Utilization %:</span><strong style={{ justifySelf: 'end' }}>{Number.isFinite(runnerUtilPct) ? `${Number(runnerUtilPct).toFixed(0)}%` : '—'}</strong>
         <span style={{ justifySelf: 'start' }}>On-Time %:</span><strong style={{ justifySelf: 'end' }}>{onTimePctTotal.toFixed(0)}%</strong>
         <span style={{ justifySelf: 'start' }}>Total Revenue:</span><strong style={{ justifySelf: 'end' }}>${revenue.toFixed(0)}</strong>
+        <span style={{ justifySelf: 'start' }}>Runner Drive Minutes:</span><strong style={{ justifySelf: 'end' }}>{Math.round(totalRunnerDriveMin)}m</strong>
+        <span style={{ justifySelf: 'start' }}>Runner Shift Minutes:</span><strong style={{ justifySelf: 'end' }}>{Math.round(totalRunnerShiftMin)}m</strong>
       </div>
     </div>
   );

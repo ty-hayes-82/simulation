@@ -14,6 +14,13 @@ from typing import Dict, List, Tuple, Any
 from golfsim.simulation.phase_simulations import generate_golfer_track
 
 
+def ease_in_out_cubic(x: float) -> float:
+    """Cubic easing function for smooth acceleration and deceleration."""
+    if x < 0.5:
+        return 4 * x * x * x
+    return 1 - pow(-2 * x + 2, 3) / 2
+
+
 def generate_golfer_points_for_groups(course_dir: str, groups: List[Dict]) -> List[Dict]:
     """Generate golfer GPS points for all groups.
     
@@ -127,14 +134,20 @@ def interpolate_path_points(
     if last_tick < first_tick:
         return sampled
 
-    for t in range(first_tick, last_tick + 1, 60):
+    timestamps = list(range(first_tick, last_tick + 1, 60))
+    if int(start_ts + duration_s) not in timestamps:
+        timestamps.append(int(start_ts + duration_s))
+    
+    for t in sorted(timestamps):
         progress = (float(t) - float(start_ts)) / total_time_s
         if progress < 0.0:
             progress = 0.0
         elif progress > 1.0:
             progress = 1.0
 
-        pos = progress * float(segments)
+        eased_progress = ease_in_out_cubic(progress)
+
+        pos = eased_progress * float(segments)
         seg_idx = int(pos) if pos < segments else segments - 1
         local_frac = pos - float(seg_idx)
 

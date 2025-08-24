@@ -46,6 +46,7 @@ class DeliveryRunnerMetrics:
     runner_utilization_idle_pct: float
     distance_per_delivery_avg: float
     zone_service_times: Dict[str, float]
+    runner_drive_minutes: float
     
     # Simulation details and aggregates
     total_revenue: float
@@ -102,7 +103,7 @@ def calculate_delivery_runner_metrics(
     failed_rate = failed_orders_count / max(total_orders, 1)
     
     # Utilization
-    utilization_mix = _calculate_runner_utilization(activity_log, actual_active_hours)
+    utilization_mix = _calculate_runner_utilization(activity_log, actual_active_hours, delivery_stats)
     
     # Distance
     distances_m = [d.get("delivery_distance_m", 0) for d in delivery_stats]
@@ -134,6 +135,9 @@ def calculate_delivery_runner_metrics(
         runner_utilization_idle_pct=utilization_mix["idle"],
         distance_per_delivery_avg=distance_per_delivery_avg,
         zone_service_times=zone_service_times,
+        runner_drive_minutes=utilization_mix["total_driving_minutes"],
+        
+        # Simulation details and aggregates
         total_revenue=total_revenue,
         total_orders=total_orders,
         successful_orders=successful_orders,
@@ -280,75 +284,19 @@ def _calculate_on_time_rate(delivery_stats: List[Dict[str, Any]], sla_minutes: i
     return on_time_count / len(delivery_stats)
 
 
-def _calculate_runner_utilization(activity_log: List[Dict[str, Any]], service_hours: float) -> Dict[str, float]:
-    """Calculate runner utilization considering only driving as active time.
-
-    Driving time is counted as:
-    - Outbound: from 'delivery_start' to 'delivery_complete'
-    - Return: from 'returning' to 'arrived_clubhouse'
-
-    If a leg is incomplete at service end, count up to 'service_closed' (or last runner event).
-
-    Prep is handled by the kitchen and should not count toward runner utilization.
-    """
+def _calculate_runner_utilization(
+    activity_log: List[Dict[str, Any]], 
+    service_hours: float,
+    delivery_stats: List[Dict[str, Any]]
+) -> Dict[str, float]:
+    """Calculate runner utilization from total drive time in delivery stats."""
     service_seconds = max(0.0, float(service_hours) * 3600.0)
-
-    # Filter to runner-only events and sort chronologically
-    runner_events = [a for a in activity_log if a.get('runner_id')]
-    runner_events.sort(key=lambda x: x.get('timestamp_s', 0))
-
-    if not runner_events:
-        total_time = max(service_seconds, 1.0)
-        return {'driving': 0.0, 'prep': 0.0, 'idle': 100.0}
-
-    # Determine service window from runner events
-    service_start_time = None
-    service_end_time = None
-    for e in runner_events:
-        t = e.get('timestamp_s', 0)
-        et = e.get('activity_type', '')
-        if et == 'service_opened' and service_start_time is None:
-            service_start_time = t
-        if et == 'service_closed':
-            service_end_time = t
-    if service_start_time is None:
-        service_start_time = runner_events[0].get('timestamp_s', 0)
-    if service_end_time is None:
-        service_end_time = runner_events[-1].get('timestamp_s', service_start_time)
-
-    # Sum outbound and return driving segments
-    outbound_start: float | None = None
-    return_start: float | None = None
-    driving_time = 0.0
-
-    for e in runner_events:
-        et = e.get('activity_type', '')
-        ts = e.get('timestamp_s', 0)
-
-        # Outbound leg
-        if 'delivery_start' in et:
-            outbound_start = ts
-        elif 'delivery_complete' in et and outbound_start is not None:
-            driving_time += max(0.0, ts - outbound_start)
-            outbound_start = None
-
-        # Return leg
-        if 'returning' in et:
-            return_start = ts
-        elif 'arrived_clubhouse' in et and return_start is not None:
-            driving_time += max(0.0, ts - return_start)
-            return_start = None
-
-    # Handle incomplete legs at service end
-    if outbound_start is not None:
-        driving_time += max(0.0, service_end_time - outbound_start)
-        outbound_start = None
-    if return_start is not None:
-        driving_time += max(0.0, service_end_time - return_start)
-        return_start = None
-
+    
+    # Sum total drive time from delivery_stats for accuracy
+    total_driving_time_s = sum(d.get('total_drive_time_s', 0) for d in delivery_stats)
+    
     total_time = max(service_seconds, 1.0)
-    driving_pct = (driving_time / total_time) * 100.0
+    driving_pct = (total_driving_time_s / total_time) * 100.0
     driving_pct = max(0.0, min(100.0, driving_pct))
     idle_pct = 100.0 - driving_pct
 
@@ -356,6 +304,7 @@ def _calculate_runner_utilization(activity_log: List[Dict[str, Any]], service_ho
         'driving': driving_pct,
         'prep': 0.0,
         'idle': idle_pct,
+        'total_driving_minutes': total_driving_time_s / 60.0,
     }
 
 
@@ -520,6 +469,7 @@ def format_delivery_runner_metrics_report(metrics: DeliveryRunnerMetrics) -> str
 8. **Runner Utilization (Driving)**: {metrics.runner_utilization_driving_pct:.1f}% (Idle {metrics.runner_utilization_idle_pct:.1f}%)
 9. **Avg Order Time**: {metrics.delivery_cycle_time_avg:.1f} minutes
 10. **Distance per Delivery (Avg)**: {metrics.distance_per_delivery_avg:.0f} meters
+11. **Runner Drive Minutes**: {metrics.runner_drive_minutes:.1f} minutes
 
 ## Zone Service Times
 """

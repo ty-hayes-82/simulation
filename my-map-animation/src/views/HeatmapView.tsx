@@ -335,7 +335,12 @@ export default function HeatmapView() {
               id="holes-fill"
               type="fill"
               paint={{
-                'fill-color': [
+                'fill-color': holesMinTime >= holesMaxTime ? [
+                  'case',
+                  ['==', ['get', 'has_data'], true],
+                  '#ff0000',
+                  'rgba(0,0,0,0)'
+                ] : [
                   'case',
                   ['==', ['get', 'has_data'], true],
                   ['interpolate', ['linear'], ['get', 'avg_time'], holesMinTime, '#ffffff', holesMaxTime, '#ff0000'],

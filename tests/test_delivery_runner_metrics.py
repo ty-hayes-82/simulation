@@ -99,7 +99,12 @@ def test_calculate_runner_utilization():
         {'activity_type': 'queue_status', 'timestamp_s': service_seconds},  # Rest idle
     ]
 
-    utilization = _calculate_runner_utilization(activity_log, service_hours)
+    # Mock delivery stats with total drive time
+    delivery_stats = [
+        {'total_drive_time_s': 1800}  # 30 minutes total drive time
+    ]
+
+    utilization = _calculate_runner_utilization(activity_log, service_hours, delivery_stats)
 
     # Check that percentages are valid
     assert utilization['driving'] >= 0

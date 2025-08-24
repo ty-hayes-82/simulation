@@ -217,6 +217,28 @@ def generate_simulation_metrics_json(
         total_revenue = float(realized_orders) * float(revenue_per_order)
         orders_per_runner_hour = (float(successful) / float(service_hours)) if float(service_hours) > 0 else 0.0
         
+        # Calculate late orders
+        on_time_count = sum(1 for t in completion_times if t <= sla_minutes * 60) if completion_times else 0
+        late_orders = max(0, successful - on_time_count)
+        
+        # Calculate runner utilization and time metrics from activity log
+        runner_utilization_pct = 0.0
+        total_runner_drive_minutes = 0.0
+        total_runner_shift_minutes = service_hours * 60.0  # Total shift time in minutes
+        
+        if activity_log:
+            # Use existing utilization calculation logic
+            from golfsim.analysis.delivery_runner_metrics import _calculate_runner_utilization
+            utilization_metrics = _calculate_runner_utilization(activity_log, service_hours, delivery_stats)
+            
+            # Get driving percentage and convert to total utilization
+            driving_pct = utilization_metrics.get('driving', 0.0)
+            prep_pct = utilization_metrics.get('prep', 0.0)
+            runner_utilization_pct = driving_pct + prep_pct
+            
+            # Get total drive minutes directly from the utilization metrics
+            total_runner_drive_minutes = utilization_metrics.get('total_driving_minutes', 0.0)
+
         metrics["deliveryMetrics"] = {
             "totalOrders": len(orders),
             "successfulDeliveries": len(delivery_stats),
@@ -226,6 +248,11 @@ def generate_simulation_metrics_json(
             # Fields used by the map UI
             "revenue": total_revenue,
             "ordersPerRunnerHour": orders_per_runner_hour,
+            # New metrics for the animation grid
+            "lateOrders": late_orders,
+            "runnerUtilizationPct": runner_utilization_pct,
+            "totalRunnerDriveMinutes": total_runner_drive_minutes,
+            "totalRunnerShiftMinutes": total_runner_shift_minutes,
         }
 
     # Placeholder for bev cart metrics

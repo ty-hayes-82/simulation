@@ -114,27 +114,11 @@ function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): 
   );
 }
 
+function easeInCubic(t: number): number { return t * t * t; }
+function easeOutCubic(t: number): number { return 1 - Math.pow(1 - t, 3); }
 function easeInOutCubic(t: number): number { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
 function easeOutQuart(t: number): number { return 1 - Math.pow(1 - t, 4); }
 function easeInOutSine(t: number): number { return -(Math.cos(Math.PI * t) - 1) / 2; }
-
-function interpolatePoint(point1: Coordinate, point2: Coordinate, t: number, easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic'): Coordinate {
-  let easedT = t;
-  switch (easing) {
-    case 'cubic': easedT = easeInOutCubic(t); break;
-    case 'quart': easedT = easeOutQuart(t); break;
-    case 'sine': easedT = easeInOutSine(t); break;
-    case 'linear': default: easedT = t; break;
-  }
-  return {
-    golfer_id: point1.golfer_id,
-    latitude: point1.latitude + (point2.latitude - point1.latitude) * easedT,
-    longitude: point1.longitude + (point2.longitude - point1.longitude) * easedT,
-    timestamp: point1.timestamp + (point2.timestamp - point1.timestamp) * t,
-    type: point1.type,
-    current_hole: point1.current_hole
-  };
-}
 
 function timestampToTimeOfDay(timestamp: number, startingHour: number = 0): string {
   const totalHours = Math.floor(timestamp / 3600);
@@ -165,7 +149,7 @@ function secondsSince7amToClock(totalSeconds: number): string {
   return `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
 }
 
-function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic'): Coordinate | null {
+function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easing: 'linear' | 'cubic' | 'quart' | 'sine' = 'cubic', stopInfoForTracker?: boolean[]): Coordinate | null {
   if (coordinates.length === 0) return null;
   if (coordinates.length === 1) return coordinates[0];
   
@@ -178,7 +162,46 @@ function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easin
     if (elapsedSeconds >= current.timestamp && elapsedSeconds <= next.timestamp) {
       const segmentDuration = next.timestamp - current.timestamp;
       const segmentProgress = segmentDuration > 0 ? (elapsedSeconds - current.timestamp) / segmentDuration : 0;
-      return interpolatePoint(current, next, segmentProgress, easing);
+      
+      let easedT = segmentProgress;
+      const trackerType = coordinates[0]?.type;
+      if (trackerType === 'runner' && stopInfoForTracker) {
+        const isApproachingStop = stopInfoForTracker[i+1];
+        const isDepartingStop = stopInfoForTracker[i];
+
+        if (isApproachingStop && isDepartingStop) {
+            easedT = easeInOutCubic(segmentProgress);
+        } else if (isApproachingStop) {
+            easedT = easeOutCubic(segmentProgress);
+        } else if (isDepartingStop) {
+            easedT = easeInCubic(segmentProgress);
+        } else {
+            // Not near a stop, use default easing
+            switch (easing) {
+                case 'cubic': easedT = easeInOutCubic(segmentProgress); break;
+                case 'quart': easedT = easeOutQuart(segmentProgress); break;
+                case 'sine': easedT = easeInOutSine(segmentProgress); break;
+                case 'linear': default: break;
+            }
+        }
+      } else {
+        // No stop info or not a runner, use default easing from parameter
+        switch (easing) {
+          case 'cubic': easedT = easeInOutCubic(segmentProgress); break;
+          case 'quart': easedT = easeOutQuart(segmentProgress); break;
+          case 'sine': easedT = easeInOutSine(segmentProgress); break;
+          case 'linear': default: break;
+        }
+      }
+      
+      return {
+        golfer_id: current.golfer_id,
+        latitude: current.latitude + (next.latitude - current.latitude) * easedT,
+        longitude: current.longitude + (next.longitude - current.longitude) * easedT,
+        timestamp: current.timestamp + (next.timestamp - current.timestamp) * segmentProgress,
+        type: current.type,
+        current_hole: current.current_hole
+      };
     }
   }
   if (elapsedSeconds >= coordinates[coordinates.length - 1].timestamp) return coordinates[coordinates.length - 1];
@@ -261,7 +284,7 @@ function getPchipPosition(data: SmoothingData, time: number): { lat: number; lng
   return { lat, lng };
 }
 
-function getCatmullRomPositionOnPath(coordinates: Coordinate[], elapsedTime: number): Coordinate | null {
+function getCatmullRomPositionOnPath(coordinates: Coordinate[], elapsedTime: number, stopInfoForTracker?: boolean[]): Coordinate | null {
   if (coordinates.length < 2) {
     return coordinates.length === 1 ? coordinates[0] : null;
   }
@@ -290,7 +313,21 @@ function getCatmullRomPositionOnPath(coordinates: Coordinate[], elapsedTime: num
   const p3 = i < coordinates.length - 2 ? coordinates[i + 2] : p2;
 
   const segmentDuration = p2.timestamp - p1.timestamp;
-  const t = segmentDuration > 0 ? (elapsedSeconds - p1.timestamp) / segmentDuration : 0;
+  let t = segmentDuration > 0 ? (elapsedSeconds - p1.timestamp) / segmentDuration : 0;
+
+  const trackerType = coordinates[0]?.type;
+  if (trackerType === 'runner' && stopInfoForTracker) {
+      const isApproachingStop = stopInfoForTracker[i+1];
+      const isDepartingStop = stopInfoForTracker[i];
+
+      if (isApproachingStop && isDepartingStop) {
+          t = easeInOutCubic(t);
+      } else if (isApproachingStop) {
+          t = easeOutCubic(t);
+      } else if (isDepartingStop) {
+          t = easeInCubic(t);
+      }
+  }
 
   const lat = catmullRom(p0.latitude, p1.latitude, p2.latitude, p3.latitude, t);
   const lng = catmullRom(p0.longitude, p1.longitude, p2.longitude, p3.longitude, t);
@@ -468,6 +505,7 @@ export default function AnimationView() {
   const lastRealTimeSecRef = useRef<number>(0);
   // Easing selection state
   const [currentEasing, setCurrentEasing] = useState<'linear' | 'cubic' | 'quart' | 'sine' | 'catmull-rom'>('catmull-rom');
+  const [stopInfo, setStopInfo] = useState<{ [key: string]: boolean[] }>({});
   
   // Animation timing refs for smooth transitions
   const animationStartTimeRef = useRef<number>(0);
@@ -618,6 +656,13 @@ export default function AnimationView() {
                   } else {
                     filteredCoords = [];
                   }
+                } else if (sortedCoords[0]?.type === 'runner') {
+                  // Find the first point where the runner is not at the clubhouse
+                  const firstMoveIndex = sortedCoords.findIndex(coord => coord.current_hole !== undefined && coord.current_hole !== null);
+                  if (firstMoveIndex > 1) {
+                    // Keep one clubhouse point before the first move for context
+                    filteredCoords = sortedCoords.slice(firstMoveIndex - 1);
+                  }
                 }
                 const entityType = filteredCoords[0]?.type || sortedCoords[0]?.type || 'golfer';
                 const firstColor = filteredCoords.find(c => !!c.color)?.color;
@@ -627,6 +672,21 @@ export default function AnimationView() {
             
             setTrackersData(trackersArray);
             
+            const newStopInfo: { [key: string]: boolean[] } = {};
+            trackersArray.forEach(tracker => {
+                if (tracker.type === 'runner') {
+                    const stops = new Array(tracker.coordinates.length).fill(false);
+                    for (let i = 1; i < tracker.coordinates.length; i++) {
+                        const velocity = calculateVelocity(tracker.coordinates[i-1], tracker.coordinates[i]);
+                        if (velocity < 0.5) { // Threshold for being stopped in m/s
+                            stops[i] = true;
+                        }
+                    }
+                    newStopInfo[tracker.name] = stops;
+                }
+            });
+            setStopInfo(newStopInfo);
+
             const bounds = calculateBounds(trackersArray);
             setViewState({ ...viewState, longitude: bounds.center[0], latitude: bounds.center[1], zoom: bounds.zoom });
             
@@ -769,10 +829,11 @@ export default function AnimationView() {
       
       trackersData.forEach((tracker) => {
         let position: Coordinate | null;
+        const trackerStopInfo = stopInfo[tracker.name];
         if (currentEasing === 'catmull-rom') {
-          position = getCatmullRomPositionOnPath(tracker.coordinates, elapsedMinutes);
+          position = getCatmullRomPositionOnPath(tracker.coordinates, elapsedMinutes, trackerStopInfo);
         } else {
-          position = getPositionOnPath(tracker.coordinates, elapsedMinutes, currentEasing);
+          position = getPositionOnPath(tracker.coordinates, elapsedMinutes, currentEasing, trackerStopInfo);
         }
         if (position) {
           features.push({

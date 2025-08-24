@@ -16,6 +16,9 @@ def generate_runner_coordinates_from_events(
     clubhouse_coords: Tuple[float, float],
     cart_graph: nx.Graph,
     runner_speed_mps: float,
+    num_runners: int,
+    delivery_stats_df: Optional[pd.DataFrame] = None,
+    order_timing_df: Optional[pd.DataFrame] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generate runner GPS coordinates based on event timestamps and golfer locations.
@@ -26,6 +29,14 @@ def generate_runner_coordinates_from_events(
     distance (no map shortcuts). It generates smooth GPS points along the cart
     path at 60-second intervals, and places the delivery point exactly on the
     snapped graph node at the delivery timestamp.
+
+    When delivery_stats_df and order_timing_df are provided, prefers the exact
+    routed node-index paths captured during simulation (trip_to_golfer.nodes and
+    trip_back.nodes). In that mode, coordinates are generated at per-node times
+    based on segment length and runner speed, resulting in sub-minute intervals
+    that exactly follow the node path. Hole numbers are not used to determine the
+    path in this mode; timing is anchored by departure and delivery/return
+    timestamps.
     
     Args:
         events_df: DataFrame with simulation events
@@ -38,7 +49,25 @@ def generate_runner_coordinates_from_events(
     """
     runner_coords = []
     
-    # Focus only on movement-related events; avoid pre-departure clubhouse idling points
+    # Add a point for each runner at the clubhouse when service opens
+    service_open_events = events_df[events_df["action"] == "service_opened"]
+    if not service_open_events.empty:
+        service_open_ts = int(service_open_events.iloc[0]["timestamp_s"])
+        clubhouse_lon, clubhouse_lat = clubhouse_coords
+        for i in range(1, num_runners + 1):
+            runner_id = f"runner_{i}"
+            runner_coords.append(
+                {
+                    "id": runner_id,
+                    "latitude": clubhouse_lat,
+                    "longitude": clubhouse_lon,
+                    "timestamp": service_open_ts,
+                    "type": "runner",
+                    "hole": "clubhouse",
+                }
+            )
+
+    # Focus only on movement-related events for path generation
     delivery_events = events_df[
         events_df['action'].isin(['delivery_start', 'delivery_complete', 'arrived_clubhouse']) &
         events_df['order_id'].notna()
@@ -61,114 +90,270 @@ def generate_runner_coordinates_from_events(
             total += math.hypot(dx_m, dy_m)
         return total
 
-    # Process each order
-    for order_id in delivery_events['order_id'].unique():
-        if pd.isna(order_id):
-            continue
-            
-        order_events = delivery_events[delivery_events['order_id'] == order_id].copy()
-        
-        # Get the three key events for this order
-        complete_events = order_events[order_events['action'] == 'delivery_complete'] 
-        # Return event may be missing or delayed; we'll compute return timing via speed
-        return_events = order_events[order_events['action'] == 'arrived_clubhouse']
-        
-        if complete_events.empty:
-            continue
-            
-        complete_event = complete_events.iloc[0]
-        # If we have a return event, we'll use it for anchoring the end of return; otherwise we compute it
-        return_event = return_events.iloc[0] if not return_events.empty else None
-        
-        complete_ts = int(complete_event['timestamp_s'])
-        runner_id = str(complete_event.get('runner_id', 'runner_1'))
-        
-        # Handle hole number with NaN protection
-        hole_val = complete_event.get('hole', 0)
-        if pd.isna(hole_val) or hole_val is None:
-            hole_num = 0
-        else:
-            try:
-                hole_num = int(hole_val)
-            except (ValueError, TypeError):
-                hole_num = 0
-        
-        # Find the closest golfer GPS point to the delivery complete timestamp
-        time_diffs = abs(golfer_coords_df['timestamp'] - complete_ts)
-        closest_idx = time_diffs.idxmin()
-        golfer_location = golfer_coords_df.loc[closest_idx]
-        
-        # Use the golfer's coordinates as the delivery target (snap to graph node)
-        delivery_target = (float(golfer_location['longitude']), float(golfer_location['latitude']))
-        
-        # Log the timing for debugging
-        golfer_timestamp = int(golfer_location['timestamp'])
-        time_diff = abs(golfer_timestamp - complete_ts)
-        print(f"Order {order_id}: Delivery at {complete_ts}, using golfer location from {golfer_timestamp} (diff: {time_diff}s)")
-        
-        # Generate delivery path coordinates
+    def _nodes_to_points(
+        nodes: List[Any],
+        start_ts: int,
+        end_ts: Optional[int],
+        runner_id: str,
+        hole_hint: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Convert a list of graph node IDs into timestamped coordinates.
+
+        - Uses cart_graph node positions ('x','y')
+        - Computes per-edge times from segment lengths and runner_speed_mps
+        - Scales to match end_ts if provided
+        - Emits a point at every node (sub-minute resolution as needed)
+        """
+        if not nodes or len(nodes) < 1:
+            return []
+
+        # Build coordinate list for nodes
         try:
-            # Find nearest nodes in cart graph
-            clubhouse_node = nearest_node(cart_graph, clubhouse_coords[0], clubhouse_coords[1])
-            delivery_node = nearest_node(cart_graph, delivery_target[0], delivery_target[1])
-            
-            if clubhouse_node is not None and delivery_node is not None:
-                # Calculate delivery path - from departure to actual delivery complete time
-                delivery_path_nodes = nx.shortest_path(cart_graph, clubhouse_node, delivery_node)
-                delivery_path_coords = [
-                    (float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y'])) 
-                    for n in delivery_path_nodes
-                ]
-                
-                # Back-calculate departure time using constant speed and path length
-                path_len_m = _path_length_m(delivery_path_coords)
-                travel_out_s = float(path_len_m) / float(max(runner_speed_mps, 0.001))
-                start_ts = int(complete_ts - travel_out_s)
+            coords: List[Tuple[float, float]] = [
+                (float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y'])) for n in nodes
+            ]
+        except Exception:
+            return []
 
-                # Generate delivery coordinates using derived timing (constant speed)
-                delivery_coords = interpolate_path_points(
-                    delivery_path_coords,
-                    start_ts,
-                    float(travel_out_s),
-                    runner_id,
-                    hole_num
-                )
-                runner_coords.extend(delivery_coords)
+        # Compute per-segment distances
+        seg_lengths: List[float] = []
+        for i in range(len(coords) - 1):
+            x0, y0 = coords[i]
+            x1, y1 = coords[i + 1]
+            dx_m = (float(x1) - float(x0)) * 111139.0
+            dy_m = (float(y1) - float(y0)) * 111139.0
+            seg_lengths.append(math.hypot(dx_m, dy_m))
 
-                # Add a point at the exact delivery time using the snapped delivery node coordinate
-                delivery_lon = float(cart_graph.nodes[delivery_node]['x'])
-                delivery_lat = float(cart_graph.nodes[delivery_node]['y'])
-                runner_coords.append({
-                    "id": runner_id,
-                    "latitude": delivery_lat,
-                    "longitude": delivery_lon,
-                    "timestamp": complete_ts,
-                    "type": "runner",
-                    "hole": hole_num,
-                })
-                
-                # Calculate return path - from delivery complete to return timestamp
-                return_path_nodes = nx.shortest_path(cart_graph, delivery_node, clubhouse_node)
-                return_path_coords = [
-                    (float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y']))
-                    for n in return_path_nodes
-                ]
-                
-                # Generate return coordinates using constant speed
-                return_len_m = _path_length_m(return_path_coords)
-                travel_back_s = float(return_len_m) / float(max(runner_speed_mps, 0.001))
-                return_coords = interpolate_path_points(
-                    return_path_coords,
-                    complete_ts,
-                    float(travel_back_s),
-                    runner_id,
-                    hole_num
-                )
-                runner_coords.extend(return_coords)
-                
-        except Exception as e:
-            print(f"Warning: Failed to generate coordinates for order {order_id}: {e}")
-            continue
+        total_len = sum(seg_lengths)
+        if total_len <= 0.0:
+            # Emit single point at start
+            x0, y0 = coords[0]
+            return [{
+                "id": runner_id,
+                "latitude": y0,
+                "longitude": x0,
+                "timestamp": int(start_ts),
+                "type": "runner",
+                "hole": hole_hint if hole_hint is not None else 0,
+            }]
+
+        # Compute raw per-segment times from speed
+        raw_times = [max(0.001, L / max(0.001, float(runner_speed_mps))) for L in seg_lengths]
+        total_time = sum(raw_times)
+
+        # If an explicit end_ts is provided, scale times to fit exactly
+        if end_ts is not None and end_ts > start_ts and total_time > 0:
+            scale = float(end_ts - start_ts) / float(total_time)
+        else:
+            scale = 1.0
+        seg_times = [t * scale for t in raw_times]
+
+        # Emit a coordinate at each node boundary
+        points: List[Dict[str, Any]] = []
+        t_cursor = float(start_ts)
+        for i, (x, y) in enumerate(coords):
+            ts_i = int(round(t_cursor)) if i == 0 else int(round(t_cursor))
+            points.append({
+                "id": runner_id,
+                "latitude": y,
+                "longitude": x,
+                "timestamp": ts_i,
+                "type": "runner",
+                "hole": hole_hint if hole_hint is not None else 0,
+            })
+            if i < len(seg_times):
+                t_cursor += float(seg_times[i])
+
+        # Ensure the last timestamp aligns exactly to end_ts if provided
+        if end_ts is not None and points:
+            points[-1]["timestamp"] = int(end_ts)
+        return points
+
+    # If detailed delivery stats are provided, use their node-index paths for precise timing
+    if delivery_stats_df is not None and isinstance(delivery_stats_df, pd.DataFrame) and not delivery_stats_df.empty:
+        stats_by_order = delivery_stats_df.set_index(delivery_stats_df['order_id'].astype(str) if 'order_id' in delivery_stats_df.columns else pd.Series(dtype=str), drop=False)
+        timing_by_order = None
+        if order_timing_df is not None and isinstance(order_timing_df, pd.DataFrame) and not order_timing_df.empty:
+            timing_by_order = order_timing_df.set_index(order_timing_df['order_id'].astype(str) if 'order_id' in order_timing_df.columns else pd.Series(dtype=str), drop=False)
+
+        for oid in list(stats_by_order.index.unique()):
+            try:
+                row = stats_by_order.loc[oid]
+            except Exception:
+                continue
+
+            # Handle multi-row selection
+            if isinstance(row, pd.DataFrame) and not row.empty:
+                row = row.iloc[0]
+
+            order_id = str(row.get('order_id', oid))
+            runner_id = str(row.get('runner_id', 'runner_1'))
+            hole_hint = None
+            try:
+                hole_hint = int(row.get('hole_num')) if row.get('hole_num') is not None else None
+            except Exception:
+                hole_hint = None
+
+            # Determine timing anchors
+            delivered_ts = None
+            if 'delivered_at_time_s' in row and pd.notna(row['delivered_at_time_s']):
+                delivered_ts = int(row['delivered_at_time_s'])
+            elif timing_by_order is not None and order_id in timing_by_order.index:
+                try:
+                    delivered_ts = int(timing_by_order.loc[order_id].get('delivery_timestamp_s'))
+                except Exception:
+                    delivered_ts = None
+
+            # Departure time
+            depart_ts = None
+            if timing_by_order is not None and order_id in timing_by_order.index:
+                try:
+                    depart_ts = int(timing_by_order.loc[order_id].get('departure_time_s'))
+                except Exception:
+                    depart_ts = None
+            if depart_ts is None and delivered_ts is not None:
+                # Fallback: back-calc using delivery_time_s if available
+                try:
+                    depart_ts = int(delivered_ts - float(row.get('delivery_time_s', 0)))
+                except Exception:
+                    depart_ts = None
+
+            # Return end time (optional)
+            return_end_ts = None
+            if timing_by_order is not None and order_id in timing_by_order.index:
+                try:
+                    return_end_ts = int(timing_by_order.loc[order_id].get('return_timestamp_s'))
+                except Exception:
+                    return_end_ts = None
+
+            # Extract node paths if present
+            to_nodes = []
+            back_nodes = []
+            try:
+                t2g = row.get('trip_to_golfer')
+                if isinstance(t2g, dict) and 'nodes' in t2g:
+                    to_nodes = list(t2g.get('nodes') or [])
+            except Exception:
+                to_nodes = []
+            try:
+                tb = row.get('trip_back')
+                if isinstance(tb, dict) and 'nodes' in tb:
+                    back_nodes = list(tb.get('nodes') or [])
+            except Exception:
+                back_nodes = []
+
+            # Outbound path via captured nodes
+            if to_nodes and depart_ts is not None and delivered_ts is not None and delivered_ts > depart_ts:
+                outbound_points = _nodes_to_points(to_nodes, int(depart_ts), int(delivered_ts), runner_id, hole_hint)
+                runner_coords.extend(outbound_points)
+            else:
+                # Fallback: reconstruct from nearest nodes based on golfer position at delivery
+                # Find delivery target from golfer coords near delivered_ts
+                if delivered_ts is None:
+                    # Obtain from event
+                    order_events = delivery_events[delivery_events['order_id'].astype(str) == str(order_id)]
+                    complete_events = order_events[order_events['action'] == 'delivery_complete']
+                    if not complete_events.empty:
+                        delivered_ts = int(complete_events.iloc[0]['timestamp_s'])
+                if delivered_ts is None:
+                    continue
+                time_diffs = abs(golfer_coords_df['timestamp'] - delivered_ts)
+                closest_idx = time_diffs.idxmin()
+                golfer_location = golfer_coords_df.loc[closest_idx]
+                delivery_target = (float(golfer_location['longitude']), float(golfer_location['latitude']))
+                try:
+                    clubhouse_node = nearest_node(cart_graph, clubhouse_coords[0], clubhouse_coords[1])
+                    delivery_node = nearest_node(cart_graph, delivery_target[0], delivery_target[1])
+                    if clubhouse_node is not None and delivery_node is not None:
+                        delivery_path_nodes = nx.shortest_path(cart_graph, clubhouse_node, delivery_node)
+                        if depart_ts is None:
+                            # Estimate depart_time from speed and path length
+                            coords = [(float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y'])) for n in delivery_path_nodes]
+                            travel_out_s = _path_length_m(coords) / max(0.001, float(runner_speed_mps))
+                            # Align to minute boundary not required; use exact
+                            depart_ts = int(delivered_ts - travel_out_s)
+                        outbound_points = _nodes_to_points(delivery_path_nodes, int(depart_ts), int(delivered_ts), runner_id, hole_hint)
+                        runner_coords.extend(outbound_points)
+                except Exception:
+                    pass
+
+            # Return path via captured nodes if available
+            if back_nodes and delivered_ts is not None:
+                # If no explicit end, compute by speed
+                if return_end_ts is None:
+                    # estimate using distances
+                    try:
+                        coords = [(float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y'])) for n in back_nodes]
+                        travel_back_s = _path_length_m(coords) / max(0.001, float(runner_speed_mps))
+                        return_end_ts = int(delivered_ts + travel_back_s)
+                    except Exception:
+                        return_end_ts = None
+                return_points = _nodes_to_points(back_nodes, int(delivered_ts), int(return_end_ts) if return_end_ts else None, runner_id, hole_hint)
+                runner_coords.extend(return_points)
+        # After building from stats, continue to clubhouse fill below
+    else:
+        # Legacy fallback: derive paths from golfer locations and shortest paths, sampled at 60s
+        for order_id in delivery_events['order_id'].unique():
+            if pd.isna(order_id):
+                continue
+            order_events = delivery_events[delivery_events['order_id'] == order_id].copy()
+            complete_events = order_events[order_events['action'] == 'delivery_complete']
+            return_events = order_events[order_events['action'] == 'arrived_clubhouse']
+            if complete_events.empty:
+                continue
+            complete_event = complete_events.iloc[0]
+            # return_event is not strictly needed in legacy mode
+            # return_event = return_events.iloc[0] if not return_events.empty else None
+            complete_ts = int(complete_event['timestamp_s'])
+            runner_id = str(complete_event.get('runner_id', 'runner_1'))
+            # Find the closest golfer GPS point to the delivery complete timestamp
+            time_diffs = abs(golfer_coords_df['timestamp'] - complete_ts)
+            closest_idx = time_diffs.idxmin()
+            golfer_location = golfer_coords_df.loc[closest_idx]
+            delivery_target = (float(golfer_location['longitude']), float(golfer_location['latitude']))
+            # Generate delivery path coordinates via shortest path
+            try:
+                clubhouse_node = nearest_node(cart_graph, clubhouse_coords[0], clubhouse_coords[1])
+                delivery_node = nearest_node(cart_graph, delivery_target[0], delivery_target[1])
+                if clubhouse_node is not None and delivery_node is not None:
+                    delivery_path_nodes = nx.shortest_path(cart_graph, clubhouse_node, delivery_node)
+                    delivery_path_coords = [
+                        (float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y']))
+                        for n in delivery_path_nodes
+                    ]
+                    path_len_m = _path_length_m(delivery_path_coords)
+                    travel_out_s = float(path_len_m) / float(max(runner_speed_mps, 0.001))
+                    dispatch_ts = int(complete_ts - travel_out_s)
+                    # No minute rounding; use exact timing
+                    start_ts = int(dispatch_ts)
+                    duration_s = float(complete_ts - start_ts)
+                    # Interpolate at minute boundaries for legacy mode
+                    delivery_coords = interpolate_path_points(
+                        delivery_path_coords,
+                        start_ts,
+                        duration_s,
+                        runner_id,
+                        0
+                    )
+                    runner_coords.extend(delivery_coords)
+                    # Return path
+                    return_path_nodes = nx.shortest_path(cart_graph, delivery_node, clubhouse_node)
+                    return_path_coords = [
+                        (float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y']))
+                        for n in return_path_nodes
+                    ]
+                    return_len_m = _path_length_m(return_path_coords)
+                    travel_back_s = float(return_len_m) / float(max(runner_speed_mps, 0.001))
+                    return_coords = interpolate_path_points(
+                        return_path_coords,
+                        complete_ts,
+                        float(travel_back_s),
+                        runner_id,
+                        0
+                    )
+                    runner_coords.extend(return_coords)
+            except Exception:
+                continue
     
     # Add clubhouse coordinates for waiting periods between orders and after final order
     if delivery_events.empty:

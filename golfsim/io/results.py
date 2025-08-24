@@ -210,11 +210,18 @@ def normalize_coordinate_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     if hole_val is None or hole_val == "":
         hole_val = "clubhouse"
 
+    # Preserve sub-second timing if provided (float seconds since 7am)
+    ts_raw = _get_first("timestamp", "timestamp_s", default=0)
+    try:
+        ts_val = float(ts_raw)
+    except Exception:
+        ts_val = float(0)
+
     base_entry = {
         "id": str(_get_first("id", default="")),
         "latitude": float(_get_first("latitude", "lat", default=0.0)),
         "longitude": float(_get_first("longitude", "lon", default=0.0)),
-        "timestamp": int(float(_get_first("timestamp", "timestamp_s", default=0))),
+        "timestamp": ts_val,
         "type": norm_type,
         "hole": hole_val,
     }
@@ -300,14 +307,18 @@ def write_unified_coordinates_csv(points_by_id: Dict[str, List[Dict[str, Any]]],
 
         # Sort by id, timestamp then drop duplicates keeping first occurrence
         try:
-            collected_rows.sort(key=lambda r: (str(r.get("id", "")), int(r.get("timestamp", 0))))
+            collected_rows.sort(key=lambda r: (str(r.get("id", "")), float(r.get("timestamp", 0.0))))
         except Exception:
             pass
 
         seen_keys = set()
         unique_rows = []
         for r in collected_rows:
-            key = (str(r.get("id", "")), int(r.get("timestamp", 0)))
+            try:
+                ts_key = float(r.get("timestamp", 0.0))
+            except Exception:
+                ts_key = 0.0
+            key = (str(r.get("id", "")), ts_key)
             if key in seen_keys:
                 continue
             seen_keys.add(key)

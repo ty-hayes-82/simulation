@@ -562,12 +562,25 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                         golfer_coords_df = pd.DataFrame(all_golfer_coords)
                         
                         # Generate runner coordinates from events
+                        # Prepare optional detailed dataframes for precise node-path GPS generation
+                        try:
+                            delivery_stats_df = pd.DataFrame(sim_result.get("delivery_stats", []) or [])
+                        except Exception:
+                            delivery_stats_df = None
+                        try:
+                            order_timing_df = pd.DataFrame(getattr(delivery_service, "order_timing_logs", []) or [])
+                        except Exception:
+                            order_timing_df = None
+
                         runner_points = generate_runner_coordinates_from_events(
                             events_df=events_df,
                             golfer_coords_df=golfer_coords_df,
                             clubhouse_coords=config.clubhouse,
                             cart_graph=cart_graph,
-                            runner_speed_mps=float(config.delivery_runner_speed_mps)
+                            runner_speed_mps=float(config.delivery_runner_speed_mps),
+                            num_runners=int(config.num_runners),
+                            delivery_stats_df=delivery_stats_df,
+                            order_timing_df=order_timing_df,
                         )
                         logger.info("Generated %d runner coordinate points using post-processing approach", len(runner_points))
                     else:

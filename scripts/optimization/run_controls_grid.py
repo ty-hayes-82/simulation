@@ -320,6 +320,10 @@ def main() -> None:
                 "failed_orders",
                 "total_rounds",
                 "active_runner_hours",
+                "late_orders",
+                "runner_utilization_pct",
+                "total_runner_drive_minutes",
+                "total_runner_shift_minutes",
             ]
 
             with csv_path.open("w", newline="", encoding="utf-8") as f:
@@ -339,11 +343,33 @@ def main() -> None:
                         "orders": orders_val,
                         "run": run_val,
                     }
-                    for k in fieldnames:
-                        if k in row:
-                            continue
-                        row[k] = data.get(k)
-                    writer.writerow(row)
+                    
+                    row.update(data)
+
+                    try:
+                        successful_orders = float(data.get("successful_orders", 0) or 0)
+                        on_time_rate = float(data.get("on_time_rate", 0) or 0)
+                        row["late_orders"] = round(successful_orders * (1.0 - on_time_rate))
+                    except (ValueError, TypeError):
+                        row["late_orders"] = 0
+
+                    try:
+                        drive_pct = float(data.get("runner_utilization_driving_pct", 0) or 0)
+                        prep_pct = float(data.get("runner_utilization_prep_pct", 0) or 0)
+                        row["runner_utilization_pct"] = drive_pct + prep_pct
+                    except (ValueError, TypeError):
+                        row["runner_utilization_pct"] = 0.0
+
+                    try:
+                        active_hours = float(data.get("active_runner_hours", 0) or 0)
+                        drive_pct = float(data.get("runner_utilization_driving_pct", 0) or 0)
+                        row["total_runner_drive_minutes"] = drive_pct * active_hours * 60
+                        row["total_runner_shift_minutes"] = active_hours * 60
+                    except (ValueError, TypeError):
+                        row["total_runner_drive_minutes"] = 0.0
+                        row["total_runner_shift_minutes"] = 0.0
+                        
+                    writer.writerow({k: row.get(k) for k in fieldnames})
             print(f"🧾 Wrote per-run metrics CSV → {csv_path} ({len(metrics_files)} rows)")
         else:
             print("ℹ️  No delivery_runner_metrics_run_*.json files found; skipping CSV export.")
