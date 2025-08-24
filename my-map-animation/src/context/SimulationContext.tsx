@@ -32,6 +32,9 @@ type SimulationContextValue = {
   // Shared map view state
   viewState: ViewState;
   setViewState: (vs: ViewState) => void;
+  // Animation timestamp preservation
+  savedAnimationTimestamp: number | null;
+  setSavedAnimationTimestamp: (timestamp: number | null) => void;
 };
 
 const SimulationContext = createContext<SimulationContextValue | undefined>(undefined);
@@ -54,6 +57,8 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
   const [isSliderControlled, setIsSliderControlled] = useState<boolean>(false);
   // Shared map view state
   const [viewState, setViewState] = useState<ViewState>(INITIAL_VIEW_STATE);
+  // Animation timestamp preservation
+  const [savedAnimationTimestamp, setSavedAnimationTimestamp] = useState<number | null>(null);
 
   // Load manifest on mount
   const refreshManifest = useCallback(async () => {
@@ -120,6 +125,8 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     setIsSliderControlled,
     viewState,
     setViewState,
+    savedAnimationTimestamp,
+    setSavedAnimationTimestamp,
   }), [
     manifest,
     selectedSim,
@@ -130,6 +137,7 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     baselineTimestampSeconds,
     isSliderControlled,
     viewState,
+    savedAnimationTimestamp,
   ]);
 
   return (

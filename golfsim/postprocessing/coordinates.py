@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
+import math
 import pandas as pd
 import networkx as nx
 
@@ -14,13 +15,17 @@ def generate_runner_coordinates_from_events(
     golfer_coords_df: pd.DataFrame,
     clubhouse_coords: Tuple[float, float],
     cart_graph: nx.Graph,
+    runner_speed_mps: float,
 ) -> List[Dict[str, Any]]:
     """
     Generate runner GPS coordinates based on event timestamps and golfer locations.
     
-    This function reads the events to find exact delivery start, complete, and return
-    timestamps, then uses the golfer's location at delivery time as the target.
-    It generates smooth GPS points along the cart path at 60-second intervals.
+    This function reads the events to find exact delivery complete timestamps and
+    delivery locations, snaps those locations to the cart graph, then back-calculates
+    the delivery departure time using a constant runner speed and the routed path
+    distance (no map shortcuts). It generates smooth GPS points along the cart
+    path at 60-second intervals, and places the delivery point exactly on the
+    snapped graph node at the delivery timestamp.
     
     Args:
         events_df: DataFrame with simulation events
@@ -33,39 +38,29 @@ def generate_runner_coordinates_from_events(
     """
     runner_coords = []
     
-    # Add initial clubhouse coordinates from service start until first delivery
-    service_events = events_df[events_df['action'] == 'service_opened'].copy()
+    # Focus only on movement-related events; avoid pre-departure clubhouse idling points
     delivery_events = events_df[
         events_df['action'].isin(['delivery_start', 'delivery_complete', 'arrived_clubhouse']) &
         events_df['order_id'].notna()
     ].copy()
     
-    if not service_events.empty:
-        service_start_ts = int(service_events.iloc[0]['timestamp_s'])
-        runner_id = str(service_events.iloc[0].get('runner_id', 'runner_1'))
-        
-        # Find the first delivery start time
-        first_delivery_ts = service_start_ts
-        if not delivery_events.empty:
-            first_delivery_start = delivery_events[delivery_events['action'] == 'delivery_start']
-            if not first_delivery_start.empty:
-                first_delivery_ts = int(first_delivery_start.iloc[0]['timestamp_s'])
-        
-        # Generate clubhouse coordinates from service start to first delivery
-        clubhouse_lon, clubhouse_lat = clubhouse_coords
-        for ts in range(service_start_ts, first_delivery_ts, 60):
-            runner_coords.append({
-                "id": runner_id,
-                "latitude": clubhouse_lat,
-                "longitude": clubhouse_lon,
-                "timestamp": ts,
-                "type": "runner",
-                "hole": "clubhouse",
-            })
-    
     if delivery_events.empty:
         return runner_coords
     
+    # Helper to compute polyline length in meters based on lon/lat tuples
+    def _path_length_m(coords: List[Tuple[float, float]]) -> float:
+        if not coords or len(coords) < 2:
+            return 0.0
+        total = 0.0
+        # Use simple meters-per-degree conversion; consistent with rest of codebase
+        for i in range(len(coords) - 1):
+            x0, y0 = coords[i]
+            x1, y1 = coords[i + 1]
+            dx_m = (float(x1) - float(x0)) * 111139.0
+            dy_m = (float(y1) - float(y0)) * 111139.0
+            total += math.hypot(dx_m, dy_m)
+        return total
+
     # Process each order
     for order_id in delivery_events['order_id'].unique():
         if pd.isna(order_id):
@@ -74,24 +69,22 @@ def generate_runner_coordinates_from_events(
         order_events = delivery_events[delivery_events['order_id'] == order_id].copy()
         
         # Get the three key events for this order
-        start_events = order_events[order_events['action'] == 'delivery_start']
         complete_events = order_events[order_events['action'] == 'delivery_complete'] 
+        # Return event may be missing or delayed; we'll compute return timing via speed
         return_events = order_events[order_events['action'] == 'arrived_clubhouse']
         
-        if start_events.empty or complete_events.empty or return_events.empty:
+        if complete_events.empty:
             continue
             
-        start_event = start_events.iloc[0]
         complete_event = complete_events.iloc[0]
-        return_event = return_events.iloc[0]
+        # If we have a return event, we'll use it for anchoring the end of return; otherwise we compute it
+        return_event = return_events.iloc[0] if not return_events.empty else None
         
-        start_ts = int(start_event['timestamp_s'])
         complete_ts = int(complete_event['timestamp_s'])
-        return_ts = int(return_event['timestamp_s'])
-        runner_id = str(start_event.get('runner_id', 'runner_1'))
+        runner_id = str(complete_event.get('runner_id', 'runner_1'))
         
         # Handle hole number with NaN protection
-        hole_val = start_event.get('hole', 0)
+        hole_val = complete_event.get('hole', 0)
         if pd.isna(hole_val) or hole_val is None:
             hole_num = 0
         else:
@@ -105,7 +98,7 @@ def generate_runner_coordinates_from_events(
         closest_idx = time_diffs.idxmin()
         golfer_location = golfer_coords_df.loc[closest_idx]
         
-        # Use the golfer's coordinates as the delivery target, but use actual delivery timing
+        # Use the golfer's coordinates as the delivery target (snap to graph node)
         delivery_target = (float(golfer_location['longitude']), float(golfer_location['latitude']))
         
         # Log the timing for debugging
@@ -127,21 +120,28 @@ def generate_runner_coordinates_from_events(
                     for n in delivery_path_nodes
                 ]
                 
-                # Generate delivery coordinates using actual delivery timing
+                # Back-calculate departure time using constant speed and path length
+                path_len_m = _path_length_m(delivery_path_coords)
+                travel_out_s = float(path_len_m) / float(max(runner_speed_mps, 0.001))
+                start_ts = int(complete_ts - travel_out_s)
+
+                # Generate delivery coordinates using derived timing (constant speed)
                 delivery_coords = interpolate_path_points(
                     delivery_path_coords,
                     start_ts,
-                    float(complete_ts - start_ts),
+                    float(travel_out_s),
                     runner_id,
                     hole_num
                 )
                 runner_coords.extend(delivery_coords)
 
-                # Add a point at the exact delivery time to ensure runner and golfer meet
+                # Add a point at the exact delivery time using the snapped delivery node coordinate
+                delivery_lon = float(cart_graph.nodes[delivery_node]['x'])
+                delivery_lat = float(cart_graph.nodes[delivery_node]['y'])
                 runner_coords.append({
                     "id": runner_id,
-                    "latitude": delivery_target[1],
-                    "longitude": delivery_target[0],
+                    "latitude": delivery_lat,
+                    "longitude": delivery_lon,
                     "timestamp": complete_ts,
                     "type": "runner",
                     "hole": hole_num,
@@ -154,11 +154,13 @@ def generate_runner_coordinates_from_events(
                     for n in return_path_nodes
                 ]
                 
-                # Generate return coordinates using exact return timestamp
+                # Generate return coordinates using constant speed
+                return_len_m = _path_length_m(return_path_coords)
+                travel_back_s = float(return_len_m) / float(max(runner_speed_mps, 0.001))
                 return_coords = interpolate_path_points(
                     return_path_coords,
                     complete_ts,
-                    float(return_ts - complete_ts),
+                    float(travel_back_s),
                     runner_id,
                     hole_num
                 )
@@ -178,6 +180,29 @@ def generate_runner_coordinates_from_events(
     # Find gaps between deliveries and fill with clubhouse coordinates
     clubhouse_lon, clubhouse_lat = clubhouse_coords
     filled_coords = []
+
+    # 1) Pre-fill from service opening to first runner point at the clubhouse
+    if runner_coords:
+        first_ts = int(runner_coords[0]['timestamp'])
+        # Prefer explicit service_opened event; otherwise fall back to first runner ts
+        service_open_events = events_df[events_df['action'] == 'service_opened']
+        if not service_open_events.empty:
+            service_open_ts = int(service_open_events.iloc[0]['timestamp_s'])
+        else:
+            # If unavailable, do not back-fill before the first runner point
+            service_open_ts = first_ts
+
+        if service_open_ts < first_ts:
+            runner_id_for_prefill = str(runner_coords[0].get('id', 'runner_1'))
+            for ts in range(service_open_ts, first_ts, 60):
+                filled_coords.append({
+                    "id": runner_id_for_prefill,
+                    "latitude": clubhouse_lat,
+                    "longitude": clubhouse_lon,
+                    "timestamp": int(ts),
+                    "type": "runner",
+                    "hole": "clubhouse",
+                })
     
     for i, coord in enumerate(runner_coords):
         filled_coords.append(coord)

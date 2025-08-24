@@ -229,6 +229,28 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
         scenario_groups_base = build_groups_from_scenario(config.course_dir, str(config.tee_scenario))
         if scenario_groups_base:
             groups = scenario_groups_base
+            # If a first tee override is provided, shift entire scenario to match desired first tee
+            try:
+                if isinstance(groups, list) and groups:
+                    current_min = min(int(g.get("tee_time_s", 0) or 0) for g in groups)
+                    delta = int(first_tee_s - current_min)
+                    if delta != 0:
+                        for g in groups:
+                            g["tee_time_s"] = max(0, int(g.get("tee_time_s", 0) or 0) + delta)
+                        logger.info("Shifted scenario tee times by %+ds to align first tee to %s", delta, str(config.first_tee))
+            except Exception:
+                pass
+            # Respect groups_count when a scenario is used by taking the first N groups by tee time
+            try:
+                max_groups = int(getattr(config, "groups_count", 0) or 0)
+                if max_groups > 0 and len(groups) > max_groups:
+                    groups = sorted(groups, key=lambda g: int(g.get("tee_time_s", 0) or 0))[:max_groups]
+                    # Optionally renumber group_id sequentially for cleaner outputs
+                    for idx, g in enumerate(groups, start=1):
+                        g["group_id"] = idx
+                    logger.info("Using first %d golfer group(s) from scenario (of %d total)", max_groups, len(scenario_groups_base))
+            except Exception:
+                pass
         else:
             groups = build_groups_interval(int(config.groups_count), first_tee_s, float(config.groups_interval_min)) if config.groups_count > 0 else []
 
@@ -399,7 +421,8 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
         bev_sales_result: dict[str, Any] = {"sales": [], "revenue": 0.0}
         golfer_points: list[dict[str, Any]] = []
 
-        if sim_result["orders"] and not config.no_heatmap:
+        # Optional heatmap generation (skip in minimal outputs mode or when no_heatmap set)
+        if sim_result["orders"] and not config.no_heatmap and not bool(getattr(config, "minimal_outputs", False)):
             try:
                 run_path = config.output_dir / f"run_{run_idx:02d}"
                 run_path.mkdir(parents=True, exist_ok=True)
@@ -424,23 +447,25 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
         (run_path / "results.json").write_text(json.dumps(sim_result, indent=2, default=str), encoding="utf-8")
         
         # Other reports that must be written before coordinates
-        try:
-            write_order_logs_csv(sim_result, run_path / "order_logs.csv")
-        except Exception as e:
-            logger.warning("Failed to write order logs CSV: %s", e)
-        try:
-            write_runner_action_log(sim_result.get("activity_log", []) or [], run_path / "runner_action_log.csv")
-        except Exception as e:
-            logger.warning("Failed to write runner action log: %s", e)
+        if not bool(getattr(config, "minimal_outputs", False)):
+            try:
+                write_order_logs_csv(sim_result, run_path / "order_logs.csv")
+            except Exception as e:
+                logger.warning("Failed to write order logs CSV: %s", e)
+            try:
+                write_runner_action_log(sim_result.get("activity_log", []) or [], run_path / "runner_action_log.csv")
+            except Exception as e:
+                logger.warning("Failed to write runner action log: %s", e)
 
-        # Write the new detailed order timing log
-        if hasattr(delivery_service, "order_timing_logs"):
-            write_order_timing_logs_csv(delivery_service.order_timing_logs, run_path / "order_timing_logs.csv")
+            # Write the new detailed order timing log
+            if hasattr(delivery_service, "order_timing_logs"):
+                write_order_timing_logs_csv(delivery_service.order_timing_logs, run_path / "order_timing_logs.csv")
 
 
         
         # Other reports
         try:
+            # Always generate core simulation metrics JSON (needed by map app)
             generate_simulation_metrics_json(
                 sim_result,
                 run_path / "simulation_metrics.json",
@@ -453,24 +478,25 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
             logger.warning("Failed to write simulation metrics JSON: %s", e)
 
         # Metrics generation
-        try:
-            bev_metrics, delivery_metrics = generate_and_save_metrics(
-                simulation_result=sim_result,
-                output_dir=run_path,
-                run_suffix=f"_run_{run_idx:02d}",
-                simulation_id=f"delivery_dynamic_{run_idx:02d}",
-                revenue_per_order=float(config.delivery_avg_order_usd),
-                sla_minutes=int(config.sla_minutes),
-                runner_id="runner_1" if int(config.num_runners) == 1 else f"{int(config.num_runners)}_runners",
-                service_hours=float(config.service_hours_duration),
-                bev_cart_coordinates=bev_points,
-                bev_cart_service=None,
-                golfer_data=golfer_points,
-            )
-            metrics = delivery_metrics
-        except Exception as e:
-            logger.warning("Failed to generate metrics for run %d: %s", run_idx, e)
-            metrics = type('MinimalMetrics', (), {'revenue_per_round': 0.0})()
+        metrics = type('MinimalMetrics', (), {'revenue_per_round': 0.0})()
+        if not bool(getattr(config, "minimal_outputs", False)):
+            try:
+                bev_metrics, delivery_metrics = generate_and_save_metrics(
+                    simulation_result=sim_result,
+                    output_dir=run_path,
+                    run_suffix=f"_run_{run_idx:02d}",
+                    simulation_id=f"delivery_dynamic_{run_idx:02d}",
+                    revenue_per_order=float(config.delivery_avg_order_usd),
+                    sla_minutes=int(config.sla_minutes),
+                    runner_id="runner_1" if int(config.num_runners) == 1 else f"{int(config.num_runners)}_runners",
+                    service_hours=float(config.service_hours_duration),
+                    bev_cart_coordinates=bev_points,
+                    bev_cart_service=None,
+                    golfer_data=golfer_points,
+                )
+                metrics = delivery_metrics
+            except Exception as e:
+                logger.warning("Failed to generate metrics for run %d: %s", run_idx, e)
         
         # Events CSV
         events: list[dict[str, Any]] = []
@@ -540,7 +566,8 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                             events_df=events_df,
                             golfer_coords_df=golfer_coords_df,
                             clubhouse_coords=config.clubhouse,
-                            cart_graph=cart_graph
+                            cart_graph=cart_graph,
+                            runner_speed_mps=float(config.delivery_runner_speed_mps)
                         )
                         logger.info("Generated %d runner coordinate points using post-processing approach", len(runner_points))
                     else:
@@ -562,6 +589,14 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                 streams.update(by_rid)
             if golfer_points_csv:
                 streams.update(golfer_points_csv)
+
+            # Annotate golfer colors from order/delivery events
+            try:
+                if streams and events:
+                    from golfsim.postprocessing.golfer_colors import annotate_golfer_colors
+                    streams = annotate_golfer_colors(streams, events)
+            except Exception as e:
+                logger.warning("Failed to annotate golfer colors: %s", e)
 
             # Timeline anchors to control animation start/end
             # - Start: naturally anchored by earliest golfer tee time
@@ -598,20 +633,21 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
             logger.warning("Failed to write animation coordinates CSV: %s", e)
 
         # Copy to public
-        try:
-            simulation_id = build_simulation_id(config.output_dir, run_idx)
-            runner_count = int(config.num_runners)
-            description = f"Delivery runner simulation ({runner_count} runner{'s' if runner_count != 1 else ''})"
-            copy_to_public_coordinates(
-                run_dir=run_path,
-                simulation_id=simulation_id,
-                mode="delivery-runner",
-                golfer_group_count=len(groups),
-                description=description
-            )
-            sync_run_outputs_to_public(run_path, description=description)
-        except Exception as e:
-            logger.warning("Failed to copy to public coordinates: %s", e)
+        if not bool(getattr(config, "minimal_outputs", False)):
+            try:
+                simulation_id = build_simulation_id(config.output_dir, run_idx)
+                runner_count = int(config.num_runners)
+                description = f"Delivery runner simulation ({runner_count} runner{'s' if runner_count != 1 else ''})"
+                copy_to_public_coordinates(
+                    run_dir=run_path,
+                    simulation_id=simulation_id,
+                    mode="delivery-runner",
+                    golfer_group_count=len(groups),
+                    description=description
+                )
+                sync_run_outputs_to_public(run_path, description=description)
+            except Exception as e:
+                logger.warning("Failed to copy to public coordinates: %s", e)
 
 
         all_runs.append({
@@ -622,11 +658,12 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
             "rpr": float(getattr(metrics, 'revenue_per_round', 0.0) or 0.0),
         })
 
-    lines: list[str] = ["# Delivery Dynamic Summary", "", f"Runs: {len(all_runs)}"]
-    if all_runs:
-        rprs = [float(r.get("rpr", 0.0)) for r in all_runs]
-        lines.append(f"Revenue per round: min=${min(rprs):.2f} max=${max(rprs):.2f} mean=${(sum(rprs)/len(rprs)):.2f}")
-    (config.output_dir / "summary.md").write_text("\n".join(lines), encoding="utf-8")
+    if not bool(getattr(config, "minimal_outputs", False)):
+        lines: list[str] = ["# Delivery Dynamic Summary", "", f"Runs: {len(all_runs)}"]
+        if all_runs:
+            rprs = [float(r.get("rpr", 0.0)) for r in all_runs]
+            lines.append(f"Revenue per round: min=${min(rprs):.2f} max=${max(rprs):.2f} mean=${(sum(rprs)/len(rprs)):.2f}")
+        (config.output_dir / "summary.md").write_text("\n".join(lines), encoding="utf-8")
 
     logger.info("Done. Results in: %s", config.output_dir)
     return {"status": "completed", "output_dir": str(config.output_dir)}

@@ -93,6 +93,8 @@ class SimulationConfig:
     include_delivery_maps: bool = False
     no_heatmap: bool = False
     skip_executive_summary: bool = False
+    # When true, only write files needed by the map app manifest (coordinates.csv, simulation_metrics.json, results.json)
+    minimal_outputs: bool = False
 
 
     @staticmethod
@@ -295,6 +297,7 @@ class SimulationConfig:
             include_delivery_maps=getattr(args, "include_delivery_maps", False),
             no_heatmap=getattr(args, "no_heatmap", False),
             skip_executive_summary=getattr(args, "skip_executive_summary", False),
+            minimal_outputs=bool(getattr(args, "minimal_outputs", False)),
         )
 
         # Override with CLI arguments where provided

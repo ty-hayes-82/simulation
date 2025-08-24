@@ -283,30 +283,73 @@ def _calculate_on_time_rate(delivery_stats: List[Dict[str, Any]], sla_minutes: i
 def _calculate_runner_utilization(activity_log: List[Dict[str, Any]], service_hours: float) -> Dict[str, float]:
     """Calculate runner utilization considering only driving as active time.
 
+    Driving time is counted as:
+    - Outbound: from 'delivery_start' to 'delivery_complete'
+    - Return: from 'returning' to 'arrived_clubhouse'
+
+    If a leg is incomplete at service end, count up to 'service_closed' (or last runner event).
+
     Prep is handled by the kitchen and should not count toward runner utilization.
     """
-    service_seconds = service_hours * 3600
+    service_seconds = max(0.0, float(service_hours) * 3600.0)
 
-    # Track only driving time (outbound + return). Ignore prep.
-    driving_time = 0
+    # Filter to runner-only events and sort chronologically
+    runner_events = [a for a in activity_log if a.get('runner_id')]
+    runner_events.sort(key=lambda x: x.get('timestamp_s', 0))
 
-    for i, activity in enumerate(activity_log):
-        activity_type = activity.get('activity_type', '')
-        timestamp = activity.get('timestamp_s', 0)
+    if not runner_events:
+        total_time = max(service_seconds, 1.0)
+        return {'driving': 0.0, 'prep': 0.0, 'idle': 100.0}
 
-        # Duration to next activity marker within the log window
-        next_timestamp = service_seconds
-        if i + 1 < len(activity_log):
-            next_timestamp = activity_log[i + 1].get('timestamp_s', service_seconds)
+    # Determine service window from runner events
+    service_start_time = None
+    service_end_time = None
+    for e in runner_events:
+        t = e.get('timestamp_s', 0)
+        et = e.get('activity_type', '')
+        if et == 'service_opened' and service_start_time is None:
+            service_start_time = t
+        if et == 'service_closed':
+            service_end_time = t
+    if service_start_time is None:
+        service_start_time = runner_events[0].get('timestamp_s', 0)
+    if service_end_time is None:
+        service_end_time = runner_events[-1].get('timestamp_s', service_start_time)
 
-        duration = next_timestamp - timestamp
+    # Sum outbound and return driving segments
+    outbound_start: float | None = None
+    return_start: float | None = None
+    driving_time = 0.0
 
-        # Driving includes delivery_start.. and returning.. segments
-        if 'delivery_start' in activity_type or 'returning' in activity_type:
-            driving_time += max(0, duration)
+    for e in runner_events:
+        et = e.get('activity_type', '')
+        ts = e.get('timestamp_s', 0)
 
-    total_time = max(service_seconds, 1)
+        # Outbound leg
+        if 'delivery_start' in et:
+            outbound_start = ts
+        elif 'delivery_complete' in et and outbound_start is not None:
+            driving_time += max(0.0, ts - outbound_start)
+            outbound_start = None
+
+        # Return leg
+        if 'returning' in et:
+            return_start = ts
+        elif 'arrived_clubhouse' in et and return_start is not None:
+            driving_time += max(0.0, ts - return_start)
+            return_start = None
+
+    # Handle incomplete legs at service end
+    if outbound_start is not None:
+        driving_time += max(0.0, service_end_time - outbound_start)
+        outbound_start = None
+    if return_start is not None:
+        driving_time += max(0.0, service_end_time - return_start)
+        return_start = None
+
+    total_time = max(service_seconds, 1.0)
     driving_pct = (driving_time / total_time) * 100.0
+    driving_pct = max(0.0, min(100.0, driving_pct))
     idle_pct = 100.0 - driving_pct
 
     return {

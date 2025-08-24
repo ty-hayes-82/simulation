@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 import os
+import shutil
 from typing import Any
 
 # Ensure project root is importable
@@ -29,6 +30,37 @@ from golfsim.viz.heatmap_viz import (
 )
 
 logger = get_logger(__name__)
+
+
+def cleanup_old_simulation_outputs(output_root: str = "outputs") -> None:
+    """Remove all existing simulation output directories to ensure clean results."""
+    try:
+        project_root = Path(__file__).parent.parent.parent
+        outputs_dir = project_root / output_root
+        
+        if not outputs_dir.exists():
+            logger.info("No existing outputs directory to clean")
+            return
+            
+        # Find all simulation output directories (timestamped folders)
+        old_dirs = [d for d in outputs_dir.iterdir() if d.is_dir() and d.name.startswith("202")]
+        
+        if not old_dirs:
+            logger.info("No old simulation outputs to clean")
+            return
+            
+        logger.info("Cleaning up %d old simulation output directories", len(old_dirs))
+        for old_dir in old_dirs:
+            try:
+                shutil.rmtree(old_dir)
+                logger.debug("Removed old output directory: %s", old_dir.name)
+            except Exception as e:
+                logger.warning("Failed to remove %s: %s", old_dir.name, e)
+                
+        logger.info("✅ Cleaned up old simulation outputs")
+        
+    except Exception as e:
+        logger.warning("Failed to cleanup old outputs: %s", e)
 
 
 def build_feature_collection(
@@ -115,6 +147,7 @@ def main() -> None:
     parser.add_argument("--num-runs", type=int, default=1, help="Number of runs")
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory root")
     parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
+    parser.add_argument("--keep-old-outputs", action="store_true", default=False, help="Keep existing simulation outputs (default: clean them up)")
 
     # Mode selection
     parser.add_argument("--num-carts", type=int, default=0, help="Number of beverage carts")
@@ -139,14 +172,24 @@ def main() -> None:
     
     # GeoJSON export options
     parser.add_argument("--export-geojson", action="store_true", default=True, help="Export hole delivery times GeoJSON (default: True)")
-    parser.add_argument("--geojson-output", type=str, default="my-map-animation/public/hole_delivery_times.geojson", help="GeoJSON output path")
+
+    # Minimal outputs mode: only write files needed by the map app controls/manifest
+    parser.add_argument("--minimal-outputs", action="store_true", default=False, help="Only write coordinates.csv, simulation_metrics.json, and results.json; skip heatmaps, logs, extra metrics, and public copies")
 
     args = parser.parse_args()
     init_logging(args.log_level)
 
+    # Clean up old simulation outputs unless explicitly told to keep them
+    if not args.keep_old_outputs:
+        cleanup_old_simulation_outputs()
+
     logger.info("Starting simulation with %d runners, %d carts", args.num_runners, args.num_carts)
     
     # Create configuration from arguments
+    # If minimal-outputs, implicitly disable heatmap to save time and space
+    if args.minimal_outputs:
+        args.no_heatmap = True
+
     config = create_simulation_config_from_args(args)
     
     # Run the appropriate simulation
@@ -159,21 +202,36 @@ def main() -> None:
             # The `results` dict from the simulation orchestrator is a summary.
             # We need to load the detailed results.json from the output directory.
             output_dir = Path(results.get("output_dir", ""))
-            if output_dir and (output_dir / "run_01" / "results.json").exists():
-                detailed_results_path = output_dir / "run_01" / "results.json"
-                with detailed_results_path.open("r") as f:
+            run_dir = output_dir / "run_01"
+            detailed_results_path = run_dir / "results.json"
+            if output_dir and detailed_results_path.exists():
+                with detailed_results_path.open("r", encoding="utf-8") as f:
                     detailed_results = json.load(f)
 
-                geojson_path = Path(args.geojson_output)
-                # Use absolute path if not already absolute
-                if not geojson_path.is_absolute():
-                    geojson_path = Path.cwd() / geojson_path
-                    
-                export_hole_delivery_geojson(
-                    results=detailed_results,
-                    course_dir=Path(config.course_dir),
-                    output_path=geojson_path
-                )
+                # 1) Write a per-run GeoJSON beside coordinates.csv for this run
+                try:
+                    per_run_geojson = run_dir / "hole_delivery_times.geojson"
+                    export_hole_delivery_geojson(
+                        results=detailed_results,
+                        course_dir=Path(config.course_dir),
+                        output_path=per_run_geojson,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to write per-run hole delivery GeoJSON: %s", e)
+
+                # 2) Also write the global/public GeoJSON path for quick preview
+                try:
+                    if hasattr(args, "geojson_output") and getattr(args, "geojson_output", None):
+                        geojson_path = Path(args.geojson_output)
+                        if not geojson_path.is_absolute():
+                            geojson_path = Path.cwd() / geojson_path
+                        export_hole_delivery_geojson(
+                            results=detailed_results,
+                            course_dir=Path(config.course_dir),
+                            output_path=geojson_path,
+                        )
+                except Exception as e:
+                    logger.warning("Failed to write public hole delivery GeoJSON: %s", e)
             else:
                 logger.warning("Could not find detailed results.json to generate heatmap data.")
         

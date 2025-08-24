@@ -1,0 +1,12 @@
+simulation_id,ID,timestamp,timestamp_s,action,node_id,hole,ttl_amt,type,order_id,runner_id,cart_id,group_id,latitude,longitude,status,details
+orders_001_run_01,runner_1,07:00,0,service_idle,,,,delivery_runner,,runner_1,,,,,,runner_1 waiting 180 minutes until opening
+orders_001_run_01,runner_1,10:00,10800,service_opened,,,,delivery_runner,,runner_1,,,,,,runner_1 started shift
+orders_001_run_01,golf_group_1,11:00:00,14400,tee_off,,1,,golfer_group,,,,1,,,,
+orders_001_run_01,order_001,12:47:12,20832,order_placed,,9,,order,001,,,1,,,processed,
+orders_001_run_01,runner_1,12:47,20835,order_assigned,,,,delivery_runner,001,runner_1,,,,,,Assigned Order 001 to runner_1
+orders_001_run_01,runner_1,12:47,20835,prep_start,,,,delivery_runner,001,runner_1,,,,,,runner_1 started prep for Order 001 (Hole 9)
+orders_001_run_01,runner_1,12:57,21435,prep_complete,,,,delivery_runner,001,runner_1,,,,,,runner_1 completed prep for Order 001
+orders_001_run_01,runner_1,12:57,21435,delivery_start,,,,delivery_runner,001,runner_1,,,,,,"runner_1 departing to Hole 9 (350m, 0.5 min)"
+orders_001_run_01,runner_1,12:57,21464,delivery_complete,,,,delivery_runner,001,runner_1,,,,,,runner_1 delivered Order 001 to Hole 9 (Total completion: 10.5 min)
+orders_001_run_01,runner_1,12:57,21464,returning,,,,delivery_runner,001,runner_1,,,,,,runner_1 returning to clubhouse from hole_9 (1.1 min)
+orders_001_run_01,runner_1,12:58,21529,arrived_clubhouse,,,,delivery_runner,001,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 001

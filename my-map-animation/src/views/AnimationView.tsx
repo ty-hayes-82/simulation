@@ -182,6 +182,7 @@ function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easin
     }
   }
   if (elapsedSeconds >= coordinates[coordinates.length - 1].timestamp) return coordinates[coordinates.length - 1];
+  // FIXED: Always return this entity's own first coordinate when animation time is before its start time
   if (elapsedSeconds < coordinates[0].timestamp) return coordinates[0];
   return null;
 }
@@ -278,6 +279,7 @@ function getCatmullRomPositionOnPath(coordinates: Coordinate[], elapsedTime: num
   }
 
   if (i === -1) {
+    // FIXED: Always return this entity's own first coordinate when animation time is before its start time
     if (elapsedSeconds < coordinates[0].timestamp) return coordinates[0];
     return coordinates[coordinates.length - 1];
   }
@@ -428,7 +430,7 @@ const DEFAULT_CONFIG: AppConfig = {
 };
 
 export default function AnimationView() {
-  const { selectedSim, viewState, setViewState } = useSimulation();
+  const { selectedSim, viewState, setViewState, savedAnimationTimestamp, setSavedAnimationTimestamp, manifest } = useSimulation();
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [currentMapStyle, setCurrentMapStyle] = useState<string>(DEFAULT_CONFIG.animation.defaultMapStyle);
   const [trackersData, setTrackersData] = useState<EntityData[]>([]);
@@ -470,6 +472,20 @@ export default function AnimationView() {
   // Animation timing refs for smooth transitions
   const animationStartTimeRef = useRef<number>(0);
   const animationOffsetRef = useRef<number>(0);
+  const currentTimelineMinutesRef = useRef<number>(0);
+
+  // Keep ref updated with current timeline minutes
+  useEffect(() => {
+    currentTimelineMinutesRef.current = timelineMinutes;
+  }, [timelineMinutes]);
+
+  // Save animation timestamp when component unmounts (switching views)
+  useEffect(() => {
+    return () => {
+      // Save current animation timestamp when unmounting
+      setSavedAnimationTimestamp(currentTimelineMinutesRef.current);
+    };
+  }, [setSavedAnimationTimestamp]);
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -505,40 +521,41 @@ export default function AnimationView() {
     loadConfig();
   }, []);
 
-  // Reset animation and sources when selected simulation changes
+  // Unified effect to handle simulation data loading, reset, and restoration
   useEffect(() => {
-    // Clear existing sources so new data mounts cleanly
-    sourcesInitializedRef.current = false;
-    setSourcesReady(false);
-    setTrackersData([]);
-    setTrackerPositions({});
-    setIsLoading(true);
-    setDeliveryMetrics(null);
-    setBevCartMetrics(null);
-    // Reset animation timing and timeline
-    animationOffsetRef.current = 0;
-    animationStartTimeRef.current = Date.now();
-    setTimelineMinutes(0);
-    setBaselineTimestampSeconds(0);
-    // Ensure autoplay resumes
-    setIsSliderControlled(false);
-  }, [selectedSim?.id]);
+    if (!selectedSim) {
+      return;
+    }
 
-  // Load coordinates directly from the single simulation
-  useEffect(() => {
-    const loadCoordinates = async () => {
+    let isCancelled = false;
+    
+    // This function encapsulates all setup logic
+    const setupSimulation = async () => {
+      // 1. Always reset visual state before loading
+      setIsLoading(true);
+      setTrackersData([]);
+      sourcesInitializedRef.current = false;
+      setSourcesReady(false);
+      
+      // 2. Load coordinates
       try {
         const baseDir = (config as any)?.data?.coordinatesDir || DEFAULT_CONFIG.data.coordinatesDir;
-        const csvFile = selectedSim?.filename || 'coordinates.csv';
+        const csvFile = selectedSim.filename;
         const csvPath = `${baseDir}/${csvFile}`;
         const csvResp = await fetch(`${csvPath}?t=${Date.now()}`);
+        if (!csvResp.ok) throw new Error(`Failed to load CSV: ${csvResp.status}`);
         const csvText = await csvResp.text();
+        
+        if (isCancelled) return;
+
+        // This is a synchronous operation after the fetch
         Papa.parse(csvText, {
           header: true,
           skipEmptyLines: true,
           complete: (results) => {
+            if (isCancelled) return;
+            
             const rawRows: any[] = results.data as any[];
-            // Normalize and filter rows
             const normalizedRows = rawRows
               .map((row: any) => {
                 const rawType = String(row.type || '').toLowerCase();
@@ -547,12 +564,10 @@ export default function AnimationView() {
                   normType = 'bev-cart';
                 }
                 if (rawType === '') {
-                  // Default heuristics: infer type from id when possible
                   const idLower = String(row.id || row.golfer_id || '').toLowerCase();
                   if (idLower.includes('runner')) normType = 'runner';
                   else if (idLower.includes('golfer')) normType = 'golfer';
                 }
-                // Drop unsupported utility rows (e.g., timeline)
                 if (normType === 'timeline') {
                   return null;
                 }
@@ -581,113 +596,73 @@ export default function AnimationView() {
               acc[coord.golfer_id].push(coord);
               return acc;
             }, {});
-            // Anchor animation start to the first golfer tee time when available
-            const golferTimestamps = normalizedRows
-              .filter((c: any) => c.type === 'golfer')
-              .map((c: any) => c.timestamp);
-            const timestampsForStart = golferTimestamps.length
-              ? golferTimestamps
-              : normalizedRows.map((c: any) => c.timestamp);
+
+            const golferTimestamps = normalizedRows.filter((c: any) => c.type === 'golfer').map((c: any) => c.timestamp);
+            const timestampsForStart = golferTimestamps.length ? golferTimestamps : normalizedRows.map((c: any) => c.timestamp);
             const minTimestamp = Math.min(...timestampsForStart);
             const maxTimestamp = Math.max(...normalizedRows.map((c: any) => c.timestamp));
-            const duration = (maxTimestamp - minTimestamp); // seconds
+            const duration = (maxTimestamp - minTimestamp);
+            
             setBaselineTimestampSeconds(minTimestamp);
-            setTimelineMinutes(0);
-            setTimelineMaxMinutes((duration + (5 * 3600)) / 60); // minutes
-            
-            // Initialize animation timing refs
-            animationStartTimeRef.current = Date.now();
-            animationOffsetRef.current = 0;
-            
+            setTimelineMaxMinutes((duration + (5 * 3600)) / 60);
+
             const trackersArray: EntityData[] = Object.entries(trackerGroups)
               .map(([trackerId, coordinates]) => {
-                const sortedCoords = coordinates
-                  .sort((a, b) => a.timestamp - b.timestamp)
-                  .map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) }));
+                const sortedCoords = coordinates.sort((a, b) => a.timestamp - b.timestamp).map(coord => ({ ...coord, timestamp: (coord.timestamp - minTimestamp) }));
                 let filteredCoords = sortedCoords;
                 if (sortedCoords[0]?.type === 'golfer') {
-                  // Only show golfers from when they tee off (hole >= 1) until they finish
-                  const teeOffIndex = sortedCoords.findIndex(coord => 
-                    coord.current_hole !== undefined && coord.current_hole >= 1
-                  );
-                  const finishIndex = sortedCoords.length - 1 - [...sortedCoords].reverse().findIndex((coord: Coordinate) => 
-                    coord.current_hole !== undefined && coord.current_hole >= 1
-                  );
-
+                  const teeOffIndex = sortedCoords.findIndex(coord => coord.current_hole !== undefined && coord.current_hole >= 1);
+                  const finishIndex = sortedCoords.length - 1 - [...sortedCoords].reverse().findIndex((coord: Coordinate) => coord.current_hole !== undefined && coord.current_hole >= 1);
                   if (teeOffIndex !== -1 && finishIndex !== -1 && teeOffIndex <= finishIndex) {
-                    // Start from tee-off (hole 1+) and end at last hole, apply sampling
                     filteredCoords = sortedCoords.slice(teeOffIndex, finishIndex + 1).filter((_, index) => index % 3 === 0);
                   } else {
-                    // This golfer never teed off or has no valid coordinates
                     filteredCoords = [];
                   }
                 }
                 const entityType = filteredCoords[0]?.type || sortedCoords[0]?.type || 'golfer';
-                // Determine base color: prefer per-point color if consistent, else fallback per-entity default
                 const firstColor = filteredCoords.find(c => !!c.color)?.color;
                 return { name: trackerId, coordinates: filteredCoords, type: entityType, color: firstColor || config.entityTypes[entityType]?.color || config.golferColors[0] };
               })
-              .filter((e) => e.coordinates.length > 0); // Drop empty trackers entirely
+              .filter((e) => e.coordinates.length > 0);
+            
             setTrackersData(trackersArray);
             
-            // Set the shared map view based on the bounds of this simulation's data
             const bounds = calculateBounds(trackersArray);
-            setViewState({
-              ...viewState,
-              longitude: bounds.center[0],
-              latitude: bounds.center[1],
-              zoom: bounds.zoom,
-            });
+            setViewState({ ...viewState, longitude: bounds.center[0], latitude: bounds.center[1], zoom: bounds.zoom });
+            
+            // 3. Decide whether to restore or reset animation timing
+            if (savedAnimationTimestamp !== null) {
+              // Restore from saved state
+              setTimelineMinutes(savedAnimationTimestamp);
+              animationOffsetRef.current = savedAnimationTimestamp * 60;
+              setSavedAnimationTimestamp(null); // Consume the saved timestamp
+            } else {
+              // Start fresh
+              setTimelineMinutes(0);
+              animationOffsetRef.current = 0;
+            }
+            animationStartTimeRef.current = Date.now();
+            setIsSliderControlled(false);
 
+            // 4. Final state updates
             setIsLoading(false);
-            setSourcesReady(false);
-
-            // Compute derived revenue from CSV if present (max cumulative total_revenue)
-            try {
-              let maxRevenue = 0;
-              for (const row of rawRows) {
-                const val = parseFloat(row.total_revenue ?? row.totalRevenue ?? '');
-                if (Number.isFinite(val)) maxRevenue = Math.max(maxRevenue, val);
-              }
-              setDerivedRevenue(Number.isFinite(maxRevenue) ? maxRevenue : 0);
-            } catch {}
-
-            // Compute runner utilization % from coordinates (moving time / total shift time)
-            try {
-              const runnerTracks = trackersArray.filter(e => (e.type || '').toLowerCase() === 'runner').map(e => e.coordinates);
-              let totalShiftSeconds = 0;
-              let movingSeconds = 0;
-              const minMoveMeters = 2; // threshold to count as moving over 60s sample
-              for (const coords of runnerTracks) {
-                if (!coords || coords.length < 2) continue;
-                const startTs = coords[0].timestamp;
-                const endTs = coords[coords.length - 1].timestamp;
-                if (Number.isFinite(startTs) && Number.isFinite(endTs) && endTs > startTs) {
-                  totalShiftSeconds += (endTs - startTs);
-                }
-                for (let i = 0; i < coords.length - 1; i++) {
-                  const p1 = coords[i];
-                  const p2 = coords[i + 1];
-                  const timeDiff = Math.max(0, (p2.timestamp - p1.timestamp));
-                  if (timeDiff <= 0) continue;
-                  // Reuse velocity calc to estimate distance moved
-                  const v = calculateVelocity(p1 as any, p2 as any); // m/s
-                  const distance = v * timeDiff; // meters
-                  if (distance >= minMoveMeters) movingSeconds += timeDiff;
-                }
-              }
-              const util = totalShiftSeconds > 0 ? (movingSeconds / totalShiftSeconds) * 100 : 0;
-              setDerivedUtilPct(util);
-            } catch {}
-          },
-          error: () => setIsLoading(false)
+          }
         });
-      } catch {
-        setIsLoading(false);
+
+      } catch (error) {
+        if (!isCancelled) setIsLoading(false);
       }
     };
-    loadCoordinates();
-  }, [config, selectedSim?.filename]);
+    
+    setupSimulation();
+
+    // Cleanup function to prevent state updates on unmounted component
+    return () => {
+      isCancelled = true;
+    };
+    
+  }, [selectedSim?.id]);
+
 
   // Load simulation metrics
   useEffect(() => {
@@ -698,7 +673,6 @@ export default function AnimationView() {
         const metricsFile = selectedSim?.metricsFilename || 'simulation_metrics.json';
         const response = await fetch(`${baseDir}/${metricsFile}${cacheBuster}`);
         if (!response.ok) {
-          console.log('No simulation metrics found, using defaults');
           return;
         }
         
@@ -715,19 +689,17 @@ export default function AnimationView() {
           setBevCartMetrics(metricsData.bevCartMetrics);
         }
         
-        console.log('Loaded simulation metrics:', metricsData);
       } catch (error) {
-        console.error('Error loading simulation metrics:', error);
         // Set defaults if metrics loading fails
         setHasRunners(false);
         setHasBevCart(false);
       }
     };
 
-    if (config.data?.coordinatesDir) {
+    if (config.data?.coordinatesDir && manifest && selectedSim) {
       loadMetrics();
     }
-  }, [config, selectedSim?.metricsFilename]);
+  }, [config, selectedSim?.metricsFilename, manifest, selectedSim]);
 
   // Merge in derived fallbacks when available
   useEffect(() => {
@@ -893,6 +865,8 @@ export default function AnimationView() {
     return viewState;
   };
 
+  if (!manifest) return (<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontSize: 18, color: '#666' }}>Loading simulation manifest...</div>);
+  if (!selectedSim) return (<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontSize: 18, color: '#666' }}>No simulation selected...</div>);
   if (isLoading) return (<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontSize: 18, color: '#666' }}>Loading tracker coordinates...</div>);
   if (trackersData.length === 0) return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontSize: 18, color: '#666', textAlign: 'center' }}>

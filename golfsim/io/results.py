@@ -218,6 +218,13 @@ def normalize_coordinate_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
         "type": norm_type,
         "hole": hole_val,
     }
+    # Preserve color if provided by upstream annotators
+    color_val = _get_first("color")
+    if color_val is not None:
+        try:
+            base_entry["color"] = str(color_val)
+        except Exception:
+            pass
     
     # Add visibility tracking fields if present (for golfer points)
     visibility_status = _get_first("visibility_status", "visibility_color")
@@ -270,7 +277,7 @@ def write_unified_coordinates_csv(points_by_id: Dict[str, List[Dict[str, Any]]],
 
     # Base fieldnames plus visibility tracking fields and running totals
     fieldnames = [
-        "id", "latitude", "longitude", "timestamp", "type", "hole",
+        "id", "latitude", "longitude", "timestamp", "type", "hole", "color",
         "visibility_status", "time_since_last_sighting_min", "pulsing",
         "total_orders", "total_revenue", "avg_per_order", "revenue_per_hour",
         "avg_order_time_min",

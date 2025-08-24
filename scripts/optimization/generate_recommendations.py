@@ -69,7 +69,7 @@ def build_staffing_table(rows: List[Dict[str, Any]]) -> str:
             by_key[key] = r
     
     lines: List[str] = []
-    lines.append("| Scenario | Orders | Minimal Runners | On-Time (95% CI) | Failed (95% CI) | p90 (95% CI) | Stability | Frontier |\n")
+    lines.append("| Scenario | Orders | Minimal Runners | On-Time % (95% CI) | Failed (95% CI) | p90 (95% CI) | Stability | Frontier |\n")
     lines.append("|---|---:|---:|---:|---:|---:|---:|---:|\n")
     
     for (scenario, orders), r in sorted(by_key.items(), key=lambda t: (t[0][0], t[0][1])):
