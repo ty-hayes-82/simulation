@@ -137,7 +137,7 @@ export default function BlockedHolesMatrix() {
   if (runnerCounts.length === 0) return null;
 
   return (
-    <Card style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 20, background: 'rgba(255,255,255,0.95)' }}>
+    <Card style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 20, background: 'rgba(255,255,255,0.95)' }}>
       <Flex direction="column" gap="2" p="3">
         <Text size="2" weight="bold" style={{ alignSelf: 'center' }}>On-Time % by Blocked Holes (Orders: {selectedOrders})</Text>
         <Table.Root size="1" variant="surface" layout="auto">

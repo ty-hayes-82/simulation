@@ -983,7 +983,7 @@ export default function AnimationView() {
         hasRunners={hasRunners}
         hasBevCart={hasBevCart}
       />
-      <ColorLegend config={config} />
+      {/* <ColorLegend config={config} /> */}
     </div>
   );
 }

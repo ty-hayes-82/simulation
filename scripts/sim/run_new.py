@@ -175,6 +175,7 @@ def main() -> None:
 
     # Minimal outputs mode: only write files needed by the map app controls/manifest
     parser.add_argument("--minimal-outputs", action="store_true", default=False, help="Only write coordinates.csv, simulation_metrics.json, and results.json; skip heatmaps, logs, extra metrics, and public copies")
+    parser.add_argument("--coordinates-only-for-first-run", action="store_true", default=False, help="Only generate coordinates.csv for the first run in a multi-run simulation")
 
     args = parser.parse_args()
     init_logging(args.log_level)

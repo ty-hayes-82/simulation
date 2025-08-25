@@ -146,7 +146,7 @@ export default function SimulationMatrix() {
   if (runnerCounts.length === 0 || orderCounts.length === 0) return null;
 
   return (
-    <div style={{ position: 'absolute', bottom: 200, right: 20, zIndex: 25 }}>
+    <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 25 }}>
       <Card style={{ background: 'rgba(255,255,255,0.95)' }}>
         <Flex direction="column" gap="2" p="3">
           <Text size="2" weight="bold" style={{ alignSelf: 'center' }}>{title}</Text>

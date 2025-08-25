@@ -95,6 +95,7 @@ class SimulationConfig:
     skip_executive_summary: bool = False
     # When true, only write files needed by the map app manifest (coordinates.csv, simulation_metrics.json, results.json)
     minimal_outputs: bool = False
+    coordinates_only_for_first_run: bool = False
 
 
     @staticmethod
@@ -298,6 +299,7 @@ class SimulationConfig:
             no_heatmap=getattr(args, "no_heatmap", False),
             skip_executive_summary=getattr(args, "skip_executive_summary", False),
             minimal_outputs=bool(getattr(args, "minimal_outputs", False)),
+            coordinates_only_for_first_run=bool(getattr(args, "coordinates_only_for_first_run", False)),
         )
 
         # Override with CLI arguments where provided

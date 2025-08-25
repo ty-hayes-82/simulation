@@ -114,10 +114,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--minimal-outputs", action="store_true", default=False, help="Only write coordinates.csv, simulation_metrics.json, results.json for each run")
     p.add_argument("--keep-old-outputs", action="store_true", default=False, help="Keep existing simulation outputs (default: clean them up)")
     p.add_argument("--run-blocking-variants", action="store_true", help="Run all four blocking variants for each combination")
+    p.add_argument("--coordinates-only-for-first-run", action="store_true", default=False, help="Only generate coordinates.csv for the first run in a multi-run simulation")
     return p.parse_args()
 
 
-def run_one(*, py: str, course_dir: Path, scenario: str, runners: int, orders: int, runs: int, groups_count: int, first_tee: Optional[str], speed: float | None, prep: int | None, out_dir: Path, log_level: str, minimal_outputs: bool, keep_old_outputs: bool, extra_cli_args: Optional[List[str]] = None) -> None:
+def run_one(*, py: str, course_dir: Path, scenario: str, runners: int, orders: int, runs: int, groups_count: int, first_tee: Optional[str], speed: float | None, prep: int | None, out_dir: Path, log_level: str, minimal_outputs: bool, keep_old_outputs: bool, extra_cli_args: Optional[List[str]] = None, coordinates_only_for_first_run: bool = False) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     project_root = Path(__file__).resolve().parent.parent.parent
     run_new_py = str(project_root / "scripts" / "sim" / "run_new.py")
@@ -143,6 +144,8 @@ def run_one(*, py: str, course_dir: Path, scenario: str, runners: int, orders: i
         cmd += ["--minimal-outputs"]
     if keep_old_outputs:
         cmd += ["--keep-old-outputs"]
+    if coordinates_only_for_first_run:
+        cmd += ["--coordinates-only-for-first-run"]
     if extra_cli_args:
         cmd.extend(extra_cli_args)
     subprocess.run(cmd, check=True)
@@ -191,6 +194,7 @@ def main() -> None:
                 # After the main script's initial cleanup, all sub-runs should keep outputs.
                 keep_old_outputs=True,
                 extra_cli_args=variant.cli_flags,
+                coordinates_only_for_first_run=a.coordinates_only_for_first_run,
             )
             print(f"✅ Generated runners={r}, orders={o}, variant={variant.key} → {out}")
 

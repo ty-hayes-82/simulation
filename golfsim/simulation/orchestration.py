@@ -562,131 +562,135 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
         except Exception as e:
             logger.warning("Failed to write events for delivery-runner run %d: %s", run_idx, e)
 
-        # Coordinate generation - NEW POST-PROCESSING APPROACH
-        try:
-            runner_points: list[dict[str, Any]] = []
-            golfer_points_csv: dict[str, list[dict[str, Any]]] = {}
-            cart_graph = None
-            
-            # Load cart graph
+        # Skip expensive coordinate generation for subsequent runs if flag is set
+        if bool(getattr(config, "coordinates_only_for_first_run", False)) and run_idx > 1:
+            logger.info("Skipping coordinate generation for run %d as per --coordinates-only-for-first-run", run_idx)
+        else:
+            # Coordinate generation - NEW POST-PROCESSING APPROACH
             try:
-                import pickle
-                cart_graph_path = Path(config.course_dir) / "pkl" / "cart_graph.pkl"
-                if cart_graph_path.exists():
-                    with cart_graph_path.open("rb") as f:
-                        cart_graph = pickle.load(f)
-            except Exception:
+                runner_points: list[dict[str, Any]] = []
+                golfer_points_csv: dict[str, list[dict[str, Any]]] = {}
                 cart_graph = None
-
-            # Generate golfer coordinates first
-            if groups:
-                gp = generate_golfer_points_for_groups(config.course_dir, groups)
-                by_gid: dict[int, list[dict[str, Any]]] = {}
-                for p in gp:
-                    gid = int(p.get("group_id", 0) or 0)
-                    by_gid.setdefault(gid, []).append(p)
-                for gid, pts in by_gid.items():
-                    golfer_points_csv[f"golfer_group_{gid}"] = pts
-
-            # Generate runner coordinates using post-processing approach
-            if cart_graph is not None and events:
-                try:
-                    import pandas as pd
-                    
-                    # Convert events to DataFrame
-                    events_df = pd.DataFrame(events)
-                    
-                    # Convert golfer coordinates to DataFrame
-                    all_golfer_coords = []
-                    for group_coords in golfer_points_csv.values():
-                        all_golfer_coords.extend(group_coords)
-                    
-                    if all_golfer_coords:
-                        golfer_coords_df = pd.DataFrame(all_golfer_coords)
-                        
-                        # Generate runner coordinates from events
-                        # Prepare optional detailed dataframes for precise node-path GPS generation
-                        try:
-                            delivery_stats_df = pd.DataFrame(sim_result.get("delivery_stats", []) or [])
-                        except Exception:
-                            delivery_stats_df = None
-                        try:
-                            order_timing_df = pd.DataFrame(getattr(delivery_service, "order_timing_logs", []) or [])
-                        except Exception:
-                            order_timing_df = None
-
-                        runner_points = generate_runner_coordinates_from_events(
-                            events_df=events_df,
-                            golfer_coords_df=golfer_coords_df,
-                            clubhouse_coords=config.clubhouse,
-                            cart_graph=cart_graph,
-                            runner_speed_mps=float(config.delivery_runner_speed_mps),
-                            num_runners=int(config.num_runners),
-                            delivery_stats_df=delivery_stats_df,
-                            order_timing_df=order_timing_df,
-                        )
-                        logger.info("Generated %d runner coordinate points using post-processing approach", len(runner_points))
-                    else:
-                        logger.warning("No golfer coordinates available for runner coordinate generation")
-                        
-                except Exception as e:
-                    logger.warning("Post-processing coordinate generation failed: %s", e)
-                    runner_points = []
-            else:
-                logger.warning("Cart graph not available or no events - skipping runner coordinate generation")
-            
-            # Combine all coordinate streams
-            streams: dict[str, list[dict[str, Any]]] = {}
-            if runner_points:
-                by_rid: dict[str, list[dict[str, Any]]] = {}
-                for rp in runner_points:
-                    rid = str(rp.get("id", "runner_1"))
-                    by_rid.setdefault(rid, []).append(rp)
-                streams.update(by_rid)
-            if golfer_points_csv:
-                streams.update(golfer_points_csv)
-
-            # Annotate golfer colors from order/delivery events
-            try:
-                if streams and events:
-                    from golfsim.postprocessing.golfer_colors import annotate_golfer_colors
-                    streams = annotate_golfer_colors(streams, events)
-            except Exception as e:
-                logger.warning("Failed to annotate golfer colors: %s", e)
-
-            # Timeline anchors to control animation start/end
-            # - Start: naturally anchored by earliest golfer tee time
-            # - End: force timeline to extend 5 hours after last tee time
-            try:
-                if groups:
-                    last_tee_s = max(int(g.get("tee_time_s", 0) or 0) for g in groups)
-                    anchor_end_s = int(last_tee_s + 5 * 3600)
-                    # Use clubhouse coords for anchor point
-                    if config.clubhouse and isinstance(config.clubhouse, tuple) and len(config.clubhouse) == 2:
-                        lon, lat = float(config.clubhouse[0]), float(config.clubhouse[1])
-                    else:
-                        lon, lat = -84.5928, 34.0379
-                    timeline_point = {
-                        "id": "timeline",
-                        "latitude": lat,
-                        "longitude": lon,
-                        "timestamp": anchor_end_s,
-                        "type": "timeline",
-                        "hole": "clubhouse",
-                    }
-                    streams.setdefault("timeline", []).append(timeline_point)
-            except Exception:
-                pass
-
-            # Write coordinates CSV
-            if streams:
-                write_unified_coordinates_csv(streams, run_path / "coordinates.csv")
-                logger.info("Wrote coordinates CSV with %d streams", len(streams))
-            else:
-                logger.warning("No coordinate streams generated")
                 
-        except Exception as e:
-            logger.warning("Failed to write animation coordinates CSV: %s", e)
+                # Load cart graph
+                try:
+                    import pickle
+                    cart_graph_path = Path(config.course_dir) / "pkl" / "cart_graph.pkl"
+                    if cart_graph_path.exists():
+                        with cart_graph_path.open("rb") as f:
+                            cart_graph = pickle.load(f)
+                except Exception:
+                    cart_graph = None
+
+                # Generate golfer coordinates first
+                if groups:
+                    gp = generate_golfer_points_for_groups(config.course_dir, groups)
+                    by_gid: dict[int, list[dict[str, Any]]] = {}
+                    for p in gp:
+                        gid = int(p.get("group_id", 0) or 0)
+                        by_gid.setdefault(gid, []).append(p)
+                    for gid, pts in by_gid.items():
+                        golfer_points_csv[f"golfer_group_{gid}"] = pts
+
+                # Generate runner coordinates using post-processing approach
+                if cart_graph is not None and events:
+                    try:
+                        import pandas as pd
+                        
+                        # Convert events to DataFrame
+                        events_df = pd.DataFrame(events)
+                        
+                        # Convert golfer coordinates to DataFrame
+                        all_golfer_coords = []
+                        for group_coords in golfer_points_csv.values():
+                            all_golfer_coords.extend(group_coords)
+                        
+                        if all_golfer_coords:
+                            golfer_coords_df = pd.DataFrame(all_golfer_coords)
+                            
+                            # Generate runner coordinates from events
+                            # Prepare optional detailed dataframes for precise node-path GPS generation
+                            try:
+                                delivery_stats_df = pd.DataFrame(sim_result.get("delivery_stats", []) or [])
+                            except Exception:
+                                delivery_stats_df = None
+                            try:
+                                order_timing_df = pd.DataFrame(getattr(delivery_service, "order_timing_logs", []) or [])
+                            except Exception:
+                                order_timing_df = None
+
+                            runner_points = generate_runner_coordinates_from_events(
+                                events_df=events_df,
+                                golfer_coords_df=golfer_coords_df,
+                                clubhouse_coords=config.clubhouse,
+                                cart_graph=cart_graph,
+                                runner_speed_mps=float(config.delivery_runner_speed_mps),
+                                num_runners=int(config.num_runners),
+                                delivery_stats_df=delivery_stats_df,
+                                order_timing_df=order_timing_df,
+                            )
+                            logger.info("Generated %d runner coordinate points using post-processing approach", len(runner_points))
+                        else:
+                            logger.warning("No golfer coordinates available for runner coordinate generation")
+                            
+                    except Exception as e:
+                        logger.warning("Post-processing coordinate generation failed: %s", e)
+                        runner_points = []
+                else:
+                    logger.warning("Cart graph not available or no events - skipping runner coordinate generation")
+                
+                # Combine all coordinate streams
+                streams: dict[str, list[dict[str, Any]]] = {}
+                if runner_points:
+                    by_rid: dict[str, list[dict[str, Any]]] = {}
+                    for rp in runner_points:
+                        rid = str(rp.get("id", "runner_1"))
+                        by_rid.setdefault(rid, []).append(rp)
+                    streams.update(by_rid)
+                if golfer_points_csv:
+                    streams.update(golfer_points_csv)
+
+                # Annotate golfer colors from order/delivery events
+                try:
+                    if streams and events:
+                        from golfsim.postprocessing.golfer_colors import annotate_golfer_colors
+                        streams = annotate_golfer_colors(streams, events)
+                except Exception as e:
+                    logger.warning("Failed to annotate golfer colors: %s", e)
+
+                # Timeline anchors to control animation start/end
+                # - Start: naturally anchored by earliest golfer tee time
+                # - End: force timeline to extend 5 hours after last tee time
+                try:
+                    if groups:
+                        last_tee_s = max(int(g.get("tee_time_s", 0) or 0) for g in groups)
+                        anchor_end_s = int(last_tee_s + 5 * 3600)
+                        # Use clubhouse coords for anchor point
+                        if config.clubhouse and isinstance(config.clubhouse, tuple) and len(config.clubhouse) == 2:
+                            lon, lat = float(config.clubhouse[0]), float(config.clubhouse[1])
+                        else:
+                            lon, lat = -84.5928, 34.0379
+                        timeline_point = {
+                            "id": "timeline",
+                            "latitude": lat,
+                            "longitude": lon,
+                            "timestamp": anchor_end_s,
+                            "type": "timeline",
+                            "hole": "clubhouse",
+                        }
+                        streams.setdefault("timeline", []).append(timeline_point)
+                except Exception:
+                    pass
+
+                # Write coordinates CSV
+                if streams:
+                    write_unified_coordinates_csv(streams, run_path / "coordinates.csv")
+                    logger.info("Wrote coordinates CSV with %d streams", len(streams))
+                else:
+                    logger.warning("No coordinate streams generated")
+                    
+            except Exception as e:
+                logger.warning("Failed to write animation coordinates CSV: %s", e)
 
         # Copy to public
         if not bool(getattr(config, "minimal_outputs", False)):

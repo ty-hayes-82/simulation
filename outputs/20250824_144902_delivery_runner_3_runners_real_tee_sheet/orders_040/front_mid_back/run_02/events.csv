@@ -1,0 +1,397 @@
+simulation_id,ID,timestamp,timestamp_s,action,node_id,hole,ttl_amt,type,order_id,runner_id,cart_id,group_id,latitude,longitude,status,details
+front_mid_back_run_02,runner_1,07:00,0,service_idle,,,,delivery_runner,,runner_1,,,,,,runner_1 waiting 180 minutes until opening
+front_mid_back_run_02,runner_2,07:00,0,service_idle,,,,delivery_runner,,runner_2,,,,,,runner_2 waiting 180 minutes until opening
+front_mid_back_run_02,runner_3,07:00,0,service_idle,,,,delivery_runner,,runner_3,,,,,,runner_3 waiting 180 minutes until opening
+front_mid_back_run_02,golf_group_1,07:45:00,2700,tee_off,,1,,golfer_group,,,,1,,,,
+front_mid_back_run_02,golf_group_2,07:53:00,3180,tee_off,,1,,golfer_group,,,,2,,,,
+front_mid_back_run_02,golf_group_3,08:01:00,3660,tee_off,,1,,golfer_group,,,,3,,,,
+front_mid_back_run_02,golf_group_4,08:09:00,4140,tee_off,,1,,golfer_group,,,,4,,,,
+front_mid_back_run_02,golf_group_5,08:17:00,4620,tee_off,,1,,golfer_group,,,,5,,,,
+front_mid_back_run_02,golf_group_6,08:25:00,5100,tee_off,,1,,golfer_group,,,,6,,,,
+front_mid_back_run_02,golf_group_7,08:33:00,5580,tee_off,,1,,golfer_group,,,,7,,,,
+front_mid_back_run_02,golf_group_8,08:41:00,6060,tee_off,,1,,golfer_group,,,,8,,,,
+front_mid_back_run_02,golf_group_9,08:49:00,6540,tee_off,,1,,golfer_group,,,,9,,,,
+front_mid_back_run_02,golf_group_10,08:57:00,7020,tee_off,,1,,golfer_group,,,,10,,,,
+front_mid_back_run_02,golf_group_11,09:05:00,7500,tee_off,,1,,golfer_group,,,,11,,,,
+front_mid_back_run_02,golf_group_12,09:13:00,7980,tee_off,,1,,golfer_group,,,,12,,,,
+front_mid_back_run_02,golf_group_13,09:21:00,8460,tee_off,,1,,golfer_group,,,,13,,,,
+front_mid_back_run_02,golf_group_14,09:30:00,9000,tee_off,,1,,golfer_group,,,,14,,,,
+front_mid_back_run_02,golf_group_15,09:39:00,9540,tee_off,,1,,golfer_group,,,,15,,,,
+front_mid_back_run_02,golf_group_16,09:48:00,10080,tee_off,,1,,golfer_group,,,,16,,,,
+front_mid_back_run_02,runner_1,10:00,10800,service_opened,,,,delivery_runner,,runner_1,,,,,,runner_1 started shift
+front_mid_back_run_02,runner_2,10:00,10800,service_opened,,,,delivery_runner,,runner_2,,,,,,runner_2 started shift
+front_mid_back_run_02,runner_3,10:00,10800,service_opened,,,,delivery_runner,,runner_3,,,,,,runner_3 started shift
+front_mid_back_run_02,golf_group_17,10:06:00,11160,tee_off,,1,,golfer_group,,,,17,,,,
+front_mid_back_run_02,golf_group_18,10:15:00,11700,tee_off,,1,,golfer_group,,,,18,,,,
+front_mid_back_run_02,golf_group_19,10:24:00,12240,tee_off,,1,,golfer_group,,,,19,,,,
+front_mid_back_run_02,order_001,10:25:39,12339,order_placed,,8,,order,001,,,8,,,processed,
+front_mid_back_run_02,runner_1,10:25,12340,order_assigned,,,,delivery_runner,001,runner_1,,,,,,Assigned Order 001 to runner_1
+front_mid_back_run_02,runner_1,10:25,12340,prep_start,,,,delivery_runner,001,runner_1,,,,,,runner_1 started prep for Order 001 (Hole 8)
+front_mid_back_run_02,order_002,10:27:56,12476,order_placed,,7,,order,002,,,11,,,processed,
+front_mid_back_run_02,runner_2,10:28,12480,order_assigned,,,,delivery_runner,002,runner_2,,,,,,Assigned Order 002 to runner_2
+front_mid_back_run_02,runner_2,10:28,12480,prep_start,,,,delivery_runner,002,runner_2,,,,,,runner_2 started prep for Order 002 (Hole 7)
+front_mid_back_run_02,golf_group_20,10:33:00,12780,tee_off,,1,,golfer_group,,,,20,,,,
+front_mid_back_run_02,runner_1,10:35,12940,prep_complete,,,,delivery_runner,001,runner_1,,,,,,runner_1 completed prep for Order 001
+front_mid_back_run_02,runner_1,10:35,12940,delivery_start,,,,delivery_runner,001,runner_1,,,,,,"runner_1 departing to Hole 9 (486m, 0.7 min)"
+front_mid_back_run_02,runner_1,10:36,12980,delivery_complete,,,,delivery_runner,001,runner_1,,,,,,runner_1 delivered Order 001 to Hole 9 (Total completion: 10.7 min)
+front_mid_back_run_02,runner_1,10:36,12980,returning,,,,delivery_runner,001,runner_1,,,,,,runner_1 returning to clubhouse from hole_9 (1.5 min)
+front_mid_back_run_02,order_003,10:37:10,13030,order_placed,,12,,order,003,,,2,,,processed,
+front_mid_back_run_02,runner_3,10:37,13030,order_assigned,,,,delivery_runner,003,runner_3,,,,,,Assigned Order 003 to runner_3
+front_mid_back_run_02,runner_3,10:37,13030,prep_start,,,,delivery_runner,003,runner_3,,,,,,runner_3 started prep for Order 003 (Hole 12)
+front_mid_back_run_02,runner_1,10:37,13071,arrived_clubhouse,,,,delivery_runner,001,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 001
+front_mid_back_run_02,runner_2,10:38,13080,prep_complete,,,,delivery_runner,002,runner_2,,,,,,runner_2 completed prep for Order 002
+front_mid_back_run_02,runner_2,10:38,13080,delivery_start,,,,delivery_runner,002,runner_2,,,,,,"runner_2 departing to Hole 7 (1739m, 2.4 min)"
+front_mid_back_run_02,runner_2,10:40,13224,delivery_complete,,,,delivery_runner,002,runner_2,,,,,,runner_2 delivered Order 002 to Hole 7 (Total completion: 12.5 min)
+front_mid_back_run_02,runner_2,10:40,13224,returning,,,,delivery_runner,002,runner_2,,,,,,runner_2 returning to clubhouse from hole_7 (5.4 min)
+front_mid_back_run_02,golf_group_21,10:42:00,13320,tee_off,,1,,golfer_group,,,,21,,,,
+front_mid_back_run_02,runner_2,10:45,13549,arrived_clubhouse,,,,delivery_runner,002,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 002
+front_mid_back_run_02,runner_3,10:47,13630,prep_complete,,,,delivery_runner,003,runner_3,,,,,,runner_3 completed prep for Order 003
+front_mid_back_run_02,runner_3,10:47,13630,delivery_start,,,,delivery_runner,003,runner_3,,,,,,"runner_3 departing to Hole 14 (2124m, 3.0 min)"
+front_mid_back_run_02,runner_3,10:50,13807,delivery_complete,,,,delivery_runner,003,runner_3,,,,,,runner_3 delivered Order 003 to Hole 14 (Total completion: 13.0 min)
+front_mid_back_run_02,runner_3,10:50,13807,returning,,,,delivery_runner,003,runner_3,,,,,,runner_3 returning to clubhouse from hole_14 (6.6 min)
+front_mid_back_run_02,golf_group_22,10:51:00,13860,tee_off,,1,,golfer_group,,,,22,,,,
+front_mid_back_run_02,runner_3,10:56,14203,arrived_clubhouse,,,,delivery_runner,003,runner_3,,,,,,runner_3 arrived at clubhouse after delivering Order 003
+front_mid_back_run_02,golf_group_23,11:00:00,14400,tee_off,,1,,golfer_group,,,,23,,,,
+front_mid_back_run_02,order_004,11:06:41,14801,order_placed,,7,,order,004,,,14,,,processed,
+front_mid_back_run_02,runner_1,11:06,14805,order_assigned,,,,delivery_runner,004,runner_1,,,,,,Assigned Order 004 to runner_1
+front_mid_back_run_02,runner_1,11:06,14805,prep_start,,,,delivery_runner,004,runner_1,,,,,,runner_1 started prep for Order 004 (Hole 7)
+front_mid_back_run_02,golf_group_24,11:09:00,14940,tee_off,,1,,golfer_group,,,,24,,,,
+front_mid_back_run_02,order_005,11:09:18,14958,order_placed,,9,,order,005,,,12,,,processed,
+front_mid_back_run_02,runner_2,11:09,14960,order_assigned,,,,delivery_runner,005,runner_2,,,,,,Assigned Order 005 to runner_2
+front_mid_back_run_02,runner_2,11:09,14960,prep_start,,,,delivery_runner,005,runner_2,,,,,,runner_2 started prep for Order 005 (Hole 9)
+front_mid_back_run_02,runner_1,11:16,15405,prep_complete,,,,delivery_runner,004,runner_1,,,,,,runner_1 completed prep for Order 004
+front_mid_back_run_02,runner_1,11:16,15405,delivery_start,,,,delivery_runner,004,runner_1,,,,,,"runner_1 departing to Hole 9 (959m, 1.3 min)"
+front_mid_back_run_02,golf_group_25,11:18:00,15480,tee_off,,1,,golfer_group,,,,25,,,,
+front_mid_back_run_02,runner_1,11:18,15484,delivery_complete,,,,delivery_runner,004,runner_1,,,,,,runner_1 delivered Order 004 to Hole 9 (Total completion: 11.4 min)
+front_mid_back_run_02,runner_1,11:18,15484,returning,,,,delivery_runner,004,runner_1,,,,,,runner_1 returning to clubhouse from hole_9 (3.0 min)
+front_mid_back_run_02,runner_2,11:19,15560,prep_complete,,,,delivery_runner,005,runner_2,,,,,,runner_2 completed prep for Order 005
+front_mid_back_run_02,runner_2,11:19,15560,delivery_start,,,,delivery_runner,005,runner_2,,,,,,"runner_2 departing to Hole 10 (622m, 0.9 min)"
+front_mid_back_run_02,runner_2,11:20,15611,delivery_complete,,,,delivery_runner,005,runner_2,,,,,,runner_2 delivered Order 005 to Hole 10 (Total completion: 10.9 min)
+front_mid_back_run_02,runner_2,11:20,15611,returning,,,,delivery_runner,005,runner_2,,,,,,runner_2 returning to clubhouse from hole_10 (1.9 min)
+front_mid_back_run_02,runner_1,11:21,15663,arrived_clubhouse,,,,delivery_runner,004,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 004
+front_mid_back_run_02,order_006,11:21:16,15676,order_placed,,16,,order,006,,,2,,,processed,
+front_mid_back_run_02,runner_1,11:21,15680,order_assigned,,,,delivery_runner,006,runner_1,,,,,,Assigned Order 006 to runner_1
+front_mid_back_run_02,runner_1,11:21,15680,prep_start,,,,delivery_runner,006,runner_1,,,,,,runner_1 started prep for Order 006 (Hole 16)
+front_mid_back_run_02,runner_2,11:22,15727,arrived_clubhouse,,,,delivery_runner,005,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 005
+front_mid_back_run_02,golf_group_26,11:27:00,16020,tee_off,,1,,golfer_group,,,,26,,,,
+front_mid_back_run_02,runner_1,11:31,16280,prep_complete,,,,delivery_runner,006,runner_1,,,,,,runner_1 completed prep for Order 006
+front_mid_back_run_02,runner_1,11:31,16280,delivery_start,,,,delivery_runner,006,runner_1,,,,,,"runner_1 departing to Hole 18 (1288m, 1.8 min)"
+front_mid_back_run_02,runner_1,11:33,16387,delivery_complete,,,,delivery_runner,006,runner_1,,,,,,runner_1 delivered Order 006 to Hole 18 (Total completion: 11.9 min)
+front_mid_back_run_02,runner_1,11:33,16387,returning,,,,delivery_runner,006,runner_1,,,,,,runner_1 returning to clubhouse from hole_18 (4.0 min)
+front_mid_back_run_02,order_007,11:34:22,16462,order_placed,,17,,order,007,,,3,,,processed,
+front_mid_back_run_02,runner_2,11:34,16465,order_assigned,,,,delivery_runner,007,runner_2,,,,,,Assigned Order 007 to runner_2
+front_mid_back_run_02,runner_2,11:34,16465,prep_start,,,,delivery_runner,007,runner_2,,,,,,runner_2 started prep for Order 007 (Hole 17)
+front_mid_back_run_02,golf_group_27,11:36:00,16560,tee_off,,1,,golfer_group,,,,27,,,,
+front_mid_back_run_02,runner_1,11:37,16627,arrived_clubhouse,,,,delivery_runner,006,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 006
+front_mid_back_run_02,order_008,11:42:46,16966,order_placed,,13,,order,008,,,9,,,processed,
+front_mid_back_run_02,runner_1,11:42,16970,order_assigned,,,,delivery_runner,008,runner_1,,,,,,Assigned Order 008 to runner_1
+front_mid_back_run_02,runner_1,11:42,16970,prep_start,,,,delivery_runner,008,runner_1,,,,,,runner_1 started prep for Order 008 (Hole 13)
+front_mid_back_run_02,runner_2,11:44,17065,prep_complete,,,,delivery_runner,007,runner_2,,,,,,runner_2 completed prep for Order 007
+front_mid_back_run_02,runner_2,11:44,17065,delivery_start,,,,delivery_runner,007,runner_2,,,,,,"runner_2 departing to Hole 18 (1017m, 1.4 min)"
+front_mid_back_run_02,golf_group_28,11:45:00,17100,tee_off,,1,,golfer_group,,,,28,,,,
+front_mid_back_run_02,runner_2,11:45,17149,delivery_complete,,,,delivery_runner,007,runner_2,,,,,,runner_2 delivered Order 007 to Hole 18 (Total completion: 11.5 min)
+front_mid_back_run_02,runner_2,11:45,17149,returning,,,,delivery_runner,007,runner_2,,,,,,runner_2 returning to clubhouse from hole_18 (3.2 min)
+front_mid_back_run_02,runner_2,11:48,17339,arrived_clubhouse,,,,delivery_runner,007,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 007
+front_mid_back_run_02,runner_1,11:52,17570,prep_complete,,,,delivery_runner,008,runner_1,,,,,,runner_1 completed prep for Order 008
+front_mid_back_run_02,runner_1,11:52,17570,delivery_start,,,,delivery_runner,008,runner_1,,,,,,"runner_1 departing to Hole 14 (1589m, 2.2 min)"
+front_mid_back_run_02,golf_group_29,11:54:00,17640,tee_off,,1,,golfer_group,,,,29,,,,
+front_mid_back_run_02,runner_1,11:55,17702,delivery_complete,,,,delivery_runner,008,runner_1,,,,,,runner_1 delivered Order 008 to Hole 14 (Total completion: 12.3 min)
+front_mid_back_run_02,runner_1,11:55,17702,returning,,,,delivery_runner,008,runner_1,,,,,,runner_1 returning to clubhouse from hole_14 (4.9 min)
+front_mid_back_run_02,runner_1,11:59,17998,arrived_clubhouse,,,,delivery_runner,008,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 008
+front_mid_back_run_02,golf_group_30,12:03:00,18180,tee_off,,1,,golfer_group,,,,30,,,,
+front_mid_back_run_02,order_009,12:05:15,18315,order_placed,,7,,order,009,,,20,,,processed,
+front_mid_back_run_02,runner_1,12:05,18315,order_assigned,,,,delivery_runner,009,runner_1,,,,,,Assigned Order 009 to runner_1
+front_mid_back_run_02,runner_1,12:05,18315,prep_start,,,,delivery_runner,009,runner_1,,,,,,runner_1 started prep for Order 009 (Hole 7)
+front_mid_back_run_02,order_010,12:08:51,18531,order_placed,,12,,order,010,,,13,,,processed,
+front_mid_back_run_02,runner_2,12:08,18535,order_assigned,,,,delivery_runner,010,runner_2,,,,,,Assigned Order 010 to runner_2
+front_mid_back_run_02,runner_2,12:08,18535,prep_start,,,,delivery_runner,010,runner_2,,,,,,runner_2 started prep for Order 010 (Hole 12)
+front_mid_back_run_02,golf_group_31,12:12:00,18720,tee_off,,1,,golfer_group,,,,31,,,,
+front_mid_back_run_02,runner_1,12:15,18915,prep_complete,,,,delivery_runner,009,runner_1,,,,,,runner_1 completed prep for Order 009
+front_mid_back_run_02,runner_1,12:15,18915,delivery_start,,,,delivery_runner,009,runner_1,,,,,,"runner_1 departing to Hole 8 (1199m, 1.7 min)"
+front_mid_back_run_02,order_011,12:16:42,19002,order_placed,,17,,order,011,,,8,,,processed,
+front_mid_back_run_02,runner_3,12:16,19005,order_assigned,,,,delivery_runner,011,runner_3,,,,,,Assigned Order 011 to runner_3
+front_mid_back_run_02,runner_3,12:16,19005,prep_start,,,,delivery_runner,011,runner_3,,,,,,runner_3 started prep for Order 011 (Hole 17)
+front_mid_back_run_02,runner_1,12:16,19014,delivery_complete,,,,delivery_runner,009,runner_1,,,,,,runner_1 delivered Order 009 to Hole 8 (Total completion: 11.7 min)
+front_mid_back_run_02,runner_1,12:16,19014,returning,,,,delivery_runner,009,runner_1,,,,,,runner_1 returning to clubhouse from hole_8 (3.7 min)
+front_mid_back_run_02,order_012,12:18:44,19124,order_placed,,18,,order,012,,,6,,,processed,
+front_mid_back_run_02,runner_2,12:18,19135,prep_complete,,,,delivery_runner,010,runner_2,,,,,,runner_2 completed prep for Order 010
+front_mid_back_run_02,runner_2,12:18,19135,delivery_start,,,,delivery_runner,010,runner_2,,,,,,"runner_2 departing to Hole 14 (1929m, 2.7 min)"
+front_mid_back_run_02,order_013,12:20:06,19206,order_placed,,13,,order,013,,,14,,,processed,
+front_mid_back_run_02,runner_1,12:20,19238,arrived_clubhouse,,,,delivery_runner,009,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 009
+front_mid_back_run_02,runner_1,12:20,19240,order_assigned,,,,delivery_runner,012,runner_1,,,,,,Assigned Order 012 to runner_1
+front_mid_back_run_02,runner_1,12:20,19240,prep_start,,,,delivery_runner,012,runner_1,,,,,,runner_1 started prep for Order 012 (Hole 18)
+front_mid_back_run_02,golf_group_32,12:21:00,19260,tee_off,,1,,golfer_group,,,,32,,,,
+front_mid_back_run_02,runner_2,12:21,19295,delivery_complete,,,,delivery_runner,010,runner_2,,,,,,runner_2 delivered Order 010 to Hole 14 (Total completion: 12.7 min)
+front_mid_back_run_02,runner_2,12:21,19295,returning,,,,delivery_runner,010,runner_2,,,,,,runner_2 returning to clubhouse from hole_14 (6.0 min)
+front_mid_back_run_02,order_014,12:25:11,19511,order_placed,,12,,order,014,,,15,,,processed,
+front_mid_back_run_02,runner_3,12:26,19605,prep_complete,,,,delivery_runner,011,runner_3,,,,,,runner_3 completed prep for Order 011
+front_mid_back_run_02,runner_3,12:26,19605,delivery_start,,,,delivery_runner,011,runner_3,,,,,,"runner_3 departing to Hole 18 (881m, 1.2 min)"
+front_mid_back_run_02,runner_2,12:27,19655,arrived_clubhouse,,,,delivery_runner,010,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 010
+front_mid_back_run_02,runner_2,12:27,19660,order_assigned,,,,delivery_runner,013,runner_2,,,,,,Assigned Order 013 to runner_2
+front_mid_back_run_02,runner_2,12:27,19660,prep_start,,,,delivery_runner,013,runner_2,,,,,,runner_2 started prep for Order 013 (Hole 13)
+front_mid_back_run_02,runner_3,12:27,19678,delivery_complete,,,,delivery_runner,011,runner_3,,,,,,runner_3 delivered Order 011 to Hole 18 (Total completion: 11.3 min)
+front_mid_back_run_02,runner_3,12:27,19678,returning,,,,delivery_runner,011,runner_3,,,,,,runner_3 returning to clubhouse from hole_18 (2.7 min)
+front_mid_back_run_02,golf_group_33,12:30:00,19800,tee_off,,1,,golfer_group,,,,33,,,,
+front_mid_back_run_02,order_015,12:30:28,19828,order_placed,,15,,order,015,,,12,,,processed,
+front_mid_back_run_02,runner_1,12:30,19840,prep_complete,,,,delivery_runner,012,runner_1,,,,,,runner_1 completed prep for Order 012
+front_mid_back_run_02,runner_1,12:30,19840,delivery_start,,,,delivery_runner,012,runner_1,,,,,,"runner_1 departing to Hole 18 (680m, 0.9 min)"
+front_mid_back_run_02,runner_3,12:30,19842,arrived_clubhouse,,,,delivery_runner,011,runner_3,,,,,,runner_3 arrived at clubhouse after delivering Order 011
+front_mid_back_run_02,runner_3,12:30,19845,order_assigned,,,,delivery_runner,014,runner_3,,,,,,Assigned Order 014 to runner_3
+front_mid_back_run_02,runner_3,12:30,19845,prep_start,,,,delivery_runner,014,runner_3,,,,,,runner_3 started prep for Order 014 (Hole 12)
+front_mid_back_run_02,runner_1,12:31,19896,delivery_complete,,,,delivery_runner,012,runner_1,,,,,,runner_1 delivered Order 012 to Hole 18 (Total completion: 12.9 min)
+front_mid_back_run_02,runner_1,12:31,19900,order_assigned,,,,delivery_runner,015,runner_1,,,,,,Assigned Order 015 to runner_1
+front_mid_back_run_02,runner_1,12:31,19900,returning,,,,delivery_runner,015,runner_1,,,,,,runner_1 returning to clubhouse from hole_18 (0.6 min)
+front_mid_back_run_02,runner_1,12:32,19933,arrived_clubhouse,,,,delivery_runner,015,runner_1,,,,,,runner_1 arrived at clubhouse to prepare Order 015
+front_mid_back_run_02,runner_1,12:32,19933,prep_start,,,,delivery_runner,015,runner_1,,,,,,runner_1 started prep for Order 015 (Hole 15)
+front_mid_back_run_02,runner_2,12:37,20260,prep_complete,,,,delivery_runner,013,runner_2,,,,,,runner_2 completed prep for Order 013
+front_mid_back_run_02,runner_2,12:37,20260,delivery_start,,,,delivery_runner,013,runner_2,,,,,,"runner_2 departing to Hole 15 (1340m, 1.9 min)"
+front_mid_back_run_02,golf_group_34,12:39:00,20340,tee_off,,1,,golfer_group,,,,34,,,,
+front_mid_back_run_02,runner_2,12:39,20371,delivery_complete,,,,delivery_runner,013,runner_2,,,,,,runner_2 delivered Order 013 to Hole 15 (Total completion: 19.4 min)
+front_mid_back_run_02,runner_2,12:39,20371,returning,,,,delivery_runner,013,runner_2,,,,,,runner_2 returning to clubhouse from hole_15 (4.2 min)
+front_mid_back_run_02,runner_3,12:40,20445,prep_complete,,,,delivery_runner,014,runner_3,,,,,,runner_3 completed prep for Order 014
+front_mid_back_run_02,runner_3,12:40,20445,delivery_start,,,,delivery_runner,014,runner_3,,,,,,"runner_3 departing to Hole 14 (1657m, 2.3 min)"
+front_mid_back_run_02,runner_1,12:42,20533,prep_complete,,,,delivery_runner,015,runner_1,,,,,,runner_1 completed prep for Order 015
+front_mid_back_run_02,runner_1,12:42,20533,delivery_start,,,,delivery_runner,015,runner_1,,,,,,"runner_1 departing to Hole 16 (1104m, 1.5 min)"
+front_mid_back_run_02,order_016,12:42:48,20568,order_placed,,7,,order,016,,,24,,,processed,
+front_mid_back_run_02,runner_3,12:43,20583,delivery_complete,,,,delivery_runner,014,runner_3,,,,,,runner_3 delivered Order 014 to Hole 14 (Total completion: 17.9 min)
+front_mid_back_run_02,runner_3,12:43,20583,returning,,,,delivery_runner,014,runner_3,,,,,,runner_3 returning to clubhouse from hole_14 (5.2 min)
+front_mid_back_run_02,runner_2,12:43,20621,arrived_clubhouse,,,,delivery_runner,013,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 013
+front_mid_back_run_02,runner_2,12:43,20625,order_assigned,,,,delivery_runner,016,runner_2,,,,,,Assigned Order 016 to runner_2
+front_mid_back_run_02,runner_2,12:43,20625,prep_start,,,,delivery_runner,016,runner_2,,,,,,runner_2 started prep for Order 016 (Hole 7)
+front_mid_back_run_02,runner_1,12:43,20625,delivery_complete,,,,delivery_runner,015,runner_1,,,,,,runner_1 delivered Order 015 to Hole 16 (Total completion: 13.3 min)
+front_mid_back_run_02,runner_1,12:43,20625,returning,,,,delivery_runner,015,runner_1,,,,,,runner_1 returning to clubhouse from hole_16 (3.4 min)
+front_mid_back_run_02,runner_1,12:47,20831,arrived_clubhouse,,,,delivery_runner,015,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 015
+front_mid_back_run_02,golf_group_35,12:48:00,20880,tee_off,,1,,golfer_group,,,,35,,,,
+front_mid_back_run_02,runner_3,12:48,20892,arrived_clubhouse,,,,delivery_runner,014,runner_3,,,,,,runner_3 arrived at clubhouse after delivering Order 014
+front_mid_back_run_02,runner_2,12:53,21225,prep_complete,,,,delivery_runner,016,runner_2,,,,,,runner_2 completed prep for Order 016
+front_mid_back_run_02,runner_2,12:53,21225,delivery_start,,,,delivery_runner,016,runner_2,,,,,,"runner_2 departing to Hole 9 (1048m, 1.5 min)"
+front_mid_back_run_02,runner_2,12:55,21312,delivery_complete,,,,delivery_runner,016,runner_2,,,,,,runner_2 delivered Order 016 to Hole 9 (Total completion: 12.4 min)
+front_mid_back_run_02,runner_2,12:55,21312,returning,,,,delivery_runner,016,runner_2,,,,,,runner_2 returning to clubhouse from hole_9 (3.3 min)
+front_mid_back_run_02,golf_group_36,12:57:00,21420,tee_off,,1,,golfer_group,,,,36,,,,
+front_mid_back_run_02,order_017,12:57:10,21430,order_placed,,16,,order,017,,,14,,,processed,
+front_mid_back_run_02,runner_1,12:57,21430,order_assigned,,,,delivery_runner,017,runner_1,,,,,,Assigned Order 017 to runner_1
+front_mid_back_run_02,runner_1,12:57,21430,prep_start,,,,delivery_runner,017,runner_1,,,,,,runner_1 started prep for Order 017 (Hole 16)
+front_mid_back_run_02,runner_2,12:58,21507,arrived_clubhouse,,,,delivery_runner,016,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 016
+front_mid_back_run_02,order_018,13:00:24,21624,order_placed,,8,,order,018,,,25,,,processed,
+front_mid_back_run_02,runner_2,13:00,21625,order_assigned,,,,delivery_runner,018,runner_2,,,,,,Assigned Order 018 to runner_2
+front_mid_back_run_02,runner_2,13:00,21625,prep_start,,,,delivery_runner,018,runner_2,,,,,,runner_2 started prep for Order 018 (Hole 8)
+front_mid_back_run_02,golf_group_37,13:06:00,21960,tee_off,,1,,golfer_group,,,,37,,,,
+front_mid_back_run_02,runner_1,13:07,22030,prep_complete,,,,delivery_runner,017,runner_1,,,,,,runner_1 completed prep for Order 017
+front_mid_back_run_02,runner_1,13:07,22030,delivery_start,,,,delivery_runner,017,runner_1,,,,,,"runner_1 departing to Hole 17 (1356m, 1.9 min)"
+front_mid_back_run_02,runner_1,13:09,22143,delivery_complete,,,,delivery_runner,017,runner_1,,,,,,runner_1 delivered Order 017 to Hole 17 (Total completion: 11.9 min)
+front_mid_back_run_02,runner_1,13:09,22143,returning,,,,delivery_runner,017,runner_1,,,,,,runner_1 returning to clubhouse from hole_17 (4.2 min)
+front_mid_back_run_02,runner_2,13:10,22225,prep_complete,,,,delivery_runner,018,runner_2,,,,,,runner_2 completed prep for Order 018
+front_mid_back_run_02,runner_2,13:10,22225,delivery_start,,,,delivery_runner,018,runner_2,,,,,,"runner_2 departing to Hole 9 (619m, 0.9 min)"
+front_mid_back_run_02,runner_2,13:11,22276,delivery_complete,,,,delivery_runner,018,runner_2,,,,,,runner_2 delivered Order 018 to Hole 9 (Total completion: 10.9 min)
+front_mid_back_run_02,runner_2,13:11,22276,returning,,,,delivery_runner,018,runner_2,,,,,,runner_2 returning to clubhouse from hole_9 (1.9 min)
+front_mid_back_run_02,runner_2,13:13,22392,arrived_clubhouse,,,,delivery_runner,018,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 018
+front_mid_back_run_02,runner_1,13:13,22396,arrived_clubhouse,,,,delivery_runner,017,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 017
+front_mid_back_run_02,golf_group_38,13:15:00,22500,tee_off,,1,,golfer_group,,,,38,,,,
+front_mid_back_run_02,golf_group_39,13:24:00,23040,tee_off,,1,,golfer_group,,,,39,,,,
+front_mid_back_run_02,golf_group_40,13:33:00,23580,tee_off,,1,,golfer_group,,,,40,,,,
+front_mid_back_run_02,order_019,13:36:11,23771,order_placed,,12,,order,019,,,22,,,processed,
+front_mid_back_run_02,runner_1,13:36,23775,order_assigned,,,,delivery_runner,019,runner_1,,,,,,Assigned Order 019 to runner_1
+front_mid_back_run_02,runner_1,13:36,23775,prep_start,,,,delivery_runner,019,runner_1,,,,,,runner_1 started prep for Order 019 (Hole 12)
+front_mid_back_run_02,order_020,13:38:49,23929,order_placed,,7,,order,020,,,30,,,processed,
+front_mid_back_run_02,runner_2,13:38,23930,order_assigned,,,,delivery_runner,020,runner_2,,,,,,Assigned Order 020 to runner_2
+front_mid_back_run_02,runner_2,13:38,23930,prep_start,,,,delivery_runner,020,runner_2,,,,,,runner_2 started prep for Order 020 (Hole 7)
+front_mid_back_run_02,order_021,13:40:59,24059,order_placed,,8,,order,021,,,30,,,processed,
+front_mid_back_run_02,runner_3,13:41,24060,order_assigned,,,,delivery_runner,021,runner_3,,,,,,Assigned Order 021 to runner_3
+front_mid_back_run_02,runner_3,13:41,24060,prep_start,,,,delivery_runner,021,runner_3,,,,,,runner_3 started prep for Order 021 (Hole 8)
+front_mid_back_run_02,golf_group_41,13:42:00,24120,tee_off,,1,,golfer_group,,,,41,,,,
+front_mid_back_run_02,runner_1,13:46,24375,prep_complete,,,,delivery_runner,019,runner_1,,,,,,runner_1 completed prep for Order 019
+front_mid_back_run_02,runner_1,13:46,24375,delivery_start,,,,delivery_runner,019,runner_1,,,,,,"runner_1 departing to Hole 14 (2065m, 2.9 min)"
+front_mid_back_run_02,order_022,13:47:42,24462,order_placed,,7,,order,022,,,31,,,processed,
+front_mid_back_run_02,runner_2,13:48,24530,prep_complete,,,,delivery_runner,020,runner_2,,,,,,runner_2 completed prep for Order 020
+front_mid_back_run_02,runner_2,13:48,24530,delivery_start,,,,delivery_runner,020,runner_2,,,,,,"runner_2 departing to Hole 9 (1027m, 1.4 min)"
+front_mid_back_run_02,runner_1,13:49,24547,delivery_complete,,,,delivery_runner,019,runner_1,,,,,,runner_1 delivered Order 019 to Hole 14 (Total completion: 12.9 min)
+front_mid_back_run_02,runner_1,13:49,24547,returning,,,,delivery_runner,019,runner_1,,,,,,runner_1 returning to clubhouse from hole_14 (6.4 min)
+front_mid_back_run_02,runner_2,13:50,24615,delivery_complete,,,,delivery_runner,020,runner_2,,,,,,runner_2 delivered Order 020 to Hole 9 (Total completion: 11.4 min)
+front_mid_back_run_02,runner_2,13:50,24615,returning,,,,delivery_runner,020,runner_2,,,,,,runner_2 returning to clubhouse from hole_9 (3.2 min)
+front_mid_back_run_02,golf_group_42,13:51:00,24660,tee_off,,1,,golfer_group,,,,42,,,,
+front_mid_back_run_02,runner_3,13:51,24660,prep_complete,,,,delivery_runner,021,runner_3,,,,,,runner_3 completed prep for Order 021
+front_mid_back_run_02,runner_3,13:51,24660,delivery_start,,,,delivery_runner,021,runner_3,,,,,,"runner_3 departing to Hole 9 (891m, 1.2 min)"
+front_mid_back_run_02,order_023,13:51:28,24688,order_placed,,13,,order,023,,,23,,,processed,
+front_mid_back_run_02,runner_3,13:52,24734,delivery_complete,,,,delivery_runner,021,runner_3,,,,,,runner_3 delivered Order 021 to Hole 9 (Total completion: 11.3 min)
+front_mid_back_run_02,runner_3,13:52,24734,returning,,,,delivery_runner,021,runner_3,,,,,,runner_3 returning to clubhouse from hole_9 (2.8 min)
+front_mid_back_run_02,runner_2,13:53,24807,arrived_clubhouse,,,,delivery_runner,020,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 020
+front_mid_back_run_02,runner_2,13:53,24810,order_assigned,,,,delivery_runner,022,runner_2,,,,,,Assigned Order 022 to runner_2
+front_mid_back_run_02,runner_2,13:53,24810,prep_start,,,,delivery_runner,022,runner_2,,,,,,runner_2 started prep for Order 022 (Hole 7)
+front_mid_back_run_02,runner_3,13:55,24900,arrived_clubhouse,,,,delivery_runner,021,runner_3,,,,,,runner_3 arrived at clubhouse after delivering Order 021
+front_mid_back_run_02,runner_3,13:55,24905,order_assigned,,,,delivery_runner,023,runner_3,,,,,,Assigned Order 023 to runner_3
+front_mid_back_run_02,runner_3,13:55,24905,prep_start,,,,delivery_runner,023,runner_3,,,,,,runner_3 started prep for Order 023 (Hole 13)
+front_mid_back_run_02,runner_1,13:55,24932,arrived_clubhouse,,,,delivery_runner,019,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 019
+front_mid_back_run_02,golf_group_43,14:00:00,25200,tee_off,,1,,golfer_group,,,,43,,,,
+front_mid_back_run_02,runner_2,14:03,25410,prep_complete,,,,delivery_runner,022,runner_2,,,,,,runner_2 completed prep for Order 022
+front_mid_back_run_02,runner_2,14:03,25410,delivery_start,,,,delivery_runner,022,runner_2,,,,,,"runner_2 departing to Hole 9 (687m, 1.0 min)"
+front_mid_back_run_02,runner_2,14:04,25467,delivery_complete,,,,delivery_runner,022,runner_2,,,,,,runner_2 delivered Order 022 to Hole 9 (Total completion: 16.8 min)
+front_mid_back_run_02,runner_2,14:04,25467,returning,,,,delivery_runner,022,runner_2,,,,,,runner_2 returning to clubhouse from hole_9 (2.1 min)
+front_mid_back_run_02,runner_3,14:05,25505,prep_complete,,,,delivery_runner,023,runner_3,,,,,,runner_3 completed prep for Order 023
+front_mid_back_run_02,runner_3,14:05,25505,delivery_start,,,,delivery_runner,023,runner_3,,,,,,"runner_3 departing to Hole 14 (1455m, 2.0 min)"
+front_mid_back_run_02,runner_2,14:06,25595,arrived_clubhouse,,,,delivery_runner,022,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 022
+front_mid_back_run_02,runner_3,14:07,25626,delivery_complete,,,,delivery_runner,023,runner_3,,,,,,runner_3 delivered Order 023 to Hole 14 (Total completion: 15.6 min)
+front_mid_back_run_02,runner_3,14:07,25626,returning,,,,delivery_runner,023,runner_3,,,,,,runner_3 returning to clubhouse from hole_14 (4.5 min)
+front_mid_back_run_02,golf_group_44,14:09:00,25740,tee_off,,1,,golfer_group,,,,44,,,,
+front_mid_back_run_02,runner_3,14:11,25897,arrived_clubhouse,,,,delivery_runner,023,runner_3,,,,,,runner_3 arrived at clubhouse after delivering Order 023
+front_mid_back_run_02,order_024,14:15:38,26138,order_placed,,12,,order,024,,,26,,,processed,
+front_mid_back_run_02,runner_1,14:15,26140,order_assigned,,,,delivery_runner,024,runner_1,,,,,,Assigned Order 024 to runner_1
+front_mid_back_run_02,runner_1,14:15,26140,prep_start,,,,delivery_runner,024,runner_1,,,,,,runner_1 started prep for Order 024 (Hole 12)
+front_mid_back_run_02,golf_group_45,14:18:00,26280,tee_off,,1,,golfer_group,,,,45,,,,
+front_mid_back_run_02,runner_1,14:25,26740,prep_complete,,,,delivery_runner,024,runner_1,,,,,,runner_1 completed prep for Order 024
+front_mid_back_run_02,runner_1,14:25,26740,delivery_start,,,,delivery_runner,024,runner_1,,,,,,"runner_1 departing to Hole 14 (1861m, 2.6 min)"
+front_mid_back_run_02,golf_group_46,14:27:00,26820,tee_off,,1,,golfer_group,,,,46,,,,
+front_mid_back_run_02,runner_1,14:28,26895,delivery_complete,,,,delivery_runner,024,runner_1,,,,,,runner_1 delivered Order 024 to Hole 14 (Total completion: 12.6 min)
+front_mid_back_run_02,runner_1,14:28,26895,returning,,,,delivery_runner,024,runner_1,,,,,,runner_1 returning to clubhouse from hole_14 (5.8 min)
+front_mid_back_run_02,runner_1,14:34,27242,arrived_clubhouse,,,,delivery_runner,024,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 024
+front_mid_back_run_02,golf_group_47,14:36:00,27360,tee_off,,1,,golfer_group,,,,47,,,,
+front_mid_back_run_02,golf_group_48,14:45:00,27900,tee_off,,1,,golfer_group,,,,48,,,,
+front_mid_back_run_02,order_025,14:50:44,28244,order_placed,,18,,order,025,,,23,,,processed,
+front_mid_back_run_02,runner_1,14:50,28245,order_assigned,,,,delivery_runner,025,runner_1,,,,,,Assigned Order 025 to runner_1
+front_mid_back_run_02,runner_1,14:50,28245,prep_start,,,,delivery_runner,025,runner_1,,,,,,runner_1 started prep for Order 025 (Hole 18)
+front_mid_back_run_02,order_026,14:53:35,28415,order_placed,,6,,order,026,,,40,,,processed,
+front_mid_back_run_02,runner_2,14:53,28415,order_assigned,,,,delivery_runner,026,runner_2,,,,,,Assigned Order 026 to runner_2
+front_mid_back_run_02,runner_2,14:53,28415,prep_start,,,,delivery_runner,026,runner_2,,,,,,runner_2 started prep for Order 026 (Hole 6)
+front_mid_back_run_02,golf_group_49,14:54:00,28440,tee_off,,1,,golfer_group,,,,49,,,,
+front_mid_back_run_02,order_027,14:58:06,28686,order_placed,,9,,order,027,,,37,,,processed,
+front_mid_back_run_02,runner_3,14:58,28690,order_assigned,,,,delivery_runner,027,runner_3,,,,,,Assigned Order 027 to runner_3
+front_mid_back_run_02,runner_3,14:58,28690,prep_start,,,,delivery_runner,027,runner_3,,,,,,runner_3 started prep for Order 027 (Hole 9)
+front_mid_back_run_02,runner_1,15:00,28845,prep_complete,,,,delivery_runner,025,runner_1,,,,,,runner_1 completed prep for Order 025
+front_mid_back_run_02,runner_1,15:00,28845,delivery_start,,,,delivery_runner,025,runner_1,,,,,,"runner_1 departing to Hole 18 (680m, 0.9 min)"
+front_mid_back_run_02,runner_1,15:01,28901,delivery_complete,,,,delivery_runner,025,runner_1,,,,,,runner_1 delivered Order 025 to Hole 18 (Total completion: 11.0 min)
+front_mid_back_run_02,golf_group_50,15:03:00,28980,tee_off,,1,,golfer_group,,,,50,,,,
+front_mid_back_run_02,runner_2,15:03,29015,prep_complete,,,,delivery_runner,026,runner_2,,,,,,runner_2 completed prep for Order 026
+front_mid_back_run_02,runner_2,15:03,29015,delivery_start,,,,delivery_runner,026,runner_2,,,,,,"runner_2 departing to Hole 7 (1874m, 2.6 min)"
+front_mid_back_run_02,order_028,15:03:49,29029,order_placed,,7,,order,028,,,40,,,processed,
+front_mid_back_run_02,runner_1,15:03,29030,order_assigned,,,,delivery_runner,028,runner_1,,,,,,Assigned Order 028 to runner_1
+front_mid_back_run_02,runner_1,15:03,29030,returning,,,,delivery_runner,028,runner_1,,,,,,runner_1 returning to clubhouse from hole_18 (0.6 min)
+front_mid_back_run_02,runner_1,15:04,29063,arrived_clubhouse,,,,delivery_runner,028,runner_1,,,,,,runner_1 arrived at clubhouse to prepare Order 028
+front_mid_back_run_02,runner_1,15:04,29063,prep_start,,,,delivery_runner,028,runner_1,,,,,,runner_1 started prep for Order 028 (Hole 7)
+front_mid_back_run_02,runner_2,15:06,29171,delivery_complete,,,,delivery_runner,026,runner_2,,,,,,runner_2 delivered Order 026 to Hole 7 (Total completion: 12.6 min)
+front_mid_back_run_02,runner_2,15:06,29171,returning,,,,delivery_runner,026,runner_2,,,,,,runner_2 returning to clubhouse from hole_7 (5.8 min)
+front_mid_back_run_02,runner_3,15:08,29290,prep_complete,,,,delivery_runner,027,runner_3,,,,,,runner_3 completed prep for Order 027
+front_mid_back_run_02,runner_3,15:08,29290,delivery_start,,,,delivery_runner,027,runner_3,,,,,,"runner_3 departing to Hole 12 (282m, 0.4 min)"
+front_mid_back_run_02,runner_3,15:08,29313,delivery_complete,,,,delivery_runner,027,runner_3,,,,,,runner_3 delivered Order 027 to Hole 12 (Total completion: 10.5 min)
+front_mid_back_run_02,runner_3,15:08,29313,returning,,,,delivery_runner,027,runner_3,,,,,,runner_3 returning to clubhouse from hole_12 (0.9 min)
+front_mid_back_run_02,runner_3,15:09,29366,arrived_clubhouse,,,,delivery_runner,027,runner_3,,,,,,runner_3 arrived at clubhouse after delivering Order 027
+front_mid_back_run_02,golf_group_51,15:12:00,29520,tee_off,,1,,golfer_group,,,,51,,,,
+front_mid_back_run_02,runner_2,15:12,29520,arrived_clubhouse,,,,delivery_runner,026,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 026
+front_mid_back_run_02,runner_1,15:14,29663,prep_complete,,,,delivery_runner,028,runner_1,,,,,,runner_1 completed prep for Order 028
+front_mid_back_run_02,runner_1,15:14,29663,delivery_start,,,,delivery_runner,028,runner_1,,,,,,"runner_1 departing to Hole 8 (1199m, 1.7 min)"
+front_mid_back_run_02,runner_1,15:16,29763,delivery_complete,,,,delivery_runner,028,runner_1,,,,,,runner_1 delivered Order 028 to Hole 8 (Total completion: 12.2 min)
+front_mid_back_run_02,runner_1,15:16,29763,returning,,,,delivery_runner,028,runner_1,,,,,,runner_1 returning to clubhouse from hole_8 (3.7 min)
+front_mid_back_run_02,runner_1,15:19,29987,arrived_clubhouse,,,,delivery_runner,028,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 028
+front_mid_back_run_02,golf_group_52,15:21:00,30060,tee_off,,1,,golfer_group,,,,52,,,,
+front_mid_back_run_02,order_029,15:25:44,30344,order_placed,,16,,order,029,,,29,,,processed,
+front_mid_back_run_02,runner_1,15:25,30345,order_assigned,,,,delivery_runner,029,runner_1,,,,,,Assigned Order 029 to runner_1
+front_mid_back_run_02,runner_1,15:25,30345,prep_start,,,,delivery_runner,029,runner_1,,,,,,runner_1 started prep for Order 029 (Hole 16)
+front_mid_back_run_02,golf_group_53,15:30:00,30600,tee_off,,1,,golfer_group,,,,53,,,,
+front_mid_back_run_02,order_030,15:30:50,30650,order_placed,,18,,order,030,,,28,,,processed,
+front_mid_back_run_02,runner_2,15:30,30650,order_assigned,,,,delivery_runner,030,runner_2,,,,,,Assigned Order 030 to runner_2
+front_mid_back_run_02,runner_2,15:30,30650,prep_start,,,,delivery_runner,030,runner_2,,,,,,runner_2 started prep for Order 030 (Hole 18)
+front_mid_back_run_02,runner_1,15:35,30945,prep_complete,,,,delivery_runner,029,runner_1,,,,,,runner_1 completed prep for Order 029
+front_mid_back_run_02,runner_1,15:35,30945,delivery_start,,,,delivery_runner,029,runner_1,,,,,,"runner_1 departing to Hole 18 (1085m, 1.5 min)"
+front_mid_back_run_02,runner_1,15:37,31035,delivery_complete,,,,delivery_runner,029,runner_1,,,,,,runner_1 delivered Order 029 to Hole 18 (Total completion: 11.5 min)
+front_mid_back_run_02,runner_1,15:37,31035,returning,,,,delivery_runner,029,runner_1,,,,,,runner_1 returning to clubhouse from hole_18 (3.4 min)
+front_mid_back_run_02,golf_group_54,15:39:00,31140,tee_off,,1,,golfer_group,,,,54,,,,
+front_mid_back_run_02,runner_1,15:40,31237,arrived_clubhouse,,,,delivery_runner,029,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 029
+front_mid_back_run_02,runner_2,15:40,31250,prep_complete,,,,delivery_runner,030,runner_2,,,,,,runner_2 completed prep for Order 030
+front_mid_back_run_02,runner_2,15:40,31250,delivery_start,,,,delivery_runner,030,runner_2,,,,,,"runner_2 departing to Hole 18 (204m, 0.3 min)"
+front_mid_back_run_02,runner_2,15:41,31266,delivery_complete,,,,delivery_runner,030,runner_2,,,,,,runner_2 delivered Order 030 to Hole 18 (Total completion: 10.3 min)
+front_mid_back_run_02,runner_2,15:41,31266,returning,,,,delivery_runner,030,runner_2,,,,,,runner_2 returning to clubhouse from hole_18 (0.6 min)
+front_mid_back_run_02,runner_2,15:41,31305,arrived_clubhouse,,,,delivery_runner,030,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 030
+front_mid_back_run_02,golf_group_55,15:48:00,31680,tee_off,,1,,golfer_group,,,,55,,,,
+front_mid_back_run_02,golf_group_56,15:57:00,32220,tee_off,,1,,golfer_group,,,,56,,,,
+front_mid_back_run_02,golf_group_57,16:06:00,32760,tee_off,,1,,golfer_group,,,,57,,,,
+front_mid_back_run_02,order_031,16:31:48,34308,order_placed,,7,,order,031,,,50,,,processed,
+front_mid_back_run_02,runner_1,16:31,34310,order_assigned,,,,delivery_runner,031,runner_1,,,,,,Assigned Order 031 to runner_1
+front_mid_back_run_02,runner_1,16:31,34310,prep_start,,,,delivery_runner,031,runner_1,,,,,,runner_1 started prep for Order 031 (Hole 7)
+front_mid_back_run_02,order_032,16:35:03,34503,order_placed,,8,,order,032,,,49,,,processed,
+front_mid_back_run_02,runner_2,16:35,34505,order_assigned,,,,delivery_runner,032,runner_2,,,,,,Assigned Order 032 to runner_2
+front_mid_back_run_02,runner_2,16:35,34505,prep_start,,,,delivery_runner,032,runner_2,,,,,,runner_2 started prep for Order 032 (Hole 8)
+front_mid_back_run_02,order_033,16:36:49,34609,order_placed,,14,,order,033,,,40,,,processed,
+front_mid_back_run_02,runner_3,16:36,34610,order_assigned,,,,delivery_runner,033,runner_3,,,,,,Assigned Order 033 to runner_3
+front_mid_back_run_02,runner_3,16:36,34610,prep_start,,,,delivery_runner,033,runner_3,,,,,,runner_3 started prep for Order 033 (Hole 14)
+front_mid_back_run_02,runner_1,16:41,34910,prep_complete,,,,delivery_runner,031,runner_1,,,,,,runner_1 completed prep for Order 031
+front_mid_back_run_02,runner_1,16:41,34910,delivery_start,,,,delivery_runner,031,runner_1,,,,,,"runner_1 departing to Hole 8 (1403m, 1.9 min)"
+front_mid_back_run_02,runner_1,16:43,35026,delivery_complete,,,,delivery_runner,031,runner_1,,,,,,runner_1 delivered Order 031 to Hole 8 (Total completion: 12.0 min)
+front_mid_back_run_02,runner_1,16:43,35026,returning,,,,delivery_runner,031,runner_1,,,,,,runner_1 returning to clubhouse from hole_8 (4.4 min)
+front_mid_back_run_02,runner_2,16:45,35105,prep_complete,,,,delivery_runner,032,runner_2,,,,,,runner_2 completed prep for Order 032
+front_mid_back_run_02,runner_2,16:45,35105,delivery_start,,,,delivery_runner,032,runner_2,,,,,,"runner_2 departing to Hole 9 (687m, 1.0 min)"
+front_mid_back_run_02,runner_2,16:46,35162,delivery_complete,,,,delivery_runner,032,runner_2,,,,,,runner_2 delivered Order 032 to Hole 9 (Total completion: 11.0 min)
+front_mid_back_run_02,runner_2,16:46,35162,returning,,,,delivery_runner,032,runner_2,,,,,,runner_2 returning to clubhouse from hole_9 (2.1 min)
+front_mid_back_run_02,runner_3,16:46,35210,prep_complete,,,,delivery_runner,033,runner_3,,,,,,runner_3 completed prep for Order 033
+front_mid_back_run_02,runner_3,16:46,35210,delivery_start,,,,delivery_runner,033,runner_3,,,,,,"runner_3 departing to Hole 15 (932m, 1.3 min)"
+front_mid_back_run_02,runner_3,16:48,35287,delivery_complete,,,,delivery_runner,033,runner_3,,,,,,runner_3 delivered Order 033 to Hole 15 (Total completion: 11.3 min)
+front_mid_back_run_02,runner_3,16:48,35287,returning,,,,delivery_runner,033,runner_3,,,,,,runner_3 returning to clubhouse from hole_15 (2.9 min)
+front_mid_back_run_02,runner_1,16:48,35288,arrived_clubhouse,,,,delivery_runner,031,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 031
+front_mid_back_run_02,runner_2,16:48,35290,arrived_clubhouse,,,,delivery_runner,032,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 032
+front_mid_back_run_02,runner_3,16:51,35461,arrived_clubhouse,,,,delivery_runner,033,runner_3,,,,,,runner_3 arrived at clubhouse after delivering Order 033
+front_mid_back_run_02,order_034,16:58:06,35886,order_placed,,18,,order,034,,,37,,,processed,
+front_mid_back_run_02,runner_1,16:58,35890,order_assigned,,,,delivery_runner,034,runner_1,,,,,,Assigned Order 034 to runner_1
+front_mid_back_run_02,runner_1,16:58,35890,prep_start,,,,delivery_runner,034,runner_1,,,,,,runner_1 started prep for Order 034 (Hole 18)
+front_mid_back_run_02,golf_group_58,17:00:00,36000,tee_off,,1,,golfer_group,,,,58,,,,
+front_mid_back_run_02,order_035,17:05:28,36328,order_placed,,7,,order,035,,,54,,,processed,
+front_mid_back_run_02,runner_2,17:05,36330,order_assigned,,,,delivery_runner,035,runner_2,,,,,,Assigned Order 035 to runner_2
+front_mid_back_run_02,runner_2,17:05,36330,prep_start,,,,delivery_runner,035,runner_2,,,,,,runner_2 started prep for Order 035 (Hole 7)
+front_mid_back_run_02,runner_1,17:08,36490,prep_complete,,,,delivery_runner,034,runner_1,,,,,,runner_1 completed prep for Order 034
+front_mid_back_run_02,runner_1,17:08,36490,delivery_start,,,,delivery_runner,034,runner_1,,,,,,"runner_1 departing to Hole 18 (680m, 0.9 min)"
+front_mid_back_run_02,runner_1,17:09,36546,delivery_complete,,,,delivery_runner,034,runner_1,,,,,,runner_1 delivered Order 034 to Hole 18 (Total completion: 11.0 min)
+front_mid_back_run_02,runner_2,17:15,36930,prep_complete,,,,delivery_runner,035,runner_2,,,,,,runner_2 completed prep for Order 035
+front_mid_back_run_02,runner_2,17:15,36930,delivery_start,,,,delivery_runner,035,runner_2,,,,,,"runner_2 departing to Hole 8 (1536m, 2.1 min)"
+front_mid_back_run_02,runner_2,17:17,37057,delivery_complete,,,,delivery_runner,035,runner_2,,,,,,runner_2 delivered Order 035 to Hole 8 (Total completion: 12.2 min)
+front_mid_back_run_02,runner_2,17:17,37057,returning,,,,delivery_runner,035,runner_2,,,,,,runner_2 returning to clubhouse from hole_8 (4.8 min)
+front_mid_back_run_02,golf_group_59,17:18:00,37080,tee_off,,1,,golfer_group,,,,59,,,,
+front_mid_back_run_02,order_036,17:18:24,37104,order_placed,,14,,order,036,,,45,,,processed,
+front_mid_back_run_02,runner_1,17:18,37105,order_assigned,,,,delivery_runner,036,runner_1,,,,,,Assigned Order 036 to runner_1
+front_mid_back_run_02,runner_1,17:18,37105,returning,,,,delivery_runner,036,runner_1,,,,,,runner_1 returning to clubhouse from hole_18 (0.6 min)
+front_mid_back_run_02,runner_1,17:18,37138,arrived_clubhouse,,,,delivery_runner,036,runner_1,,,,,,runner_1 arrived at clubhouse to prepare Order 036
+front_mid_back_run_02,runner_1,17:18,37138,prep_start,,,,delivery_runner,036,runner_1,,,,,,runner_1 started prep for Order 036 (Hole 14)
+front_mid_back_run_02,runner_2,17:22,37344,arrived_clubhouse,,,,delivery_runner,035,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 035
+front_mid_back_run_02,golf_group_60,17:27:00,37620,tee_off,,1,,golfer_group,,,,60,,,,
+front_mid_back_run_02,runner_1,17:28,37738,prep_complete,,,,delivery_runner,036,runner_1,,,,,,runner_1 completed prep for Order 036
+front_mid_back_run_02,runner_1,17:28,37738,delivery_start,,,,delivery_runner,036,runner_1,,,,,,"runner_1 departing to Hole 15 (1136m, 1.6 min)"
+front_mid_back_run_02,runner_1,17:30,37832,delivery_complete,,,,delivery_runner,036,runner_1,,,,,,runner_1 delivered Order 036 to Hole 15 (Total completion: 12.1 min)
+front_mid_back_run_02,runner_1,17:30,37832,returning,,,,delivery_runner,036,runner_1,,,,,,runner_1 returning to clubhouse from hole_15 (3.5 min)
+front_mid_back_run_02,order_037,17:32:33,37953,order_placed,,16,,order,037,,,44,,,processed,
+front_mid_back_run_02,runner_2,17:32,37955,order_assigned,,,,delivery_runner,037,runner_2,,,,,,Assigned Order 037 to runner_2
+front_mid_back_run_02,runner_2,17:32,37955,prep_start,,,,delivery_runner,037,runner_2,,,,,,runner_2 started prep for Order 037 (Hole 16)
+front_mid_back_run_02,runner_1,17:34,38044,arrived_clubhouse,,,,delivery_runner,036,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 036
+front_mid_back_run_02,golf_group_61,17:36:00,38160,tee_off,,1,,golfer_group,,,,61,,,,
+front_mid_back_run_02,order_038,17:38:40,38320,order_placed,,17,,order,038,,,43,,,processed,
+front_mid_back_run_02,runner_1,17:38,38320,order_assigned,,,,delivery_runner,038,runner_1,,,,,,Assigned Order 038 to runner_1
+front_mid_back_run_02,runner_1,17:38,38320,prep_start,,,,delivery_runner,038,runner_1,,,,,,runner_1 started prep for Order 038 (Hole 17)
+front_mid_back_run_02,runner_2,17:42,38555,prep_complete,,,,delivery_runner,037,runner_2,,,,,,runner_2 completed prep for Order 037
+front_mid_back_run_02,runner_2,17:42,38555,delivery_start,,,,delivery_runner,037,runner_2,,,,,,"runner_2 departing to Hole 17 (1413m, 2.0 min)"
+front_mid_back_run_02,runner_2,17:44,38672,delivery_complete,,,,delivery_runner,037,runner_2,,,,,,runner_2 delivered Order 037 to Hole 17 (Total completion: 12.0 min)
+front_mid_back_run_02,runner_2,17:44,38672,returning,,,,delivery_runner,037,runner_2,,,,,,runner_2 returning to clubhouse from hole_17 (4.4 min)
+front_mid_back_run_02,golf_group_62,17:45:00,38700,tee_off,,1,,golfer_group,,,,62,,,,
+front_mid_back_run_02,order_039,17:47:23,38843,order_placed,,16,,order,039,,,45,,,processed,
+front_mid_back_run_02,runner_3,17:47,38845,order_assigned,,,,delivery_runner,039,runner_3,,,,,,Assigned Order 039 to runner_3
+front_mid_back_run_02,runner_3,17:47,38845,prep_start,,,,delivery_runner,039,runner_3,,,,,,runner_3 started prep for Order 039 (Hole 16)
+front_mid_back_run_02,runner_1,17:48,38920,prep_complete,,,,delivery_runner,038,runner_1,,,,,,runner_1 completed prep for Order 038
+front_mid_back_run_02,runner_1,17:48,38920,delivery_start,,,,delivery_runner,038,runner_1,,,,,,"runner_1 departing to Hole 18 (680m, 0.9 min)"
+front_mid_back_run_02,runner_2,17:48,38936,arrived_clubhouse,,,,delivery_runner,037,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 037
+front_mid_back_run_02,order_040,17:49:06,38946,order_placed,,9,,order,040,,,56,,,processed,
+front_mid_back_run_02,runner_2,17:49,38950,order_assigned,,,,delivery_runner,040,runner_2,,,,,,Assigned Order 040 to runner_2
+front_mid_back_run_02,runner_2,17:49,38950,prep_start,,,,delivery_runner,040,runner_2,,,,,,runner_2 started prep for Order 040 (Hole 9)
+front_mid_back_run_02,runner_1,17:49,38976,delivery_complete,,,,delivery_runner,038,runner_1,,,,,,runner_1 delivered Order 038 to Hole 18 (Total completion: 10.9 min)
+front_mid_back_run_02,runner_1,17:49,38976,returning,,,,delivery_runner,038,runner_1,,,,,,runner_1 returning to clubhouse from hole_18 (2.1 min)
+front_mid_back_run_02,runner_1,17:51,39103,arrived_clubhouse,,,,delivery_runner,038,runner_1,,,,,,runner_1 arrived at clubhouse after delivering Order 038
+front_mid_back_run_02,golf_group_63,17:54:00,39240,tee_off,,1,,golfer_group,,,,63,,,,
+front_mid_back_run_02,runner_3,17:57,39445,prep_complete,,,,delivery_runner,039,runner_3,,,,,,runner_3 completed prep for Order 039
+front_mid_back_run_02,runner_3,17:57,39445,delivery_start,,,,delivery_runner,039,runner_3,,,,,,"runner_3 departing to Hole 18 (1220m, 1.7 min)"
+front_mid_back_run_02,runner_3,17:59,39546,delivery_complete,,,,delivery_runner,039,runner_3,,,,,,runner_3 delivered Order 039 to Hole 18 (Total completion: 11.7 min)
+front_mid_back_run_02,runner_3,17:59,39546,returning,,,,delivery_runner,039,runner_3,,,,,,runner_3 returning to clubhouse from hole_18 (3.8 min)
+front_mid_back_run_02,runner_2,17:59,39550,prep_complete,,,,delivery_runner,040,runner_2,,,,,,runner_2 completed prep for Order 040
+front_mid_back_run_02,runner_2,17:59,39550,delivery_start,,,,delivery_runner,040,runner_2,,,,,,"runner_2 departing to Hole 12 (282m, 0.4 min)"
+front_mid_back_run_02,runner_2,17:59,39573,delivery_complete,,,,delivery_runner,040,runner_2,,,,,,runner_2 delivered Order 040 to Hole 12 (Total completion: 10.5 min)
+front_mid_back_run_02,runner_2,17:59,39573,returning,,,,delivery_runner,040,runner_2,,,,,,runner_2 returning to clubhouse from hole_12 (0.9 min)
+front_mid_back_run_02,runner_2,18:00,39626,arrived_clubhouse,,,,delivery_runner,040,runner_2,,,,,,runner_2 arrived at clubhouse after delivering Order 040
+front_mid_back_run_02,runner_2,18:00,39626,service_closed,,,,delivery_runner,,runner_2,,,,,,runner_2 shift ended
+front_mid_back_run_02,runner_3,18:02,39774,arrived_clubhouse,,,,delivery_runner,039,runner_3,,,,,,runner_3 arrived at clubhouse after delivering Order 039
+front_mid_back_run_02,runner_3,18:02,39774,service_closed,,,,delivery_runner,,runner_3,,,,,,runner_3 shift ended
+front_mid_back_run_02,golf_group_64,18:03:00,39780,tee_off,,1,,golfer_group,,,,64,,,,
+front_mid_back_run_02,golf_group_65,18:12:00,40320,tee_off,,1,,golfer_group,,,,65,,,,
+front_mid_back_run_02,golf_group_66,18:21:00,40860,tee_off,,1,,golfer_group,,,,66,,,,
+front_mid_back_run_02,golf_group_67,18:30:00,41400,tee_off,,1,,golfer_group,,,,67,,,,
+front_mid_back_run_02,golf_group_68,18:39:00,41940,tee_off,,1,,golfer_group,,,,68,,,,
