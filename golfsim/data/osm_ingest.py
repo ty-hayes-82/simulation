@@ -7,7 +7,8 @@ OSM ingestion utilities:
 from __future__ import annotations
 
 import warnings
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Callable, Any
+import time
 
 import geopandas as gpd
 import networkx as nx
@@ -21,6 +22,73 @@ logger = get_logger(__name__)
 
 # Overpass timeout (seconds)
 OVERPASS_TIMEOUT = 180
+OVERPASS_ENDPOINTS: List[str] = [
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+]
+
+def _with_overpass_retries(operation: Callable[[], Any], desc: str, max_attempts: int = 5, sleep_base_sec: float = 1.5) -> Any:
+    last_exc: Optional[BaseException] = None
+    endpoints: List[str] = []
+    try:
+        if isinstance(ox.settings.overpass_endpoint, str) and ox.settings.overpass_endpoint:
+            endpoints.append(ox.settings.overpass_endpoint)
+    except Exception:
+        pass
+    for ep in OVERPASS_ENDPOINTS:
+        if ep not in endpoints:
+            endpoints.append(ep)
+
+    for attempt in range(max_attempts):
+        endpoint = endpoints[attempt % len(endpoints)]
+        try:
+            ox.settings.timeout = OVERPASS_TIMEOUT
+            ox.settings.overpass_rate_limit = True
+            ox.settings.use_cache = True
+            ox.settings.log_console = False
+            ox.settings.overpass_endpoint = endpoint
+
+            result = operation()
+            try:
+                import pandas as _pd  # type: ignore
+                if isinstance(result, _pd.DataFrame) and getattr(result, "empty", False):
+                    raise RuntimeError("Empty Overpass result: " + desc)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            last_exc = e
+            wait = min(20.0, sleep_base_sec * (2 ** attempt))
+            logger.warning(
+                "Overpass op failed (%s) on %s [attempt %d/%d]: %s; retrying in %.1fs",
+                desc,
+                endpoint,
+                attempt + 1,
+                max_attempts,
+                str(e),
+                wait,
+            )
+            time.sleep(wait)
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(f"Overpass operation failed with unknown error: {desc}")
+
+def _features_from_polygon_retry(polygon, tags: Dict[str, str | List[str] | bool]):
+    return _with_overpass_retries(lambda: ox.features_from_polygon(polygon, tags=tags), desc=f"features_from_polygon tags={tags}")
+
+def _features_from_place_retry(place: str, tags: Dict[str, str | List[str] | bool]):
+    return _with_overpass_retries(lambda: ox.features_from_place(place, tags=tags), desc=f"features_from_place place={place} tags={tags}")
+
+def _features_from_bbox_retry(bbox: Tuple[float, float, float, float], tags: Dict[str, str | List[str] | bool]):
+    return _with_overpass_retries(lambda: ox.features_from_bbox(*bbox, tags=tags), desc=f"features_from_bbox bbox={bbox} tags={tags}")
+
+def _graph_from_polygon_retry(polygon, custom_filter: Optional[str] = None, simplify: bool = True, retain_all: bool = True):
+    return _with_overpass_retries(
+        lambda: ox.graph_from_polygon(polygon, custom_filter=custom_filter, simplify=simplify, retain_all=retain_all),
+        desc=f"graph_from_polygon filter={custom_filter}",
+    )
 
 
 def _geoms_from_place_or_bbox(
@@ -66,6 +134,7 @@ def _geoms_from_place_or_bbox(
 
         try:
             result = ox.features_from_polygon(search_polygon, tags=tags)
+            result = _features_from_polygon_retry(search_polygon, tags)
             if len(result) > 0:
                 logger.info("Found %d features around coordinates", len(result))
                 return result
@@ -85,6 +154,7 @@ def _geoms_from_place_or_bbox(
             try:
                 logger.info("Searching across state: %s", area)
                 result = ox.features_from_place(area, tags=tags)
+                result = _features_from_place_retry(area, tags)
                 if len(result) > 0:
                     logger.info("Found %d features in %s", len(result), area)
                     return result
@@ -108,6 +178,7 @@ def _geoms_from_place_or_bbox(
             try:
                 logger.info("Searching in: %s", area)
                 result = ox.features_from_place(area, tags=tags)
+                result = _features_from_place_retry(area, tags)
                 if len(result) > 0:
                     logger.info("Found %d features in %s", len(result), area)
                     return result
@@ -119,7 +190,47 @@ def _geoms_from_place_or_bbox(
         # If all searches failed, raise an error
         raise ValueError(f"No features found in any of the search areas: {search_areas}")
     else:
-        return ox.features_from_bbox(*bbox, tags=tags)
+        return _features_from_bbox_retry(bbox, tags)
+
+
+def features_within_radius(
+    tags: Dict[str, str | List[str] | bool],
+    center_lat: float,
+    center_lon: float,
+    radius_m: float,
+) -> gpd.GeoDataFrame:
+    """
+    Query OSM features matching 'tags' within a circular buffer of radius_m around
+    the provided center point (clubhouse coordinates).
+
+    Args:
+        tags: OSM tag dictionary (e.g., {"leisure": "pitch"} or {"natural": "water", "water": True})
+        center_lat: Latitude of center point
+        center_lon: Longitude of center point
+        radius_m: Search radius in meters
+
+    Returns:
+        GeoDataFrame of matching features (possibly empty) in EPSG:4326
+    """
+    try:
+        center_point = Point(center_lon, center_lat)
+        center_gdf = gpd.GeoDataFrame([1], geometry=[center_point], crs="EPSG:4326")
+        center_projected = center_gdf.to_crs("EPSG:3857")
+        buffered = center_projected.buffer(radius_m)
+        buffer_gdf = gpd.GeoDataFrame([1], geometry=buffered, crs="EPSG:3857")
+        buffer_latlon = buffer_gdf.to_crs("EPSG:4326")
+        search_polygon = buffer_latlon.geometry.iloc[0]
+
+        result = ox.features_from_polygon(search_polygon, tags=tags)
+        result = _features_from_polygon_retry(search_polygon, tags)
+        # Normalize CRS
+        if not result.empty:
+            result = result.to_crs("EPSG:4326")
+        logger.info("Found %d features within %.1fm for tags=%s", len(result), radius_m, tags)
+        return result
+    except Exception as e:
+        logger.error("Failed to fetch features within radius: %s", e)
+        return gpd.GeoDataFrame()
 
 
 def _ensure_polygon(gdf: gpd.GeoDataFrame) -> gpd.GeoSeries:
@@ -188,20 +299,54 @@ def _course_polygon_by_name(
         candidates = gdf[gdf.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
         if len(candidates) == 0:
             raise ValueError("Could not find leisure=golf_course polygons in the given area.")
-        candidates["area"] = candidates.geometry.area
-        candidates = candidates.sort_values("area", ascending=False)
+        # If coordinates are provided, choose the nearest polygon to the clubhouse
+        chosen = None
+        if center_lat is not None and center_lon is not None:
+            logger.warning("No name matches found. Choosing nearest golf_course polygon to given coordinates.")
 
-        logger.warning("No name matches found. Available courses by size:")
-        for idx, row in candidates.head(3).iterrows():
-            course_name_fallback = row.get("name", "Unnamed")
-            area = row["area"]
-            logger.info("  - %s (area: %.6f)", course_name_fallback, area)
+            # Compute haversine distance to centroid for each candidate
+            def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+                import math
+                phi1 = math.radians(lat1)
+                phi2 = math.radians(lat2)
+                dphi = math.radians(lat2 - lat1)
+                dlambda = math.radians(lon2 - lon1)
+                a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+                c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+                return 6371000.0 * c
 
-        candidate = candidates.head(1)
-        warnings.warn(
-            f"Course by name not found. Using largest golf_course polygon: {candidate['name'].iloc[0] if 'name' in candidate.columns else 'Unnamed'}"
-        )
-        return _ensure_polygon(candidate)
+            distances: List[Tuple[float, int]] = []
+            for idx, row in candidates.iterrows():
+                try:
+                    centroid = row.geometry.centroid
+                    d = _haversine_m(center_lon, center_lat, float(centroid.x), float(centroid.y))
+                    distances.append((d, idx))
+                except Exception:
+                    continue
+            if distances:
+                distances.sort(key=lambda t: t[0])
+                nearest_idx = distances[0][1]
+                chosen = candidates.loc[[nearest_idx]]
+                logger.info(
+                    "Nearest candidate: %s (%.1fm)",
+                    chosen.iloc[0].get("name", "Unnamed"),
+                    distances[0][0],
+                )
+
+        if chosen is None:
+            # Fallback to largest area when coordinates are not provided or distances unavailable
+            candidates["area"] = candidates.geometry.area
+            candidates = candidates.sort_values("area", ascending=False)
+            logger.warning("No name matches found. Available courses by size:")
+            for idx, row in candidates.head(3).iterrows():
+                course_name_fallback = row.get("name", "Unnamed")
+                area = row["area"]
+                logger.info("  - %s (area: %.6f)", course_name_fallback, area)
+            chosen = candidates.head(1)
+            warnings.warn(
+                f"Course by name not found. Using largest golf_course polygon: {chosen['name'].iloc[0] if 'name' in chosen.columns else 'Unnamed'}"
+            )
+        return _ensure_polygon(chosen)
     return _ensure_polygon(sub)
 
 
@@ -239,7 +384,7 @@ def load_course(
 
     # Holes, tees, greens inside polygon
     tags = {"golf": ["hole", "tee", "green"]}
-    gdf = ox.features_from_polygon(course_poly, tags=tags)
+    gdf = _features_from_polygon_retry(course_poly, tags)
 
     holes = gdf[gdf["golf"] == "hole"].copy()
     tees = gdf[gdf["golf"] == "tee"].copy()
@@ -314,7 +459,7 @@ def _get_streets_near_course(
 
     # Query OSM for streets within the search buffer
     try:
-        streets_gdf = ox.features_from_polygon(search_buffered_poly, tags=street_tags)
+        streets_gdf = _features_from_polygon_retry(search_buffered_poly, street_tags)
         # Filter to LineString geometries
         streets_gdf = streets_gdf[streets_gdf.geometry.type == 'LineString']
 
@@ -387,7 +532,7 @@ def build_cartpath_graph(
     # Strategy 1: Golf cart paths (highest priority)
     logger.info("Searching for golf=cartpath features...")
     try:
-        golf_paths = ox.features_from_polygon(course_poly, tags={"golf": "cartpath"})
+        golf_paths = _features_from_polygon_retry(course_poly, tags={"golf": "cartpath"})
         if len(golf_paths) > 0:
             logger.info("Found %d golf cart path features", len(golf_paths))
             G = _build_graph_from_features(golf_paths)
@@ -402,7 +547,7 @@ def build_cartpath_graph(
     if G.number_of_edges() == 0:
         logger.info("Searching for golf_cart=yes features...")
         try:
-            golf_cart_ways = ox.features_from_polygon(course_poly, tags={"golf_cart": "yes"})
+            golf_cart_ways = _features_from_polygon_retry(course_poly, tags={"golf_cart": "yes"})
             if len(golf_cart_ways) > 0:
                 logger.info("Found %d golf_cart=yes features", len(golf_cart_ways))
                 G = _build_graph_from_features(golf_cart_ways)
@@ -417,7 +562,7 @@ def build_cartpath_graph(
         try:
             # Try to get paths with golf cart characteristics within the polygon
             combined_tags = {"highway": "path", "golf_cart": True}
-            combined_paths = ox.features_from_polygon(course_poly, tags=combined_tags)
+            combined_paths = _features_from_polygon_retry(course_poly, tags=combined_tags)
             if len(combined_paths) > 0:
                 logger.info("Found %d highway=path with golf_cart features", len(combined_paths))
                 G = _build_graph_from_features(combined_paths)
@@ -441,7 +586,7 @@ def build_cartpath_graph(
         # Strategy 6: Get all ways and filter manually
         try:
             # Get all features within the polygon
-            all_ways = ox.features_from_polygon(course_poly, tags={"highway": True})
+            all_ways = _features_from_polygon_retry(course_poly, tags={"highway": True})
             if len(all_ways) > 0:
                 logger.info("Found %d total highway features", len(all_ways))
                 # Build graph from LineString geometries
@@ -462,7 +607,7 @@ def build_cartpath_graph(
                 "access": ["private", "permissive"],
             }
             for tag_key, tag_values in path_tags.items():
-                features = ox.features_from_polygon(course_poly, tags={tag_key: tag_values})
+                features = _features_from_polygon_retry(course_poly, tags={tag_key: tag_values})
                 if len(features) > 0:
                     logger.info("Found %d features with %s tags", len(features), tag_key)
                     temp_graph = _build_graph_from_features(features)
@@ -507,7 +652,7 @@ def build_cartpath_graph(
 def _try_build_graph_with_filter(course_poly: Polygon, custom_filter: str) -> nx.Graph:
     """Try to build a graph with a specific OSM filter"""
     try:
-        G_multi = ox.graph_from_polygon(
+        G_multi = _graph_from_polygon_retry(
             course_poly,
             custom_filter=custom_filter,
             simplify=True,

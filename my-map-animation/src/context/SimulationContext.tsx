@@ -58,7 +58,7 @@ const INITIAL_VIEW_STATE: ViewState = {
 
 export function SimulationProvider({ children }: { children: React.ReactNode }) {
   const [manifest, setManifest] = useState<SimulationManifest | null>(null);
-  const [filters, setFilters] = useState<Filters>({ runners: 1, orders: 20, blockFront: false, blockBack: false, blockMid: false });
+  const [filters, setFilters] = useState<Filters>({ runners: undefined, orders: undefined, blockFront: false, blockBack: false, blockMid: false });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   // Timeline state shared across views/controls
@@ -97,6 +97,46 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
       setSelectedCourseId(manifest.courses[0].id);
     }
   }, [manifest, selectedCourseId]);
+
+  // Set default runner and order counts when manifest loads if not already set
+  useEffect(() => {
+    if (!manifest) return;
+    
+    let needsUpdate = false;
+    const updates: Partial<Filters> = {};
+    
+    // Set default runner count if not set
+    if (filters.runners === undefined) {
+      const runnerCounts = new Set<number>();
+      for (const sim of manifest.simulations || []) {
+        const n = sim.meta?.runners;
+        if (typeof n === 'number' && Number.isFinite(n)) runnerCounts.add(n);
+      }
+      const availableRunnerCounts = Array.from(runnerCounts).sort((a, b) => a - b);
+      if (availableRunnerCounts.length > 0) {
+        updates.runners = availableRunnerCounts[0];
+        needsUpdate = true;
+      }
+    }
+    
+    // Set default order count if not set
+    if (filters.orders === undefined) {
+      const orderCounts = new Set<number>();
+      for (const sim of manifest.simulations || []) {
+        const n = sim.meta?.orders;
+        if (typeof n === 'number' && Number.isFinite(n)) orderCounts.add(n);
+      }
+      const availableOrderCounts = Array.from(orderCounts).sort((a, b) => a - b);
+      if (availableOrderCounts.length > 0) {
+        updates.orders = availableOrderCounts[0];
+        needsUpdate = true;
+      }
+    }
+    
+    if (needsUpdate) {
+      setFilters(prev => ({ ...prev, ...updates }));
+    }
+  }, [manifest, filters.runners, filters.orders]);
 
   // Resolve selected simulation by id or best match to filters
   const selectedSim: SimulationEntry | null = useMemo(() => {

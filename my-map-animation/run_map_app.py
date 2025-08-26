@@ -691,6 +691,46 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                     if key and source_path not in selected_csvs:
                         # Skip non-representative runs for this combo
                         continue
+                # Additional filter: only include delivery runner simulations (no hardcoded limits)
+                try:
+                    p = Path(source_path)
+                    parents = list(p.parents)
+                    # Orders condition: any parent folder named orders_XXX (completely dynamic)
+                    has_orders = any(parent.name.lower().startswith("orders_") for parent in parents)
+                    # Runners condition: any delivery runner simulation (completely dynamic)
+                    has_delivery_runners = False
+                    # Check for runners_X folder pattern (any number)
+                    for parent in parents:
+                        name = parent.name.lower()
+                        if name.startswith("runners_"):
+                            try:
+                                runner_count = int(name.split("_")[1])
+                                if runner_count > 0:  # Any positive number of runners
+                                    has_delivery_runners = True
+                                    break
+                            except (ValueError, IndexError):
+                                continue
+                    # Check encoded top-level sim folder name like 2025..._delivery_runner_X_runners_...
+                    if not has_delivery_runners:
+                        for parent in parents:
+                            name = parent.name.lower()
+                            if "delivery_runner_" in name and "_runners_" in name:
+                                # Extract runner count from pattern like _X_runners_
+                                import re
+                                match = re.search(r'_(\d+)_runners_', name)
+                                if match:
+                                    try:
+                                        runner_count = int(match.group(1))
+                                        if runner_count > 0:  # Any positive number of runners
+                                            has_delivery_runners = True
+                                            break
+                                    except ValueError:
+                                        continue
+                    if not (has_orders and has_delivery_runners):
+                        continue
+                except Exception:
+                    # If we cannot parse, skip to be safe
+                    continue
                 # Skip entries whose source CSV no longer exists
                 if not os.path.exists(source_path):
                     print(f"⚠️  Skipping missing source CSV: {source_path}")

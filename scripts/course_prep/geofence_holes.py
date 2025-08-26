@@ -35,6 +35,7 @@ from shapely.geometry import (
     Polygon,
 )
 from shapely.ops import linemerge, unary_union
+from shapely.strtree import STRtree
 
 from golfsim.logging import init_logging
 from golfsim.config.loaders import load_simulation_config
@@ -61,11 +62,26 @@ def _estimate_local_crs(gdf: gpd.GeoDataFrame) -> str:
     try:
         crs = gdf.estimate_utm_crs()
         if crs:
+            logging.info(f"Estimated UTM CRS: {crs.to_string()}")
             return crs.to_string()
     except Exception:
         pass
     # Fallback: Web Mercator (not ideal, but better than WGS84 for distances)
+    logging.warning("Could not estimate UTM CRS, falling back to EPSG:3857")
     return "EPSG:3857"
+
+
+def _dedupe_xy(points: List[Tuple[float, float]], tol: float = 1e-6) -> List[Tuple[float, float]]:
+    """Remove duplicate points within tolerance to avoid Voronoi issues."""
+    seen = set()
+    out = []
+    for x, y in points:
+        key = (round(x / tol), round(y / tol))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((x, y))
+    return out
 
 
 def _ensure_polygon_or_multipolygon(geom) -> Polygon | MultiPolygon:
@@ -174,7 +190,7 @@ def _voronoi_finite_polygons_2d(vor: Voronoi, radius: float | None = None) -> Tu
     return new_regions, np.asarray(new_vertices)
 
 
-def _build_voronoi_polygons(points: np.ndarray, clip_poly: Polygon) -> List[Polygon]:
+def _build_voronoi_polygons(points: np.ndarray, clip_poly: Polygon) -> Tuple[List[Polygon], bool]:
     """
     Build finite Voronoi polygons for given 2D points, clipped to clip_poly bounds.
     Prefers SciPy for generator mapping; falls back to Shapely voronoi_diagram.
@@ -194,39 +210,90 @@ def _build_voronoi_polygons(points: np.ndarray, clip_poly: Polygon) -> List[Poly
     )
 
     if _HAS_SCIPY:
-        vor = Voronoi(points)
-        regions, vertices = _voronoi_finite_polygons_2d(vor, radius=margin * 2.0)
-        polygons: List[Polygon] = []
-        # Align each region with its generating point (by index)
-        for region in regions:
-            poly = Polygon(vertices[region])
-            if not poly.is_valid:
-                poly = poly.buffer(0)
-            poly = poly.intersection(bbox)
-            polygons.append(poly)
-        # SciPy yields one region per input point, in order of points
-        return polygons
-    else:
-        if not _HAS_SHAPELY_VORONOI:
-            raise RuntimeError(
-                "Neither SciPy nor shapely.voronoi_diagram is available. Install scipy or upgrade shapely/GEOS."
-            )
-        # Shapely fallback: doesn't preserve a direct mapping; we'll get a collection of cells
-        # We'll handle mapping later by nearest seed classification.
-        from shapely import geometry as _geometry  # type: ignore
+        try:
+            vor = Voronoi(points)
+            regions, vertices = _voronoi_finite_polygons_2d(vor, radius=margin * 2.0)
+            polygons: List[Polygon] = []
+            # Align each region with its generating point (by index)
+            for region in regions:
+                poly = Polygon(vertices[region])
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                poly = poly.intersection(bbox)
+                polygons.append(poly)
+            # SciPy yields one region per input point, in order of points
+            logging.info(f"Built {len(polygons)} Voronoi cells using SciPy")
+            return polygons, True
+        except Exception as e:
+            logging.warning(f"SciPy Voronoi failed: {e}, falling back to Shapely")
+    
+    if not _HAS_SHAPELY_VORONOI:
+        raise RuntimeError(
+            "Neither SciPy nor shapely.voronoi_diagram is available. Install scipy or upgrade shapely/GEOS."
+        )
+    # Shapely fallback: doesn't preserve a direct mapping; we'll get a collection of cells
+    # We'll handle mapping later by nearest seed classification.
+    from shapely import geometry as _geometry  # type: ignore
 
-        multipoints = _geometry.MultiPoint([Point(x, y) for x, y in points])
-        vor_gc = shapely_voronoi(multipoints, envelope=bbox)
-        cells: List[Polygon] = []
-        if isinstance(vor_gc, (GeometryCollection, MultiPolygon)):
-            for geom in vor_gc.geoms:
-                if isinstance(geom, Polygon):
-                    cells.append(geom.intersection(bbox))
-        elif isinstance(vor_gc, Polygon):
-            cells = [vor_gc.intersection(bbox)]
-        else:
-            cells = []
-        return cells
+    multipoints = _geometry.MultiPoint([Point(x, y) for x, y in points])
+    vor_gc = shapely_voronoi(multipoints, envelope=bbox)
+    cells: List[Polygon] = []
+    if isinstance(vor_gc, (GeometryCollection, MultiPolygon)):
+        for geom in vor_gc.geoms:
+            if isinstance(geom, Polygon):
+                cells.append(geom.intersection(bbox))
+    elif isinstance(vor_gc, Polygon):
+        cells = [vor_gc.intersection(bbox)]
+    else:
+        cells = []
+    logging.info(f"Built {len(cells)} Voronoi cells using Shapely fallback")
+    return cells, False
+
+
+def _resolve_overlaps_pairwise(
+    hole_polys: Dict[int, Polygon],
+    hole_lines: Dict[int, LineString],
+    max_iters: int = 3,
+    area_tolerance: float = 1.0,
+) -> Dict[int, Polygon]:
+    """Resolve overlaps between hole polygons by assigning intersecting areas to the closer hole line.
+
+    - Iterates a few times to catch cascading effects
+    - Stable tie-break by lower hole id
+    """
+    ids = sorted(hole_polys.keys())
+    for _ in range(max_iters):
+        changed = False
+        for i_idx in range(len(ids)):
+            i = ids[i_idx]
+            pi = hole_polys.get(i)
+            if pi is None or pi.is_empty:
+                continue
+            for j_idx in range(i_idx + 1, len(ids)):
+                j = ids[j_idx]
+                pj = hole_polys.get(j)
+                if pj is None or pj.is_empty:
+                    continue
+                inter = pi.intersection(pj)
+                if inter.is_empty or inter.area <= area_tolerance:
+                    continue
+                # Decide winner by distance to centerlines
+                c = inter.representative_point()
+                di = c.distance(hole_lines.get(i, pi))
+                dj = c.distance(hole_lines.get(j, pj))
+                if di < dj or (abs(di - dj) <= 1e-9 and i < j):
+                    # assign intersection to i; remove from j
+                    hole_polys[j] = pj.difference(inter).buffer(0)
+                else:
+                    # assign to j; remove from i
+                    hole_polys[i] = pi.difference(inter).buffer(0)
+                # refresh local refs
+                pi = hole_polys.get(i)
+                pj = hole_polys.get(j)
+                changed = True
+        if not changed:
+            break
+    return hole_polys
 
 
 def split_course_into_holes(
@@ -248,8 +315,15 @@ def split_course_into_holes(
         "Ref",
         "REF",
     ),
+    debug_export_dir: str | None = None,
+    ensure_min_width_m: float = 12.0,
+    enforce_disjoint: bool = False,
 ) -> None:
-    """Main pipeline to split the course into 18 sections."""
+    """Main pipeline to split the course into 18 sections with improved robustness."""
+    import time
+    start_time = time.time()
+    
+    logging.info("=== Starting Course Geofencing ===")
     logging.info("Loading inputs...")
     course_gdf = gpd.read_file(course_polygon_path)
     holes_gdf = gpd.read_file(hole_lines_path)
@@ -271,15 +345,18 @@ def split_course_into_holes(
     holes_proj = holes_gdf.to_crs(proj_crs)
 
     course_geom = _ensure_polygon_or_multipolygon(course_proj.geometry.iloc[0])
+    course_area = course_geom.area
+    logging.info(f"Course area: {course_area:,.1f} m²")
 
-    # Prepare holes & labels
+    # Prepare holes & labels with improved validation
+    logging.info("Processing hole centerlines...")
     hole_records: List[Tuple[int, LineString]] = []
     for _, row in holes_proj.iterrows():
         geom = row.geometry
         if geom is None or geom.is_empty:
             continue
         merged = _merge_lines(geom)
-        # Determine hole id
+        # Determine hole id using candidate properties
         hole_id: int | None = None
         for key in hole_prop_candidates:
             if key in row and row[key] is not None:
@@ -291,14 +368,19 @@ def split_course_into_holes(
         if hole_id is None:
             # Fallback: 1-based index in file order
             hole_id = len(hole_records) + 1
+            logging.warning(f"No valid hole ID found for feature, using fallback: {hole_id}")
         hole_records.append((hole_id, merged))
 
     # Ensure we have 18 distinct holes
     unique_ids = sorted(set([hid for hid, _ in hole_records]))
+    logging.info(f"Found {len(unique_ids)} unique hole IDs: {unique_ids}")
     if len(unique_ids) != 18:
         logging.warning(
-            f"Detected {len(unique_ids)} unique hole ids (expected 18). Proceeding anyway."
+            f"Detected {len(unique_ids)} unique hole ids (expected 18). Proceeding with deterministic processing."
         )
+    
+    # Sort hole records by hole ID for deterministic processing
+    hole_records.sort(key=lambda x: x[0])
 
     # Clip hole lines to boundary (optional but safer)
     clipped_holes: Dict[int, LineString] = {}
@@ -311,24 +393,35 @@ def split_course_into_holes(
             inter = geom
         clipped_holes[hid] = _merge_lines(inter) if not isinstance(inter, LineString) else inter
 
-    # Densify to seed points
+    # Densify to seed points with deduplication
     logging.info("Densifying centerlines into seed points...")
     seeds_xy: List[Tuple[float, float]] = []
     seed_hole_idx: List[int] = []
     hole_to_seed_indices: Dict[int, List[int]] = {}
-
+    
+    total_seeds_before_dedup = 0
     for hid, line in clipped_holes.items():
         pts = _densify_line(line, step_m=step_m)
         if len(pts) > max_points_per_hole:
             # Subsample uniformly
             indices = np.linspace(0, len(pts) - 1, num=max_points_per_hole, dtype=int)
             pts = [pts[i] for i in indices]
+        
+        # Convert to coordinate tuples and deduplicate
+        hole_coords = [(p.x, p.y) for p in pts]
+        total_seeds_before_dedup += len(hole_coords)
+        hole_coords_deduped = _dedupe_xy(hole_coords, tol=1e-6)
+        
         start_index = len(seeds_xy)
-        for p in pts:
-            seeds_xy.append((p.x, p.y))
+        for coord in hole_coords_deduped:
+            seeds_xy.append(coord)
             seed_hole_idx.append(hid)
         hole_to_seed_indices[hid] = list(range(start_index, len(seeds_xy)))
+        
+        logging.debug(f"Hole {hid}: {len(hole_coords)} -> {len(hole_coords_deduped)} seeds after dedup")
 
+    logging.info(f"Generated {len(seeds_xy)} seeds from {total_seeds_before_dedup} raw points ({len(seeds_xy)/total_seeds_before_dedup*100:.1f}% retained)")
+    
     if len(seeds_xy) < 2:
         raise ValueError("Not enough seed points to build voronoi diagram.")
 
@@ -336,40 +429,53 @@ def split_course_into_holes(
 
     # Build Voronoi polygons (prefer SciPy with guaranteed order)
     logging.info("Building Voronoi tessellation...")
-    vor_polys = _build_voronoi_polygons(points, course_geom)
+    vor_polys, used_scipy = _build_voronoi_polygons(points, course_geom)
 
-    # Map cells back to holes:
-    # - SciPy path: vor_polys[i] corresponds to points[i]
-    # - Shapely path: classify each cell by nearest seed (by centroid)
-    logging.info("Mapping Voronoi cells to hole ids...")
+    # Map cells back to holes using spatial index for efficiency
+    logging.info("Mapping Voronoi cells to hole ids using spatial index...")
     seed_geoms = [Point(x, y) for (x, y) in seeds_xy]
+    
+    # Build spatial index for fast nearest-neighbor queries
+    seed_tree = STRtree(seed_geoms)
+    # Map geometry identity via stable WKB bytes to hole id (id() is unsafe)
+    seed_wkb_to_hole: Dict[bytes, int] = {p.wkb: hid for p, hid in zip(seed_geoms, seed_hole_idx)}
 
     cells_by_hole: Dict[int, List[Polygon]] = {hid: [] for hid in unique_ids}
-    if _HAS_SCIPY and len(vor_polys) == len(points):
-        for i, cell in enumerate(vor_polys):
-            hid = seed_hole_idx[i]
+    
+    # Classify cells to holes
+    if used_scipy and len(vor_polys) == len(points):
+        # Direct mapping: vor_polys[i] corresponds to points[i]
+        for idx, cell in enumerate(vor_polys):
             if cell.is_empty:
                 continue
-            # Clip to course polygon
+            hid = seed_hole_idx[idx]
             clipped = cell.intersection(course_geom)
             if not clipped.is_empty:
-                if isinstance(clipped, (Polygon, MultiPolygon)):
-                    if isinstance(clipped, Polygon):
-                        cells_by_hole[hid].append(clipped)
-                    else:
-                        cells_by_hole[hid].extend(
-                            [p for p in clipped.geoms if isinstance(p, Polygon)]
-                        )
+                if isinstance(clipped, Polygon):
+                    cells_by_hole[hid].append(clipped)
+                elif isinstance(clipped, MultiPolygon):
+                    cells_by_hole[hid].extend([p for p in clipped.geoms if isinstance(p, Polygon)])
+                elif isinstance(clipped, GeometryCollection):
+                    cells_by_hole[hid].extend([g for g in clipped.geoms if isinstance(g, Polygon)])
     else:
-        # Fallback: classify each cell by nearest seed (using centroid)
+        # Fallback: spatial nearest to seeds
         for cell in vor_polys:
             if cell.is_empty:
                 continue
             cpt = cell.representative_point()
-            # nearest seed
-            dists = [cpt.distance(pt) for pt in seed_geoms]
-            j = int(np.argmin(dists))
-            hid = seed_hole_idx[j]
+            nearest_seed = seed_tree.nearest(cpt)
+            hid: int | None = None
+            # Shapely STRtree.nearest may return an index (np.int64) or a geometry
+            if isinstance(nearest_seed, (int, np.integer)):
+                hid = seed_hole_idx[int(nearest_seed)]
+            else:
+                hid = seed_wkb_to_hole.get(nearest_seed.wkb)
+            if hid is None:
+                # Fallback: compute explicit nearest by distance (rare)
+                dists = [cpt.distance(pt) for pt in seed_geoms]
+                j = int(np.argmin(dists))
+                hid = seed_hole_idx[j]
+        
             clipped = cell.intersection(course_geom)
             if not clipped.is_empty:
                 if isinstance(clipped, Polygon):
@@ -378,12 +484,22 @@ def split_course_into_holes(
                     cells_by_hole[hid].extend(
                         [p for p in clipped.geoms if isinstance(p, Polygon)]
                     )
+                elif isinstance(clipped, GeometryCollection):
+                    cells_by_hole[hid].extend(
+                        [g for g in clipped.geoms if isinstance(g, Polygon)]
+                    )
+    
+    # Log cell assignment summary
+    for hid in sorted(unique_ids):
+        cell_count = len(cells_by_hole[hid])
+        logging.debug(f"Hole {hid}: {cell_count} Voronoi cells assigned")
 
-    # Union cells by hole
+    # Union cells by hole and enforce invariants
     logging.info("Dissolving cells per hole...")
     hole_polys: Dict[int, Polygon] = {}
     for hid, polys in cells_by_hole.items():
         if not polys:
+            logging.warning(f"Hole {hid}: No cells assigned")
             continue
         merged = unary_union(polys)
         if isinstance(merged, Polygon):
@@ -395,12 +511,17 @@ def split_course_into_holes(
             # Unexpected type; try buffer(0) to fix
             hole_polys[hid] = merged.buffer(0)
 
-    # Assign leftover area (if any) to nearest hole by centerline distance
-    logging.info("Assigning leftover slivers...")
+    # Enforce full coverage: assign ALL leftover area (no 10% cap)
+    logging.info("Enforcing full coverage...")
     assigned_union = unary_union(list(hole_polys.values())) if hole_polys else None
     if assigned_union:
         leftover = course_geom.difference(assigned_union)
         if not leftover.is_empty:
+            leftover_area = float(leftover.area)
+            coverage_pct = (course_area - leftover_area) / course_area * 100
+            logging.info(f"Initial coverage: {coverage_pct:.2f}%, leftover area: {leftover_area:,.1f} m²")
+            
+            # Always assign leftover area to nearest holes
             pieces: List[Polygon] = []
             if isinstance(leftover, Polygon):
                 pieces = [leftover]
@@ -409,23 +530,121 @@ def split_course_into_holes(
             else:
                 pieces = []
 
-            # Build hole centerline geometries for nearest assignment
-            hole_lines = {hid: geom for hid, geom in clipped_holes.items()}
-
-            for piece in pieces:
-                c = piece.representative_point()
-                # find nearest hole centerline
-                best_hole_id: int | None = None
-                best_distance = float("inf")
-                for hid, line in hole_lines.items():
-                    d = c.distance(line)
-                    if d < best_distance:
-                        best_distance = d
-                        best_hole_id = hid
-                if best_hole_id is not None:
+            # Build spatial index of hole polygons for fast nearest assignment
+            hole_ids_sorted = sorted(hole_polys.keys())
+            hole_geoms = [hole_polys[hid] for hid in hole_ids_sorted]
+            hole_wkb_to_id = {geom.wkb: hid for hid, geom in zip(hole_ids_sorted, hole_geoms)}
+            
+            if hole_geoms:
+                hole_tree = STRtree(hole_geoms)
+                
+                for piece in pieces:
+                    c = piece.representative_point()
+                    nearest_hole = hole_tree.nearest(c)
+                    if isinstance(nearest_hole, (int, np.integer)):
+                        best_hole_id = hole_ids_sorted[int(nearest_hole)]
+                    else:
+                        best_hole_id = hole_wkb_to_id.get(nearest_hole.wkb)
+                    if best_hole_id is None:
+                        # Fallback by explicit distance to all hole polys
+                        dists = [c.distance(g) for g in hole_geoms]
+                        best_idx = int(np.argmin(dists))
+                        best_hole_id = hole_ids_sorted[best_idx]
+                    
+                    # Union the piece with the nearest hole
                     hole_polys[best_hole_id] = unary_union(
-                        [hole_polys.get(best_hole_id), piece]
+                        [hole_polys[best_hole_id], piece]
                     ).buffer(0)
+                
+                logging.info(f"Assigned {len(pieces)} leftover pieces to nearest holes")
+        else:
+            logging.info("Full coverage achieved - no leftover area")
+
+    # Ensure every hole has at least a minimal corridor polygon
+    logging.info("Ensuring minimum corridor for holes with no area...")
+    for hid in unique_ids:
+        poly = hole_polys.get(hid)
+        if poly is None or poly.is_empty or poly.area < 1.0:
+            line = clipped_holes.get(hid)
+            if line is None or line.is_empty:
+                logging.warning(f"Hole {hid}: Missing line for fallback corridor")
+                continue
+            corridor = line.buffer(max(ensure_min_width_m, 1.0) / 2.0).intersection(course_geom)
+            if corridor.is_empty:
+                logging.warning(f"Hole {hid}: Corridor intersection empty")
+                continue
+            hole_polys[hid] = unary_union([hole_polys.get(hid), corridor]).buffer(0)
+
+    # Enforce disjoint property: remove overlaps deterministically
+    if enforce_disjoint:
+        logging.info("Enforcing disjoint property (pairwise resolution)...")
+        # First do a pairwise resolution pass to reduce overlaps intelligently
+        hole_polys = _resolve_overlaps_pairwise(hole_polys, clipped_holes)
+        # Then do a deterministic sweep to eliminate any tiny residual overlaps while preserving coverage
+        sorted_hole_ids = sorted(hole_polys.keys())
+        union_so_far = None
+        for hid in sorted_hole_ids:
+            geom = hole_polys[hid]
+            if union_so_far is not None:
+                remainder = geom.difference(union_so_far)
+                if remainder.is_empty:
+                    logging.warning(f"Hole {hid}: Became empty after overlap removal")
+                    hole_polys[hid] = GeometryCollection()
+                    continue
+                hole_polys[hid] = remainder
+            union_so_far = hole_polys[hid] if union_so_far is None else unary_union([union_so_far, hole_polys[hid]])
+    
+    # Recover holes that became empty by carving non-overlapping corridors
+    empty_after_disjoint: List[int] = []
+    if enforce_disjoint:
+        empty_after_disjoint = [hid for hid in sorted_hole_ids if (hid not in hole_polys or hole_polys[hid].is_empty)]
+    if empty_after_disjoint:
+        logging.warning(f"Holes became empty after disjoint: {empty_after_disjoint}")
+        for hid in empty_after_disjoint:
+            line = clipped_holes.get(hid)
+            if line is None or line.is_empty:
+                continue
+            width = max(ensure_min_width_m, 6.0)
+            # Try a few widths to obtain a non-empty non-overlapping corridor
+            corridor = None
+            for factor in (1.0, 1.5, 2.0):
+                candidate = line.buffer((width * factor) / 2.0).difference(union_so_far).intersection(course_geom)
+                if not candidate.is_empty:
+                    corridor = candidate
+                    break
+            if corridor is None or corridor.is_empty:
+                continue
+            hole_polys[hid] = corridor.buffer(0)
+            union_so_far = unary_union([union_so_far, hole_polys[hid]]) if union_so_far is not None else hole_polys[hid]
+
+    # Final disjoint pass after recovery to ensure no overlaps
+    if enforce_disjoint:
+        logging.info("Final disjointness enforcement after recovery...")
+        union_so_far = None
+        for hid in sorted(hole_polys.keys()):
+            geom = hole_polys[hid]
+            if geom.is_empty:
+                continue
+            if union_so_far is not None:
+                geom = geom.difference(union_so_far)
+                if geom.is_empty:
+                    hole_polys[hid] = GeometryCollection()
+                    continue
+            hole_polys[hid] = geom
+            union_so_far = geom if union_so_far is None else unary_union([union_so_far, geom])
+
+    # Validate coverage and disjointness
+    final_union = unary_union(list(hole_polys.values()))
+    final_coverage = final_union.area / course_area * 100
+    logging.info(f"Final coverage: {final_coverage:.2f}%")
+    
+    # Check for overlaps
+    total_hole_area = sum(poly.area for poly in hole_polys.values())
+    overlap_area = total_hole_area - final_union.area
+    if overlap_area > 1.0:  # tolerance for floating point
+        logging.warning(f"Overlaps detected: {overlap_area:,.1f} m²")
+    else:
+        logging.info("No significant overlaps detected")
 
     # Optional smoothing
     if smooth_m and smooth_m > 0:
@@ -440,6 +659,18 @@ def split_course_into_holes(
             elif isinstance(p2, MultiPolygon):
                 # Keep largest
                 hole_polys[hid] = max(p2.geoms, key=lambda q: q.area)
+
+        # Re-enforce disjointness after smoothing (deterministically)
+        logging.info("Re-enforcing disjointness after smoothing...")
+        union_so_far = None
+        for hid in sorted(hole_polys.keys()):
+            geom = hole_polys[hid]
+            if union_so_far is not None:
+                geom = geom.difference(union_so_far)
+                if geom.is_empty:
+                    continue
+                hole_polys[hid] = geom
+            union_so_far = geom if union_so_far is None else unary_union([union_so_far, geom])
 
     # Prepare output GeoDataFrame
     logging.info("Preparing output...")
@@ -465,6 +696,68 @@ def split_course_into_holes(
             f"Output has {len(out_gdf)} hole polygons (expected 18). Check inputs/parameters."
         )
 
+    # Optional debug exports
+    if debug_export_dir:
+        try:
+            dbg_dir = Path(debug_export_dir)
+            dbg_dir.mkdir(parents=True, exist_ok=True)
+
+            # Seeds
+            try:
+                seeds_fc = {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {"type": "Feature", "properties": {"hole": int(h)}, "geometry": {"type": "Point", "coordinates": [float(x), float(y)]}}
+                        for (x, y), h in zip(seeds_xy, seed_hole_idx)
+                    ],
+                }
+                (dbg_dir / "seeds.geojson").write_text(json.dumps(seeds_fc))
+            except Exception:
+                pass
+
+            # Raw Voronoi cells
+            try:
+                cells_fc = {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {"type": "Feature", "properties": {}, "geometry": json.loads(gpd.GeoSeries([p], crs=proj_crs).to_crs(4326).to_json())["features"][0]["geometry"]}
+                        for p in vor_polys if not p.is_empty
+                    ],
+                }
+                (dbg_dir / "raw_voronoi_cells.geojson").write_text(json.dumps(cells_fc))
+            except Exception:
+                pass
+
+            # Cells assigned (pre-dissolve)
+            try:
+                assigned_features = []
+                for hid, polys in cells_by_hole.items():
+                    for p in polys:
+                        assigned_features.append({
+                            "type": "Feature",
+                            "properties": {"hole": int(hid)},
+                            "geometry": json.loads(gpd.GeoSeries([p], crs=proj_crs).to_crs(4326).to_json())["features"][0]["geometry"],
+                        })
+                assigned_fc = {"type": "FeatureCollection", "features": assigned_features}
+                (dbg_dir / "cells_assigned.geojson").write_text(json.dumps(assigned_fc))
+            except Exception:
+                pass
+
+            # Holes dissolved pre-smooth
+            try:
+                pre_smooth_features = []
+                for hid, p in hole_polys.items():
+                    pre_smooth_features.append({
+                        "type": "Feature",
+                        "properties": {"hole": int(hid)},
+                        "geometry": json.loads(gpd.GeoSeries([p], crs=proj_crs).to_crs(4326).to_json())["features"][0]["geometry"],
+                    })
+                (dbg_dir / "holes_dissolved_pre_smooth.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": pre_smooth_features}))
+            except Exception:
+                pass
+        except Exception as e:
+            logging.warning(f"Failed to write debug exports: {e}")
+
     out_gdf.to_file(output_path, driver="GeoJSON")
     logging.info(f"Wrote: {output_path}")
 
@@ -477,21 +770,44 @@ def _get_ref_int(val) -> int:
         return 10 ** 9
 
 
-def _flatten_holes_path(holes_gdf: gpd.GeoDataFrame, close_loop: bool) -> List[Tuple[float, float]]:
-    """Return ordered (lon, lat) path across holes 1..18 sorted by `ref`.
+def _flatten_holes_path(
+    holes_gdf: gpd.GeoDataFrame,
+    close_loop: bool,
+    hole_prop_candidates: Tuple[str, ...] = (
+        "ref",
+        "hole",
+        "Hole",
+        "HOLE",
+        "number",
+        "Number",
+        "id",
+        "Id",
+        "REF",
+        "Ref",
+    ),
+) -> List[Tuple[float, float]]:
+    """Return ordered (lon, lat) path across holes 1..18 sorted by a hole id property.
 
+    Tries multiple property names; falls back to file order if none found.
     If a feature is MultiLineString, the longest LineString part is used.
     Consecutive duplicate coordinates are removed. Optionally closes loop.
     """
     if holes_gdf.empty:
         raise ValueError("Holes GeoDataFrame is empty")
 
-    if "ref" not in holes_gdf.columns:
-        raise ValueError("Expected 'ref' property in holes GeoJSON")
+    # Choose best available hole id property; fallback to file order
+    chosen_prop: str | None = None
+    for prop in hole_prop_candidates:
+        if prop in holes_gdf.columns:
+            chosen_prop = prop
+            break
 
     holes_sorted = holes_gdf.copy()
-    holes_sorted["_ref_int"] = holes_sorted["ref"].apply(_get_ref_int)
-    holes_sorted.sort_values("_ref_int", inplace=True)
+    if chosen_prop is not None:
+        holes_sorted["_ref_int"] = holes_sorted[chosen_prop].apply(_get_ref_int)
+        holes_sorted.sort_values("_ref_int", inplace=True)
+    else:
+        holes_sorted = holes_sorted.reset_index(drop=True)
 
     coords: List[Tuple[float, float]] = []
     for _, row in holes_sorted.iterrows():
@@ -689,6 +1005,17 @@ def _parse_args(argv: List[str] | None = None):
         help="Cap on seed points per hole to control tessellation cost.",
     )
     parser.add_argument(
+        "--debug_dir",
+        type=str,
+        default=None,
+        help="Optional directory to write debug artifacts (seeds, cells, dissolved).",
+    )
+    parser.add_argument(
+        "--enforce_disjoint",
+        action="store_true",
+        help="If set, enforce disjoint hole polygons via overlap resolution.",
+    )
+    parser.add_argument(
         "--log",
         default="INFO",
         help="Logging level (DEBUG, INFO, WARNING).",
@@ -720,6 +1047,8 @@ def main(argv: List[str] | None = None) -> int:
         step_m=args.step,
         smooth_m=args.smooth,
         max_points_per_hole=args.max_points_per_hole,
+        debug_export_dir=args.debug_dir,
+        enforce_disjoint=bool(args.enforce_disjoint),
     )
 
     # Also generate a connected path + minute nodes alongside the geofenced output

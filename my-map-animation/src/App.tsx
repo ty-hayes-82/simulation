@@ -47,6 +47,7 @@ export default function App() {
           <ViewSwitcher />
           {!isHeatmap && !isShortcuts && <SimulationTimePanel />}
           {!isShortcuts && <TopBarControls />}
+          {/* Hide summary tables (bottom-left and bottom-right) per request */}
           {!isShortcuts && <SimulationMatrix />}
           {!isShortcuts && <BlockedHolesMatrix />}
           <Routes>

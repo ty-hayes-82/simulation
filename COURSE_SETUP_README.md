@@ -5,10 +5,10 @@
 
 ## Step 1 — Extract course data from OpenStreetMap
 ```powershell
-python scripts/routing/extract_course_data.py --course "Idle Hour Country Club" --clubhouse-lat 38.027532 --clubhouse-lon -84.469878 --include-streets --street-buffer 750 --course-buffer 100 --output-dir courses/idle_hour_country_club
+python scripts/routing/extract_course_data.py --course "Idle Hour Country Club" --clubhouse-lat 38.027532 --clubhouse-lon -84.469878 --include-streets --street-buffer 750 --course-buffer 100 --include-sports-pitch --pitch-radius-yards 200 --include-water --water-radius-yards 200 --output-dir courses/idle_hour_country_club
 ```
 
-**Outputs**: `pkl/cart_graph.pkl`, `pkl/golf_route.pkl`, `pkl/street_graph.pkl`, `geojson/` files, `geojson/generated/holes_geofenced.geojson`
+**Outputs**: `pkl/cart_graph.pkl`, `pkl/golf_route.pkl`, `pkl/street_graph.pkl`, `geojson/` files, `geojson/generated/holes_geofenced.geojson`, `geojson/sports_pitches.geojson`, `geojson/pools_water.geojson`
 
 ## Step 2 — Generate holes connected path
 ```powershell

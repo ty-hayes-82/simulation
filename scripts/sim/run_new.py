@@ -149,6 +149,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory root")
     parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
     parser.add_argument("--keep-old-outputs", action="store_true", default=False, help="Keep existing simulation outputs (default: clean them up)")
+    parser.add_argument("--skip-publish", action="store_true", default=False, help="Do not auto-publish to my-map-animation/public/coordinates after a run")
 
     # Mode selection
     parser.add_argument("--num-carts", type=int, default=0, help="Number of beverage carts")
@@ -238,23 +239,26 @@ def main() -> None:
                 logger.warning("Could not find detailed results.json to generate heatmap data.")
         
         # --- Auto-publish to my-map-animation/public/coordinates ---
-        try:
-            viewer_dir = Path("my-map-animation")
-            if viewer_dir.exists():
-                env = os.environ.copy()
-                try:
-                    output_dir = Path(results.get("output_dir", "")).resolve()
-                    outputs_root = output_dir.parent if output_dir else None
-                    if outputs_root and outputs_root.exists():
-                        env["SIM_BASE_DIR"] = str(outputs_root)
-                except Exception:
-                    pass
-                subprocess.run([sys.executable, "run_map_app.py"], cwd=str(viewer_dir), env=env, check=False)
-                logger.info("Published simulation artifacts to my-map-animation/public/coordinates via run_map_app.py")
-            else:
-                logger.info("Viewer directory '%s' not found; skipping auto-publish.", viewer_dir)
-        except Exception as e:
-            logger.warning("Failed to auto-publish to my-map-animation: %s", e)
+        if not args.skip_publish:
+            try:
+                viewer_dir = Path("my-map-animation")
+                if viewer_dir.exists():
+                    env = os.environ.copy()
+                    try:
+                        output_dir = Path(results.get("output_dir", "")).resolve()
+                        outputs_root = output_dir.parent if output_dir else None
+                        if outputs_root and outputs_root.exists():
+                            env["SIM_BASE_DIR"] = str(outputs_root)
+                    except Exception:
+                        pass
+                    subprocess.run([sys.executable, "run_map_app.py"], cwd=str(viewer_dir), env=env, check=False)
+                    logger.info("Published simulation artifacts to my-map-animation/public/coordinates via run_map_app.py")
+                else:
+                    logger.info("Viewer directory '%s' not found; skipping auto-publish.", viewer_dir)
+            except Exception as e:
+                logger.warning("Failed to auto-publish to my-map-animation: %s", e)
+        else:
+            logger.debug("--skip-publish set; skipping auto-publish step")
 
         return
     else:

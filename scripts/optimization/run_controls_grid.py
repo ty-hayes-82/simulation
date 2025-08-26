@@ -140,7 +140,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--python-bin", default=sys.executable)
     p.add_argument("--log-level", default="INFO")
     p.add_argument("--minimal-outputs", action="store_true", default=False, help="Only write coordinates.csv, simulation_metrics.json, results.json for each run")
-    p.add_argument("--keep-old-outputs", action="store_true", default=False, help="Keep existing simulation outputs (default: clean them up)")
+    p.add_argument("--keep-old-outputs", action="store_true", default=False, help="Keep existing simulation outputs (default: clean at start)")
     p.add_argument("--run-blocking-variants", action="store_true", help="Run all four blocking variants for each combination")
     p.add_argument("--coordinates-only-for-first-run", action="store_true", default=False, help="Only generate coordinates.csv for the first run in a multi-run simulation")
     return p.parse_args()
@@ -172,6 +172,8 @@ def run_one(*, py: str, course_dir: Path, scenario: str, runners: int, orders: i
         cmd += ["--minimal-outputs"]
     if keep_old_outputs:
         cmd += ["--keep-old-outputs"]
+    # In batch/grid runs, avoid per-run publishing/cleanups; we'll publish once at the end
+    cmd += ["--skip-publish"]
     if coordinates_only_for_first_run:
         cmd += ["--coordinates-only-for-first-run"]
     if extra_cli_args:

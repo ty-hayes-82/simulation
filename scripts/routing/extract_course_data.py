@@ -33,6 +33,7 @@ import os
 import sys
 import json
 import pickle
+import pandas as pd
 import geopandas as gpd
 from shapely.geometry import mapping, Point
 import networkx as nx
@@ -43,7 +44,12 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from scripts.course_prep.geofence_holes import split_course_into_holes, generate_holes_connected
 
-from golfsim.data.osm_ingest import load_course, build_cartpath_graph, _get_streets_near_course
+from golfsim.data.osm_ingest import (
+    load_course,
+    build_cartpath_graph,
+    _get_streets_near_course,
+    features_within_radius,
+)
 from golfsim.preprocess.course_model import build_traditional_route
 from golfsim.logging import init_logging, get_logger
 from utils.cli import add_log_level_argument
@@ -80,6 +86,20 @@ def save_course_data(data, output_dir):
     if len(data["greens"]) > 0:
         data["greens"].to_file(os.path.join(geojson_dir, "greens.geojson"), driver="GeoJSON")
         print(f"✓ Saved {len(data['greens'])} greens to {geojson_dir}/greens.geojson")
+
+
+def _save_extra_layer(gdf: gpd.GeoDataFrame, output_dir: str, filename: str, label: str) -> bool:
+    """Save an extra amenity layer to geojson if present."""
+    if gdf is not None and not gdf.empty:
+        geojson_dir = os.path.join(output_dir, "geojson")
+        os.makedirs(geojson_dir, exist_ok=True)
+        out_path = os.path.join(geojson_dir, filename)
+        gdf.to_file(out_path, driver="GeoJSON")
+        print(f"✓ Saved {len(gdf)} {label} to {out_path}")
+        return True
+    else:
+        print(f"⊘ No {label} found to save")
+        return False
 
 
 def save_cart_paths(graph, output_dir):
@@ -524,6 +544,12 @@ def main():
     parser.add_argument("--street-buffer", type=int, default=500, help="Search buffer distance in meters for street extraction (default: 500m)")
     parser.add_argument("--course-buffer", type=int, default=100, help="Filter buffer distance in meters - only keep streets within this distance of course boundary (default: 100m)")
     parser.add_argument("--no-combined-network", action="store_true", help="Skip creating combined cart path + street routing network")
+
+    # Amenity layers near clubhouse
+    parser.add_argument("--include-sports-pitch", action="store_true", help="Include leisure=pitch features within radius of clubhouse (e.g., tennis courts)")
+    parser.add_argument("--pitch-radius-yards", type=float, default=200.0, help="Radius in yards from clubhouse for sports pitches (default: 200 yards)")
+    parser.add_argument("--include-water", action="store_true", help="Include swimming pools and water features within radius of clubhouse")
+    parser.add_argument("--water-radius-yards", type=float, default=200.0, help="Radius in yards from clubhouse for pools/water (default: 200 yards)")
     
     # Geofencing options
     parser.add_argument("--skip-geofencing", action="store_true", help="Skip automatic generation of geofenced hole polygons")
@@ -559,6 +585,71 @@ def main():
             broaden=args.broaden,
             include_streets=False  # We'll handle this separately to use custom buffer
         )
+
+        # Amenity extraction near clubhouse
+        sports_pitch_gdf = None
+        pools_water_gdf = None
+        if args.include_sports_pitch:
+            radius_m = args.pitch_radius_yards * 0.9144
+            print(f"\nFetching sports pitches within {args.pitch_radius_yards:.0f} yards (~{radius_m:.0f} m) of clubhouse...")
+            # OSM: leisure=pitch
+            sports_pitch_gdf = features_within_radius(
+                tags={"leisure": "pitch"},
+                center_lat=args.clubhouse_lat,
+                center_lon=args.clubhouse_lon,
+                radius_m=radius_m,
+            )
+        if args.include_water:
+            radius_m_w = args.water_radius_yards * 0.9144
+            print(f"\nFetching swimming pools and water within {args.water_radius_yards:.0f} yards (~{radius_m_w:.0f} m) of clubhouse...")
+            # Gather union of common pool/water tags via separate queries, then concat
+            water_frames = []
+            # Natural water bodies
+            water_frames.append(
+                features_within_radius(
+                    tags={"natural": "water"},
+                    center_lat=args.clubhouse_lat,
+                    center_lon=args.clubhouse_lon,
+                    radius_m=radius_m_w,
+                )
+            )
+            # Swimming pools (common tagging is leisure=swimming_pool; amenity=swimming_pool appears too)
+            water_frames.append(
+                features_within_radius(
+                    tags={"leisure": "swimming_pool"},
+                    center_lat=args.clubhouse_lat,
+                    center_lon=args.clubhouse_lon,
+                    radius_m=radius_m_w,
+                )
+            )
+            water_frames.append(
+                features_within_radius(
+                    tags={"amenity": "swimming_pool"},
+                    center_lat=args.clubhouse_lat,
+                    center_lon=args.clubhouse_lon,
+                    radius_m=radius_m_w,
+                )
+            )
+            # Some pools are mapped as water=pool with natural=water
+            water_frames.append(
+                features_within_radius(
+                    tags={"water": "pool"},
+                    center_lat=args.clubhouse_lat,
+                    center_lon=args.clubhouse_lon,
+                    radius_m=radius_m_w,
+                )
+            )
+            # Concatenate and drop duplicates if any
+            try:
+                frames = [f for f in water_frames if f is not None and not f.empty]
+                if len(frames) > 0:
+                    pools_water_gdf = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True))
+                    # Ensure CRS
+                    pools_water_gdf = pools_water_gdf.set_crs("EPSG:4326", allow_override=True)
+                else:
+                    pools_water_gdf = gpd.GeoDataFrame()
+            except Exception:
+                pools_water_gdf = gpd.GeoDataFrame()
         
         # Handle street extraction with custom buffer distance
         if args.include_streets:
@@ -588,6 +679,12 @@ def main():
         # Step 3: Save all data
         print(f"\n💾 Saving data to {args.output_dir}/...")
         save_course_data(data, args.output_dir)
+
+        # Save amenity layers if present
+        if args.include_sports_pitch and sports_pitch_gdf is not None:
+            _save_extra_layer(sports_pitch_gdf, args.output_dir, "sports_pitches.geojson", "sports pitches")
+        if args.include_water and pools_water_gdf is not None:
+            _save_extra_layer(pools_water_gdf, args.output_dir, "pools_water.geojson", "pools/water features")
         
         # Auto-generate geofenced holes if enabled and both boundary and holes were saved
         if not args.skip_geofencing:

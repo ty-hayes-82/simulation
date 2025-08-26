@@ -1,0 +1,39 @@
+{
+  "course_name": "Idle Hour Country Club",
+  "within": null,
+  "state": null,
+  "bbox": null,
+  "clubhouse": {
+    "latitude": 38.027532,
+    "longitude": -84.469878
+  },
+  "extraction_params": {
+    "broaden": false,
+    "include_streets": true,
+    "street_buffer_m": 750,
+    "course_buffer_m": 100,
+    "combined_network": true
+  },
+  "network_params": {
+    "auto_connect_clubhouse": true,
+    "max_connection_distance_m": 500.0,
+    "connect_on_network_build": true
+  },
+  "golfer_18_holes_hours": 4.25,
+  "delivery_prep_time_sec": 600,
+  "bev_cart_avg_order_usd": 12.5,
+  "delivery_avg_order_usd": 30.0,
+  "bev_cart_order_probability": 0.4,
+  "delivery_order_probability_per_9_holes": 0.2,
+  "minutes_for_delivery_order_failure": 60,
+  "delivery_service_hours": {
+    "open_time": "11:00",
+    "close_time": "18:00",
+    "description": "Delivery service operates 11:00 AM to 6:00 PM"
+  },
+  "bev_cart_service_hours": {
+    "start_time": "09:00",
+    "end_time": "17:00",
+    "description": "Beverage cart operates 9:00 AM to 5:00 PM"
+  }
+}
