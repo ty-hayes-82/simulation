@@ -9,6 +9,7 @@ from __future__ import annotations
 import warnings
 from typing import Dict, List, Optional, Tuple, Callable, Any
 import time
+import requests
 
 import geopandas as gpd
 import networkx as nx
@@ -20,13 +21,36 @@ from golfsim.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Overpass timeout (seconds)
+# Overpass/requests timeouts (seconds)
 OVERPASS_TIMEOUT = 180
+REQUESTS_TIMEOUT = (15, 90)  # (connect, read)
 OVERPASS_ENDPOINTS: List[str] = [
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass-api.de/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
 ]
+
+def _preflight_reachable_endpoints(candidates: List[str], connect_timeout_sec: float = 3.0) -> List[str]:
+    """Probe Overpass endpoints quickly and prioritize those that respond.
+
+    If none respond quickly, return the original list to allow normal retries.
+    """
+    reachable: List[str] = []
+    for ep in candidates:
+        try:
+            status_url = ep.replace("/interpreter", "/status")
+            requests.get(status_url, timeout=(connect_timeout_sec, 5))
+            reachable.append(ep)
+            continue
+        except Exception:
+            pass
+        try:
+            probe = "[out:json];node(1);out;"
+            requests.post(ep, data={"data": probe}, timeout=(connect_timeout_sec, 5))
+            reachable.append(ep)
+        except Exception:
+            pass
+    return reachable if reachable else candidates
 
 def _with_overpass_retries(operation: Callable[[], Any], desc: str, max_attempts: int = 5, sleep_base_sec: float = 1.5) -> Any:
     last_exc: Optional[BaseException] = None
@@ -40,14 +64,34 @@ def _with_overpass_retries(operation: Callable[[], Any], desc: str, max_attempts
         if ep not in endpoints:
             endpoints.append(ep)
 
+    # Prefer endpoints that look reachable right now
+    endpoints = _preflight_reachable_endpoints(endpoints)
+
     for attempt in range(max_attempts):
         endpoint = endpoints[attempt % len(endpoints)]
         try:
-            ox.settings.timeout = OVERPASS_TIMEOUT
-            ox.settings.overpass_rate_limit = True
+            # Configure settings for both OSMnx v1 and v2 APIs
+            try:
+                ox.settings.requests_timeout = REQUESTS_TIMEOUT  # v2
+            except Exception:
+                pass
+            try:
+                ox.settings.timeout = OVERPASS_TIMEOUT  # v1 (deprecated in v2)
+            except Exception:
+                pass
+            try:
+                ox.settings.overpass_url = endpoint  # v2
+            except Exception:
+                pass
+            try:
+                ox.settings.overpass_endpoint = endpoint  # v1 (deprecated in v2)
+            except Exception:
+                pass
+
+            # Avoid osmnx internal /status polling which can fail behind firewalls
+            ox.settings.overpass_rate_limit = False
             ox.settings.use_cache = True
             ox.settings.log_console = False
-            ox.settings.overpass_endpoint = endpoint
 
             result = operation()
             try:
@@ -110,7 +154,31 @@ def _geoms_from_place_or_bbox(
             "Provide either 'within' (place string), 'state' (state name), 'bbox' (west, south, east, north), or coordinates (center_lat, center_lon)."
         )
 
-    if center_lat is not None and center_lon is not None:
+    # Prefer 'within' when provided to avoid large radius coordinate searches
+    if within:
+        # Try multiple geographic search areas
+        search_areas = [
+            within,
+            "Kennesaw, Georgia, USA",  # Try more specific
+            "Cobb County, Georgia, USA",  # Try county level
+            "Georgia, USA",  # Try state level as fallback
+        ]
+
+        for area in search_areas:
+            try:
+                logger.info("Searching in: %s", area)
+                result = _features_from_place_retry(area, tags)
+                if len(result) > 0:
+                    logger.info("Found %d features in %s", len(result), area)
+                    return result
+                else:
+                    logger.warning("No features found in %s", area)
+            except Exception as e:
+                logger.error("Search failed in %s: %s", area, e)
+
+        # If all searches failed, raise an error
+        raise ValueError(f"No features found in any of the search areas: {search_areas}")
+    elif center_lat is not None and center_lon is not None:
         # Search around coordinates using a buffer
         logger.info(
             "Searching around coordinates: %s, %s (radius: %.1f km)", center_lat, center_lon, radius_km
@@ -133,7 +201,6 @@ def _geoms_from_place_or_bbox(
         search_polygon = buffer_latlon.geometry.iloc[0]
 
         try:
-            result = ox.features_from_polygon(search_polygon, tags=tags)
             result = _features_from_polygon_retry(search_polygon, tags)
             if len(result) > 0:
                 logger.info("Found %d features around coordinates", len(result))
@@ -153,7 +220,6 @@ def _geoms_from_place_or_bbox(
         for area in search_areas:
             try:
                 logger.info("Searching across state: %s", area)
-                result = ox.features_from_place(area, tags=tags)
                 result = _features_from_place_retry(area, tags)
                 if len(result) > 0:
                     logger.info("Found %d features in %s", len(result), area)
@@ -165,30 +231,6 @@ def _geoms_from_place_or_bbox(
 
         # If state search failed, raise an error
         raise ValueError(f"No features found in any of the state search areas: {search_areas}")
-    elif within:
-        # Try multiple geographic search areas
-        search_areas = [
-            within,
-            "Kennesaw, Georgia, USA",  # Try more specific
-            "Cobb County, Georgia, USA",  # Try county level
-            "Georgia, USA",  # Try state level as fallback
-        ]
-
-        for area in search_areas:
-            try:
-                logger.info("Searching in: %s", area)
-                result = ox.features_from_place(area, tags=tags)
-                result = _features_from_place_retry(area, tags)
-                if len(result) > 0:
-                    logger.info("Found %d features in %s", len(result), area)
-                    return result
-                else:
-                    logger.warning("No features found in %s", area)
-            except Exception as e:
-                logger.error("Search failed in %s: %s", area, e)
-
-        # If all searches failed, raise an error
-        raise ValueError(f"No features found in any of the search areas: {search_areas}")
     else:
         return _features_from_bbox_retry(bbox, tags)
 
@@ -221,7 +263,6 @@ def features_within_radius(
         buffer_latlon = buffer_gdf.to_crs("EPSG:4326")
         search_polygon = buffer_latlon.geometry.iloc[0]
 
-        result = ox.features_from_polygon(search_polygon, tags=tags)
         result = _features_from_polygon_retry(search_polygon, tags)
         # Normalize CRS
         if not result.empty:

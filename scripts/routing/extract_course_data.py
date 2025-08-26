@@ -80,12 +80,12 @@ def save_course_data(data, output_dir):
     # Save tees data
     if len(data["tees"]) > 0:
         data["tees"].to_file(os.path.join(geojson_dir, "tees.geojson"), driver="GeoJSON")
-        print(f"✓ Saved {len(data['tees'])} tees to {geojson_dir}/tees.geojson")
+        print(f"Saved {len(data['tees'])} tees to {geojson_dir}/tees.geojson")
     
     # Save greens data
     if len(data["greens"]) > 0:
         data["greens"].to_file(os.path.join(geojson_dir, "greens.geojson"), driver="GeoJSON")
-        print(f"✓ Saved {len(data['greens'])} greens to {geojson_dir}/greens.geojson")
+        print(f"Saved {len(data['greens'])} greens to {geojson_dir}/greens.geojson")
 
 
 def _save_extra_layer(gdf: gpd.GeoDataFrame, output_dir: str, filename: str, label: str) -> bool:
@@ -95,10 +95,10 @@ def _save_extra_layer(gdf: gpd.GeoDataFrame, output_dir: str, filename: str, lab
         os.makedirs(geojson_dir, exist_ok=True)
         out_path = os.path.join(geojson_dir, filename)
         gdf.to_file(out_path, driver="GeoJSON")
-        print(f"✓ Saved {len(gdf)} {label} to {out_path}")
+        print(f"Saved {len(gdf)} {label} to {out_path}")
         return True
     else:
-        print(f"⊘ No {label} found to save")
+        print(f"No {label} found to save")
         return False
 
 
@@ -143,16 +143,16 @@ def save_cart_paths(graph, output_dir):
         
         with open(os.path.join(geojson_dir, "cart_paths.geojson"), 'w') as f:
             json.dump(geojson, f, indent=2)
-        print(f"✓ Saved cart paths GeoJSON to {geojson_dir}/cart_paths.geojson")
+        print(f"Saved cart paths GeoJSON to {geojson_dir}/cart_paths.geojson")
         
         # Save graph as pickle for simulation use
         with open(os.path.join(pkl_dir, "cart_graph.pkl"), 'wb') as f:
             pickle.dump(graph, f)
-        print(f"✓ Saved cart graph pickle to {pkl_dir}/cart_graph.pkl")
+        print(f"Saved cart graph pickle to {pkl_dir}/cart_graph.pkl")
         
         return True
     else:
-        print("⚠ No cart paths found!")
+        print("No cart paths found!")
         return False
 
 
@@ -181,14 +181,14 @@ def save_route_data(route_data, output_dir, save_hole_lines=True):
         
         with open(os.path.join(geojson_dir, "hole_lines.geojson"), 'w') as f:
             json.dump(hole_geojson, f, indent=2)
-        print(f"✓ Saved hole lines to {geojson_dir}/hole_lines.geojson")
+        print(f"Saved hole lines to {geojson_dir}/hole_lines.geojson")
     elif not save_hole_lines:
-        print("⊘ Skipped saving hole lines (using holes.geojson instead)")
+        print("Skipped saving hole lines (using holes.geojson instead)")
     
     # Save full route as pickle
     with open(os.path.join(pkl_dir, "golf_route.pkl"), 'wb') as f:
         pickle.dump(route_data["route"], f)
-    print(f"✓ Saved golf route pickle to {pkl_dir}/golf_route.pkl")
+    print(f"Saved golf route pickle to {pkl_dir}/golf_route.pkl")
     
     # Save route summary
     route_summary = {
@@ -199,7 +199,7 @@ def save_route_data(route_data, output_dir, save_hole_lines=True):
     
     with open(os.path.join(output_dir, "route_summary.json"), 'w') as f:
         json.dump(route_summary, f, indent=2)
-    print(f"✓ Saved route summary to {output_dir}/route_summary.json")
+    print(f"Saved route summary to {output_dir}/route_summary.json")
 
 
 def save_streets_data(streets_gdf, output_dir):
@@ -212,7 +212,7 @@ def save_streets_data(streets_gdf, output_dir):
         
         streets_path = os.path.join(geojson_dir, "streets.geojson")
         streets_gdf.to_file(streets_path, driver="GeoJSON")
-        print(f"✓ Saved {len(streets_gdf)} streets to {streets_path}")
+        print(f"Saved {len(streets_gdf)} streets to {streets_path}")
         
         # Build a street network graph for routing
         street_graph = build_street_graph(streets_gdf)
@@ -223,7 +223,7 @@ def save_streets_data(streets_gdf, output_dir):
         
         return True
     else:
-        print("⊘ No streets data to save.")
+        print("No streets data to save.")
         return False
 
 
@@ -319,7 +319,7 @@ def save_combined_routing_network(cart_graph, street_graph, output_dir):
     with open(os.path.join(pkl_dir, "combined_routing_graph.pkl"), 'wb') as f:
         pickle.dump(combined_graph, f)
     
-    print(f"✓ Saved combined routing network: {combined_graph.number_of_nodes()} nodes, {combined_graph.number_of_edges()} edges")
+    print(f"Saved combined routing network: {combined_graph.number_of_nodes()} nodes, {combined_graph.number_of_edges()} edges")
     return combined_graph
 
 
@@ -363,7 +363,7 @@ def _connect_cart_paths_to_streets(combined_graph, cart_graph, street_graph, max
             )
             connections_made += 1
     
-    print(f"✓ Created {connections_made} cart-path-to-street connections")
+    print(f"Created {connections_made} cart-path-to-street connections")
     return connections_made
 
 
@@ -537,6 +537,7 @@ def main():
     parser.add_argument("--bbox", default=None, help="Optional bbox 'west,south,east,north'")
     parser.add_argument("--clubhouse-lat", type=float, required=True, help="Clubhouse latitude")
     parser.add_argument("--clubhouse-lon", type=float, required=True, help="Clubhouse longitude")
+    parser.add_argument("--search-radius-km", type=float, default=10.0, help="Radius in km for coordinate-based OSM search (default: 10.0)")
     parser.add_argument("--broaden", action="store_true", help="Broaden OSM path filter if cart paths are sparse")
     
     # Street extraction options
@@ -580,7 +581,7 @@ def main():
             state=args.state,
             center_lat=args.clubhouse_lat,
             center_lon=args.clubhouse_lon,
-            radius_km=10.0,
+            radius_km=args.search_radius_km,
             include_cart_paths=True,
             broaden=args.broaden,
             include_streets=False  # We'll handle this separately to use custom buffer
@@ -672,9 +673,14 @@ def main():
         print(f"✓ Built cart path graph with {cart_graph.number_of_nodes()} nodes and {cart_graph.number_of_edges()} edges")
         
         # Step 2: Build traditional golf route (skip hole lines since they're in holes.geojson)
-        print("\n⛳ Building traditional golf route...")
-        route_data = build_traditional_route(data, strict_18=True)
-        print(f"✓ Built route with {len(route_data['hole_lines'])} hole segments")
+        route_data = None
+        try:
+            print("\n⛳ Building traditional golf route...")
+            route_data = build_traditional_route(data, strict_18=True)
+            print(f"✓ Built route with {len(route_data['hole_lines'])} hole segments")
+        except Exception as re:
+            print(f"⚠ Skipping route build: {re}")
+            logger.warning(f"Skipping route build due to error: {re}")
         
         # Step 3: Save all data
         print(f"\n💾 Saving data to {args.output_dir}/...")
@@ -750,7 +756,9 @@ def main():
             else:
                 print("   No street data available for combined network")
 
-        save_route_data(route_data, args.output_dir, save_hole_lines=False)
+        # Save route if available
+        if route_data is not None:
+            save_route_data(route_data, args.output_dir, save_hole_lines=False)
         save_simulation_config(args, args.output_dir)
         
         print(f"\n✅ Data extraction complete!")

@@ -1,0 +1,41 @@
+{
+  "variantKey": "back",
+  "blockedHoles": [
+    10,
+    11,
+    12
+  ],
+  "deliveryMetrics": {
+    "totalOrders": 20,
+    "successfulDeliveries": 20,
+    "failedDeliveries": 0,
+    "avgOrderTime": 12.982641374601103,
+    "onTimePercentage": 100.0,
+    "revenue": 600.0,
+    "ordersPerRunnerHour": 2.0,
+    "lateOrders": 0,
+    "runnerUtilizationPct": 13.838904166406993,
+    "totalRunnerDriveMinutes": 249.10027499532586,
+    "totalRunnerShiftMinutes": 1800.0,
+    "runnerUtilizationByRunner": {
+      "runner_1": {
+        "driveMinutes": 191.87846324435665,
+        "utilizationPct": 31.97974387405944,
+        "shiftMinutes": 600.0
+      },
+      "runner_2": {
+        "driveMinutes": 42.18954003977862,
+        "utilizationPct": 7.03159000662977,
+        "shiftMinutes": 600.0
+      },
+      "runner_3": {
+        "driveMinutes": 15.032271711190582,
+        "utilizationPct": 2.505378618531764,
+        "shiftMinutes": 600.0
+      }
+    }
+  },
+  "bevCartMetrics": null,
+  "hasRunners": true,
+  "hasBevCart": false
+}
