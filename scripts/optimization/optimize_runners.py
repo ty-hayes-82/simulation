@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def parse_range(spec: str) -> List[int]:
@@ -183,6 +185,7 @@ def run_combo(
         "--num-runs", str(runs_per),
         "--output-dir", str(output_dir),
         "--log-level", log_level,
+        "--no-export-geojson",
         "--keep-old-outputs",
         "--skip-publish",
         "--minimal-outputs",
@@ -203,7 +206,10 @@ def main() -> None:
     p.add_argument("--tee-scenario", default="real_tee_sheet")
     p.add_argument("--orders", type=int, required=True)
     p.add_argument("--runner-range", type=str, default="1-3")
-    p.add_argument("--runs-per", type=int, default=6)
+    p.add_argument("--runs-per", type=int, default=12)
+    p.add_argument("--confirm-runs-per", type=int, default=16, help="rerun borderline combos with this many runs for higher confidence")
+    p.add_argument("--borderline-margin", type=float, default=0.02, help="treat on_time_wilson_lo within this of target as borderline")
+    p.add_argument("--no-auto-confirm", action="store_true", help="disable automatic high-confidence rerun for borderline results")
     p.add_argument("--block-holes", nargs="+", type=int, default=None)
     p.add_argument("--python-bin", default=sys.executable)
     p.add_argument("--log-level", default="INFO")
@@ -215,6 +221,7 @@ def main() -> None:
     p.add_argument("--max-p90", type=float, default=40.0)
     p.add_argument("--confidence", type=float, default=0.95)
     p.add_argument("--output-root", default="outputs/runner_opt")
+    p.add_argument("--concurrency", type=int, default=max(1, min(4, (os.cpu_count() or 2))), help="max concurrent simulations")
     args = p.parse_args()
 
     project_root = Path(__file__).resolve().parents[2]
@@ -234,25 +241,55 @@ def main() -> None:
 
     recommendations: List[Dict[str, Any]] = []
 
+    # Run all requested runner counts in parallel
+    future_to_n: Dict[Any, Tuple[int, Path]] = {}
+    with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+        for n in runner_values:
+            combo_dir = root / f"runners_{n}"
+            fut = executor.submit(
+                run_combo,
+                python_bin=args.python_bin,
+                course_dir=course_dir,
+                tee_scenario=args.tee_scenario,
+                num_runners=n,
+                orders=args.orders,
+                runs_per=args.runs_per,
+                output_dir=combo_dir,
+                log_level=args.log_level,
+                block_holes=args.block_holes,
+                runner_speed=args.runner_speed,
+                prep_time=args.prep_time,
+            )
+            future_to_n[fut] = (n, combo_dir)
+        for fut in as_completed(future_to_n):
+            _ = fut.result()
+
     for n in runner_values:
         combo_dir = root / f"runners_{n}"
-        run_combo(
-            python_bin=args.python_bin,
-            course_dir=course_dir,
-            tee_scenario=args.tee_scenario,
-            num_runners=n,
-            orders=args.orders,
-            runs_per=args.runs_per,
-            output_dir=combo_dir,
-            log_level=args.log_level,
-            block_holes=args.block_holes,
-            runner_speed=args.runner_speed,
-            prep_time=args.prep_time,
-        )
-
         # Aggregate per-run results
         run_dirs = sorted([p for p in combo_dir.glob("run_*") if p.is_dir()])
         _, agg = aggregate_runs(run_dirs)
+
+        # Optional high-confidence rerun if borderline
+        if not args.no_auto_confirm:
+            ot_lo = float(agg.get("on_time_wilson_lo", 0.0) or 0.0)
+            if abs(ot_lo - args.target_on_time) <= args.borderline_margin:
+                confirm_dir = combo_dir / "confirm"
+                run_combo(
+                    python_bin=args.python_bin,
+                    course_dir=course_dir,
+                    tee_scenario=args.tee_scenario,
+                    num_runners=n,
+                    orders=args.orders,
+                    runs_per=args.confirm_runs_per,
+                    output_dir=confirm_dir,
+                    log_level=args.log_level,
+                    block_holes=args.block_holes,
+                    runner_speed=args.runner_speed,
+                    prep_time=args.prep_time,
+                )
+                all_dirs = run_dirs + sorted([p for p in confirm_dir.glob("run_*") if p.is_dir()])
+                _, agg = aggregate_runs(all_dirs)
         meets = (
             agg["on_time_wilson_lo"] >= args.target_on_time
             and agg["failed_mean"] <= args.max_failed_rate

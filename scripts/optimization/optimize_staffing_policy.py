@@ -29,6 +29,8 @@ import math
 import subprocess
 import sys
 from dataclasses import dataclass
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -171,6 +173,7 @@ def run_combo(*, py: str, course_dir: Path, scenario: str, runners: int, orders:
         "--num-runs", str(runs),
         "--output-dir", str(out),
         "--log-level", log_level,
+        "--no-export-geojson",
         "--keep-old-outputs",
         "--skip-publish",
         "--minimal-outputs",
@@ -216,7 +219,11 @@ def main() -> None:
     p.add_argument("--tee-scenario", default="real_tee_sheet")
     p.add_argument("--orders-levels", nargs="+", type=int, required=True)
     p.add_argument("--runner-range", type=str, default="1-3")
-    p.add_argument("--runs-per", type=int, default=6)
+    p.add_argument("--runs-per", type=int, default=12)
+    # Auto confirmation pass for borderline results
+    p.add_argument("--confirm-runs-per", type=int, default=16, help="rerun borderline combos with this many runs for higher confidence")
+    p.add_argument("--borderline-margin", type=float, default=0.02, help="treat on_time_wilson_lo within this of target as borderline")
+    p.add_argument("--no-auto-confirm", action="store_true", help="disable automatic high-confidence rerun for borderline results")
     p.add_argument("--python-bin", default=sys.executable)
     p.add_argument("--log-level", default="INFO")
     p.add_argument("--runner-speed", type=float, default=None)
@@ -227,6 +234,7 @@ def main() -> None:
     p.add_argument("--target-on-time", type=float, default=0.90)
     p.add_argument("--max-failed-rate", type=float, default=0.05)
     p.add_argument("--max-p90", type=float, default=40.0)
+    p.add_argument("--concurrency", type=int, default=max(1, min(4, (os.cpu_count() or 2))), help="max concurrent simulations")
     args = p.parse_args()
 
     project_root = Path(__file__).resolve().parents[2]
@@ -251,25 +259,81 @@ def main() -> None:
 
     for orders in args.orders_levels:
         results_by_variant: Dict[str, Dict[int, Dict[str, Any]]] = {}
+        # Run all variant/runner combos in parallel for this orders level
+        future_to_combo: Dict[Any, Tuple[BlockingVariant, int, Path]] = {}
+        with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+            for variant in selected_variants:
+                for n in runner_values:
+                    out_dir = root / f"orders_{orders:03d}" / variant.key / f"runners_{n}"
+                    fut = executor.submit(
+                        run_combo,
+                        py=args.python_bin,
+                        course_dir=course_dir,
+                        scenario=args.tee_scenario,
+                        runners=n,
+                        orders=orders,
+                        runs=args.runs_per,
+                        out=out_dir,
+                        log_level=args.log_level,
+                        variant=variant,
+                        runner_speed=args.runner_speed,
+                        prep_time=args.prep_time,
+                    )
+                    future_to_combo[fut] = (variant, n, out_dir)
+            for fut in as_completed(future_to_combo):
+                _ = fut.result()
+
+        # Aggregate after all complete
         for variant in selected_variants:
             for n in runner_values:
                 out_dir = root / f"orders_{orders:03d}" / variant.key / f"runners_{n}"
-                run_combo(
-                    py=args.python_bin,
-                    course_dir=course_dir,
-                    scenario=args.tee_scenario,
-                    runners=n,
-                    orders=orders,
-                    runs=args.runs_per,
-                    out=out_dir,
-                    log_level=args.log_level,
-                    variant=variant,
-                    runner_speed=args.runner_speed,
-                    prep_time=args.prep_time,
-                )
-
                 run_dirs = sorted([p for p in out_dir.glob("run_*") if p.is_dir()])
                 agg = aggregate_runs(run_dirs)
+                results_by_variant.setdefault(variant.key, {})[n] = agg
+
+        # Optional high-confidence rerun for borderline combinations
+        if not args.no_auto_confirm:
+            borderline: List[Tuple[BlockingVariant, int]] = []
+            for variant in selected_variants:
+                per_runner = results_by_variant.get(variant.key, {})
+                for n, agg in per_runner.items():
+                    if not agg or not agg.get("runs"):
+                        continue
+                    ot_lo = float(agg.get("on_time_wilson_lo", 0.0) or 0.0)
+                    if abs(ot_lo - args.target_on_time) <= args.borderline_margin:
+                        borderline.append((variant, n))
+
+            # Run confirm reruns in parallel
+            with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+                future_to_confirm: Dict[Any, Tuple[BlockingVariant, int, Path]] = {}
+                for variant, n in borderline:
+                    out_dir = root / f"orders_{orders:03d}" / variant.key / f"runners_{n}"
+                    confirm_dir = out_dir / "confirm"
+                    fut = executor.submit(
+                        run_combo,
+                        py=args.python_bin,
+                        course_dir=course_dir,
+                        scenario=args.tee_scenario,
+                        runners=n,
+                        orders=orders,
+                        runs=args.confirm_runs_per,
+                        out=confirm_dir,
+                        log_level=args.log_level,
+                        variant=variant,
+                        runner_speed=args.runner_speed,
+                        prep_time=args.prep_time,
+                    )
+                    future_to_confirm[fut] = (variant, n, confirm_dir)
+                for fut in as_completed(future_to_confirm):
+                    _ = fut.result()
+
+            # Re-aggregate across original and confirm runs
+            for variant, n in borderline:
+                out_dir = root / f"orders_{orders:03d}" / variant.key / f"runners_{n}"
+                confirm_dir = out_dir / "confirm"
+                orig_dirs = sorted([p for p in out_dir.glob("run_*") if p.is_dir()])
+                confirm_dirs = sorted([p for p in confirm_dir.glob("run_*") if p.is_dir()])
+                agg = aggregate_runs(orig_dirs + confirm_dirs)
                 results_by_variant.setdefault(variant.key, {})[n] = agg
 
         chosen = choose_best_variant(

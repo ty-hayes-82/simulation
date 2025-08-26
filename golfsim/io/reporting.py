@@ -232,23 +232,49 @@ def generate_simulation_metrics_json(
         on_time_count = sum(1 for t in completion_times if t <= sla_minutes * 60) if completion_times else 0
         late_orders = max(0, successful - on_time_count)
         
-        # Calculate runner utilization and time metrics from activity log
-        runner_utilization_pct = 0.0
-        total_runner_drive_minutes = 0.0
-        total_runner_shift_minutes = service_hours * 60.0  # Total shift time in minutes
-        
-        if activity_log:
-            # Use existing utilization calculation logic
-            from golfsim.analysis.delivery_runner_metrics import _calculate_runner_utilization
-            utilization_metrics = _calculate_runner_utilization(activity_log, service_hours, delivery_stats)
-            
-            # Get driving percentage and convert to total utilization
-            driving_pct = utilization_metrics.get('driving', 0.0)
-            prep_pct = utilization_metrics.get('prep', 0.0)
-            runner_utilization_pct = driving_pct + prep_pct
-            
-            # Get total drive minutes directly from the utilization metrics
-            total_runner_drive_minutes = utilization_metrics.get('total_driving_minutes', 0.0)
+        # Calculate runner utilization and time metrics (supports multi-runner)
+        # Determine runner count
+        meta = sim_result.get("metadata", {}) if isinstance(sim_result, dict) else {}
+        try:
+            num_runners = int(meta.get("num_runners", 1) or 1)
+        except Exception:
+            num_runners = 1
+
+        # Sum drive minutes from delivery_stats (fallback to 0 when missing)
+        total_drive_seconds = 0.0
+        by_runner_drive_seconds: Dict[str, float] = {}
+        for d in delivery_stats or []:
+            rid = str(d.get("runner_id") or "runner_1")
+            drive_s = float(
+                d.get("total_drive_time_s",
+                      float(d.get("delivery_time_s", 0.0)) + float(d.get("return_time_s", 0.0)))
+            )
+            total_drive_seconds += drive_s
+            by_runner_drive_seconds[rid] = by_runner_drive_seconds.get(rid, 0.0) + drive_s
+
+        total_runner_drive_minutes = total_drive_seconds / 60.0
+
+        # Shift minutes across all runners
+        service_minutes_per_runner = float(service_hours) * 60.0
+        total_runner_shift_minutes = service_minutes_per_runner * float(max(1, num_runners))
+
+        # Fleet-level utilization: combined drive time divided by combined shift time
+        runner_utilization_pct = (
+            (total_runner_drive_minutes / total_runner_shift_minutes) * 100.0
+            if total_runner_shift_minutes > 0 else 0.0
+        )
+
+        # Per-runner breakdown
+        runner_utilization_by_runner: Dict[str, Dict[str, float]] = {}
+        if by_runner_drive_seconds:
+            for rid, drive_s in by_runner_drive_seconds.items():
+                drive_min = drive_s / 60.0
+                util_pct = (drive_min / service_minutes_per_runner * 100.0) if service_minutes_per_runner > 0 else 0.0
+                runner_utilization_by_runner[rid] = {
+                    "driveMinutes": drive_min,
+                    "utilizationPct": util_pct,
+                    "shiftMinutes": service_minutes_per_runner,
+                }
 
         metrics["deliveryMetrics"] = {
             "totalOrders": len(orders),
@@ -264,6 +290,8 @@ def generate_simulation_metrics_json(
             "runnerUtilizationPct": runner_utilization_pct,
             "totalRunnerDriveMinutes": total_runner_drive_minutes,
             "totalRunnerShiftMinutes": total_runner_shift_minutes,
+            # Per-runner breakdown for diagnostics and UI
+            "runnerUtilizationByRunner": runner_utilization_by_runner,
         }
 
     # Placeholder for bev cart metrics

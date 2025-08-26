@@ -4,8 +4,8 @@ This folder contains small CLI wrappers to recommend delivery runner staffing an
 
 ### Scripts
 
-- `optimize_runners.py`: Given a single orders level (e.g., 36) and an optional list of blocked holes, sweeps runner counts, aggregates multiple runs with confidence intervals, and prints the recommended number of runners.
-- `optimize_staffing_policy.py`: For multiple order levels (e.g., 20/30/40), evaluates several blocked-hole variants and runner counts, then recommends the minimal runners and policy per orders level.
+- `optimize_runners.py`: Given a single orders level (e.g., 36) and an optional list of blocked holes, sweeps runner counts, aggregates multiple runs with confidence intervals, and prints the recommended number of runners. Borderline results auto-confirm with extra runs by default.
+- `optimize_staffing_policy.py`: For multiple order levels (e.g., 20/30/40), evaluates several blocked-hole variants and runner counts, then recommends the minimal runners and policy per orders level. Borderline results auto-confirm with extra runs by default.
 
 Both wrappers call `scripts/sim/run_new.py` under the hood and parse per-run metrics (`delivery_runner_metrics_run_XX.json` when present; fallback to `simulation_metrics.json`).
 
@@ -26,6 +26,7 @@ Both wrappers call `scripts/sim/run_new.py` under the hood and parse per-run met
   - failed_mean ≤ `--max-failed-rate`
   - p90_mean ≤ `--max-p90` (ignored if not available)
 - Increase `--runs-per` for tighter intervals and higher certainty.
+- By default, borderline aggregates (within 0.02 of `--target-on-time`) trigger an automatic confirmation rerun with more runs to tighten confidence.
 
 ---
 
@@ -41,7 +42,7 @@ python scripts/optimization/optimize_runners.py ^
   --tee-scenario real_tee_sheet ^
   --orders 36 ^
   --runner-range 1-3 ^
-  --runs-per 8 ^
+  --runs-per 12 ^
   --block-holes 1 2 3 ^
   --target-on-time 0.90 ^
   --max-failed-rate 0.05 ^
@@ -58,7 +59,7 @@ python scripts/optimization/optimize_staffing_policy.py ^
   --tee-scenario real_tee_sheet ^
   --orders-levels 20 30 40 ^
   --runner-range 1-3 ^
-  --runs-per 8 ^
+  --runs-per 12 ^
   --target-on-time 0.90 ^
   --max-failed-rate 0.05 ^
   --max-p90 40
@@ -79,7 +80,7 @@ Final JSON summarizes chosen variant/runner per orders and includes per-variant 
 - `--course-dir`: Course folder (`courses/<club>`). Relative to repo root if not absolute.
 - `--tee-scenario`: Tee sheet scenario (e.g., `real_tee_sheet`, `idle_hour`).
 - `--runner-range`: Range like `1-3` or a single number `2`.
-- `--runs-per`: Number of runs per combination to average over.
+- `--runs-per`: Number of runs per combination to average over. Default 12.
 - `--runner-speed`, `--prep-time`: Optional overrides.
 - `--log-level`: Logging for the underlying runner.
 - `--output-root`: Root for outputs; timestamped subfolders are created.
@@ -94,6 +95,9 @@ Specific:
   - `--orders-levels`: Multiple total orders values
   - `--variants`: Subset of built-in variants to test (defaults to all)
     - Built-ins: `none`, `front` (1–3), `mid` (4–6), `back` (10–12), `front_mid` (1–6), `front_back` (1–3 & 10–12), `mid_back` (4–6 & 10–12), `front_mid_back` (1–6 & 10–12)
+  - `--confirm-runs-per`: Runs used for automatic confirmation reruns (default 16)
+  - `--borderline-margin`: Margin around `--target-on-time` to trigger confirmation (default 0.02)
+  - `--no-auto-confirm`: Disable the confirmation rerun
 
 Targets (both scripts):
 
@@ -120,7 +124,7 @@ The scripts aggregate these per-run files to compute means and Wilson CIs, and t
 
 - Prefer the smallest `num_runners` whose Wilson lower bound for on-time meets the target and whose failure/p90 are within limits.
 - If a blocking policy allows fewer runners for the same orders level, the script will recommend it. Otherwise, it will recommend the minimal runners without blocking.
-- Increase `--runs-per` if results are borderline; check `on_time_wilson_lo` vs. `--target-on-time`.
+- Defaults now aim for higher confidence. Borderline cases auto-confirm with more runs. You can increase `--confirm-runs-per` or `--runs-per` for even tighter bounds.
 
 ---
 
@@ -129,5 +133,14 @@ The scripts aggregate these per-run files to compute means and Wilson CIs, and t
 - Use smaller `--runner-range` during exploration to save time.
 - To test a subset of policies in `optimize_staffing_policy.py`, use `--variants none front_mid_back`.
 - You can run multiple commands in parallel to fill out the grid faster if your machine allows it.
+
+---
+
+### Performance tuning
+
+- **Parallelism**: Both wrappers now support `--concurrency` to run multiple simulations concurrently (default scales with CPU, capped at 4). Increase if your machine and I/O can handle it.
+- **High-confidence reruns**: Borderline results auto-confirm with additional runs; control with `--confirm-runs-per`, `--borderline-margin`, `--no-auto-confirm`.
+- **Disable heavy exports**: Optimization runs disable GeoJSON export by default via `--no-export-geojson`, and the runner lazily imports GeoPandas only when exporting.
+- **Minimal outputs**: The wrappers set `--minimal-outputs` and `--coordinates-only-for-first-run` to reduce disk I/O.
 
 

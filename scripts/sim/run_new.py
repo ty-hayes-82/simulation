@@ -20,7 +20,8 @@ import subprocess
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import golfsim
-import geopandas as gpd
+# GeoPandas is heavy; import lazily only when exporting
+gpd = None  # type: ignore
 
 from golfsim.logging import init_logging, get_logger
 from golfsim.simulation.orchestration import run_delivery_runner_simulation, create_simulation_config_from_args
@@ -174,6 +175,7 @@ def main() -> None:
     
     # GeoJSON export options
     parser.add_argument("--export-geojson", action="store_true", default=True, help="Export hole delivery times GeoJSON (default: True)")
+    parser.add_argument("--no-export-geojson", action="store_true", default=False, help="Disable hole delivery GeoJSON export for performance")
 
     # Minimal outputs mode: only write files needed by the map app controls/manifest
     parser.add_argument("--minimal-outputs", action="store_true", default=False, help="Only write coordinates.csv, simulation_metrics.json, and results.json; skip heatmaps, logs, extra metrics, and public copies")
@@ -192,6 +194,7 @@ def main() -> None:
     # If minimal-outputs, implicitly disable heatmap to save time and space
     if args.minimal_outputs:
         args.no_heatmap = True
+        args.no_export_geojson = True
 
     config = create_simulation_config_from_args(args)
     
@@ -200,14 +203,18 @@ def main() -> None:
         results = run_delivery_runner_simulation(config, args=args)
         logger.info("Simulation completed successfully")
         
-        # Export hole delivery GeoJSON if requested
-        if args.export_geojson:
+        # Export hole delivery GeoJSON if requested and not disabled
+        if args.export_geojson and not getattr(args, "no_export_geojson", False):
             # The `results` dict from the simulation orchestrator is a summary.
             # We need to load the detailed results.json from the output directory.
             output_dir = Path(results.get("output_dir", ""))
             run_dir = output_dir / "run_01"
             detailed_results_path = run_dir / "results.json"
             if output_dir and detailed_results_path.exists():
+                global gpd
+                if gpd is None:
+                    import geopandas as _gpd  # type: ignore
+                    gpd = _gpd
                 with detailed_results_path.open("r", encoding="utf-8") as f:
                     detailed_results = json.load(f)
 
