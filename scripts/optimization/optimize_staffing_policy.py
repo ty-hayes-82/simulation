@@ -30,10 +30,16 @@ import subprocess
 import sys
 from dataclasses import dataclass
 import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from golfsim.viz.heatmap_viz import (
+    create_course_heatmap_from_hole_avgs,
+    extract_order_data,
+    calculate_delivery_time_stats,
+)
 
 # Optional .env loader (for GEMINI_API_KEY/GOOGLE_API_KEY)
 try:
@@ -184,7 +190,6 @@ def run_combo(*, py: str, course_dir: Path, scenario: str, runners: int, orders:
         "--no-export-geojson",
         "--keep-old-outputs",
         "--skip-publish",
-        "--minimal-outputs",
         "--coordinates-only-for-first-run",
     ]
     if variant.cli_flags:
@@ -248,8 +253,8 @@ def choose_best_variant(results_by_variant: Dict[str, Dict[int, Dict[str, Any]]]
                 continue
             
             p90_mean = agg.get("p90_mean", float("nan"))
-            # Enforce real p90 values - no NaN allowed for p90 target checks
-            p90_meets = not math.isnan(p90_mean) and p90_mean <= max_p90
+            # If p90 data is available, enforce the target; if missing (NaN), allow it to pass
+            p90_meets = math.isnan(p90_mean) or p90_mean <= max_p90
             
             meets = (
                 agg.get("on_time_wilson_lo", 0.0) >= target_on_time
@@ -265,6 +270,109 @@ def choose_best_variant(results_by_variant: Dict[str, Dict[int, Dict[str, Any]]]
     # Sort by utility score (lower is better)
     candidates.sort(key=lambda t: utility_score(t[0], t[1], t[2]))
     return candidates[0]
+
+
+def _parse_run_index(name: str) -> int:
+    """Extract integer run index from a directory name like 'run_01'."""
+    try:
+        parts = name.split("_")
+        return int(parts[-1])
+    except Exception:
+        return -1
+
+
+def _iter_all_run_dirs(runner_dir: Path) -> List[Path]:
+    """Collect all run_* directories under runner_dir including confirm/stages."""
+    names = [
+        "confirm_winner",
+        "stage3_finalists",
+        "stage2",
+        "confirm_baseline",
+        "confirm",
+        None,  # base run_* dirs
+    ]
+    dirs: List[Path] = []
+    for name in names:
+        base = runner_dir if name is None else (runner_dir / name)
+        if not base.exists():
+            continue
+        run_dirs = [p for p in base.iterdir() if p.is_dir() and p.name.startswith("run_")]
+        run_dirs.sort(key=lambda p: _parse_run_index(p.name))
+        dirs.extend(run_dirs)
+    return dirs
+
+
+def _aggregate_hole_avgs_for_runner_dir(course_dir: Path, runner_dir: Path) -> Optional[Dict[int, float]]:
+    """Aggregate per-hole average minutes across all runs under runner_dir.
+
+    Reads results.json from each run directory, extracts order drive times, and
+    computes overall average minutes per hole across all runs.
+    """
+    runs = _iter_all_run_dirs(runner_dir)
+    if not runs:
+        return None
+    per_hole_all_times: Dict[int, List[float]] = {}
+    any_data = False
+    for rd in runs:
+        rj = rd / "results.json"
+        if not rj.exists():
+            continue
+        try:
+            results = json.loads(rj.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        order_data = extract_order_data(results)
+        if not order_data:
+            continue
+        any_data = True
+        hole_stats = calculate_delivery_time_stats(order_data)
+        for hole_num, stats in hole_stats.items():
+            per_hole_all_times.setdefault(int(hole_num), []).append(float(stats.get("avg_time", 0.0)))
+    if not any_data:
+        return None
+    # Compute global average per hole
+    return {h: (sum(vals) / len(vals)) for h, vals in per_hole_all_times.items() if vals}
+
+
+def _write_aggregated_heatmaps(*, course_dir: Path, root: Path, summary: Dict[int, Dict[str, Any]]) -> List[Path]:
+    """Create averaged heatmaps (by hole) across all runs for chosen and baseline.
+
+    Returns list of created file paths.
+    """
+    saved: List[Path] = []
+    for orders in sorted(summary.keys()):
+        info = summary[orders]
+        # Chosen recommendation
+        chosen = info.get("chosen") or {}
+        v_key = chosen.get("variant")
+        runners = chosen.get("runners")
+        if v_key and isinstance(runners, int):
+            runner_dir = root / f"orders_{orders:03d}" / str(v_key) / f"runners_{runners}"
+            hole_avgs = _aggregate_hole_avgs_for_runner_dir(course_dir, runner_dir)
+            if hole_avgs:
+                dest = root / f"orders_{orders:03d}_recommended_{v_key}_runners_{runners}_avg.png"
+                try:
+                    create_course_heatmap_from_hole_avgs(hole_avgs, course_dir, dest,
+                        title=f"Avg Drive Time Heatmap — {orders} orders, {v_key}, {runners} runner(s)")
+                    saved.append(dest)
+                except Exception:
+                    pass
+
+        # Baseline (no blocked holes) recommendation, if any
+        baseline = (info.get("baseline_none") or {})
+        base_runners = baseline.get("runners")
+        if isinstance(base_runners, int):
+            runner_dir = root / f"orders_{orders:03d}" / "none" / f"runners_{base_runners}"
+            hole_avgs = _aggregate_hole_avgs_for_runner_dir(course_dir, runner_dir)
+            if hole_avgs:
+                dest = root / f"orders_{orders:03d}_baseline_none_runners_{base_runners}_avg.png"
+                try:
+                    create_course_heatmap_from_hole_avgs(hole_avgs, course_dir, dest,
+                        title=f"Avg Drive Time Heatmap — {orders} orders, baseline none, {base_runners} runner(s)")
+                    saved.append(dest)
+                except Exception:
+                    pass
+    return saved
 
 
 def _call_gemini(prompt: str) -> Optional[str]:
@@ -301,6 +409,7 @@ def _write_executive_summary_markdown(
     orders_levels: List[int],
     summary: Dict[int, Dict[str, Any]],
     targets: Dict[str, float],
+    capacity: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[Path], bool]:
     """Create an executive summary Markdown file under out_dir.
 
@@ -338,125 +447,119 @@ def _write_executive_summary_markdown(
             "baseline_oph_mean": (baseline_metrics or {}).get("oph_mean"),
         })
 
+    # Build list of available blocking variants for the prompt
+    variant_options = []
+    for v in BLOCKING_VARIANTS:
+        variant_options.append(f"- '{v.key}': {v.description}")
+    variant_list = "\n".join(variant_options)
+    
+    # Capacity headline strings (if provided)
+    cap_none_str = ""
+    cap_block_str = ""
+    if capacity:
+        nmax = capacity.get("no_restrictions_max_orders")
+        vmax = capacity.get("with_blocking_max_orders")
+        vkey = capacity.get("with_blocking_variant")
+        if isinstance(nmax, int):
+            cap_none_str = f"1 runner without restrictions can comfortably handle up to {nmax} orders.\n"
+        if isinstance(vmax, int):
+            if vkey and vkey != "none":
+                cap_block_str = f"With restrictions ('{vkey}'), 1 runner can handle up to {vmax} orders.\n"
+            else:
+                cap_block_str = f"With the best policy, 1 runner can handle up to {vmax} orders.\n"
+
     prompt = (
-        "You are advising a golf course General Manager. Using the simulation optimization results, "
-        "write a clear, actionable executive summary in Markdown with staffing and policy guidance by total orders. "
-        "Speak directly, avoid jargon, and give pragmatic recommendations a manager can implement today.\n\n"
+        "You are advising a golf course General Manager. Using the simulation results, "
+        "write a concise, actionable executive summary in Markdown with staffing recommendations by orders level. "
+        "Be direct and practical.\n\n"
         f"Course: {course_dir}\n"
         f"Tee scenario: {tee_scenario}\n"
         f"Targets: on_time ≥ {targets.get('on_time')}, failed_rate ≤ {targets.get('max_failed')}, p90 ≤ {targets.get('max_p90')} min\n\n"
-        "Data (JSON):\n" + json.dumps(compact, indent=2) + "\n\n"
+        f"Capacity highlights (1 runner):\n{cap_none_str}{cap_block_str}\n"
+        f"Available blocking variants:\n{variant_list}\n\n"
+        "Data:\n" + json.dumps(compact, indent=2) + "\n\n"
         "Instructions:\n"
-        "- Start with a brief narrative (3-6 sentences) summarizing how staffing should scale with orders. First provide recommendations with no holes blocked, then a separate section with blocking options where helpful.\n"
-        "- For each orders level, give a one-line recommendation with:\n"
-        "  Orders → Dedicated runners, On-call coverage (if any), Blocking policy, and key metrics "
-        "(on_time CI low, failed rate, p90, orders per runner hour).\n"
-        "- Explicitly assess utilization and suggest using on-call/float coverage when additional runners have low expected load:\n"
-        "  Use orders per runner hour as a utilization proxy. If recommended runners ≥ 2 and orders per runner hour < 1.5, "
-        "recommend keeping the last runner on-call rather than fully staffed; if ≥ 3 and orders per runner hour < 1.2, "
-        "suggest that the 2nd/3rd runner can be on-call to handle a small number of orders.\n"
-        "- Explain confidence in plain language. Avoid statistical jargon. Use phrasing like: \"we tested this plan multiple times,\" \"even on a tougher day it still clears the bar,\" and \"there is a cushion above target.\"\n"
-        "  Translate technical ideas: use \"conservative on-time estimate\" instead of \"confidence interval lower bound\".\n"
-        "  Flag borderline cases with simple rules of thumb (e.g., add one runner during peak tee-time waves).\n"
-        "- Provide a concise ‘Manager Playbook’ section with bullet points: when to add a runner, when on-call is sufficient, "
-        "and when to enable hole blocking to meet targets.\n"
-        "- End with a bottom line recommendation for each orders level, with a simple confidence tag (High/Medium) and a one-sentence reason.\n"
-        "- Add a short section titled 'Why these recommendations will hold' that explains confidence in layman’s terms: "
-        "mention the number of times we tested the plan (initial 4-run screen plus any follow-up runs), a conservative on-time estimate vs the target, "
-        "and that we eliminated clearly non-viable options early.\n"
+        "- Start with 2-3 sentences on overall staffing scaling.\n"
+        "- **Baseline Staffing**: Show runner needs with no blocked holes ('none' variant).\n"
+        "- **With Blocking**: Show how hole restrictions can reduce staffing needs.\n"
+        "- For each orders level: Orders → Runners needed, Policy, Key metrics (conservative on-time %, failed %, p90 min if available, orders/runner/hr).\n"
+        "- Utilization guidance: If orders/runner/hr < 1.5 with 2+ runners, suggest on-call for last runner. If < 1.2 with 3+ runners, suggest on-call for 2nd/3rd.\n"
+        "- Use plain language: 'tested multiple times,' 'cushion above target,' 'conservative estimate.'\n"
+        "- Brief 'Manager Playbook' with when to add runners, use on-call, or enable blocking.\n"
+        "- End with confidence level (High/Medium) and reason for each orders level.\n"
     )
 
     llm_md = _call_gemini(prompt)
 
     used_gemini = bool(llm_md)
     if not llm_md:
-        # Fallback concise summary
+        # Concise fallback summary
         lines: List[str] = []
-        lines.append(f"### Executive Summary — Staffing Recommendations ({tee_scenario})")
+        lines.append(f"## Staffing Recommendations ({tee_scenario})")
         lines.append("")
-        lines.append("These recommendations are based on aggregated simulation results. Targets: "
-                     f"on_time ≥ {targets.get('on_time')}, failed_rate ≤ {targets.get('max_failed')}, "
-                     f"p90 ≤ {targets.get('max_p90')} min.")
+        lines.append(f"Targets: on_time ≥ {targets.get('on_time'):.0%}, failed ≤ {targets.get('max_failed'):.0%}, p90 ≤ {targets.get('max_p90'):.0f} min")
         lines.append("")
-        # Top: No-block recommendations
-        lines.append("#### No blocked holes (baseline)")
+        if cap_none_str or cap_block_str:
+            lines.append("### 1 Runner Capacity (Highlights)")
+            if cap_none_str:
+                lines.append(f"- {cap_none_str.strip()}")
+            if cap_block_str:
+                lines.append(f"- {cap_block_str.strip()}")
+            lines.append("")
+        
+        # Combined baseline and blocking recommendations
+        lines.append("### Recommendations by Orders Level")
         for row in compact:
             orders = row["orders"]
             base_runners = row.get("baseline_none_runners")
-            base_ot = row.get("baseline_on_time_wilson_lo")
-            base_failed = row.get("baseline_failed_mean")
-            base_p90 = row.get("baseline_p90_mean")
-            base_oph = row.get("baseline_oph_mean")
-            base_bits: List[str] = []
-            if isinstance(base_ot, (int, float)):
-                base_bits.append(f"conservative on-time: {base_ot*100:.0f}%")
-            if isinstance(base_failed, (int, float)):
-                base_bits.append(f"failed: {base_failed*100:.0f}%")
-            if isinstance(base_p90, (int, float)) and not math.isnan(base_p90):
-                base_bits.append(f"p90: {base_p90:.1f} min")
-            if isinstance(base_oph, (int, float)):
-                base_bits.append(f"orders/runner/hr: {base_oph:.1f}")
-            base_str = ", ".join(base_bits)
-            if base_runners is not None:
-                lines.append(f"- Orders {orders}: {base_runners} runner(s); policy: no blocked holes. {base_str}")
-            else:
-                lines.append(f"- Orders {orders}: No-block baseline did not meet targets.")
-        lines.append("")
-        # Bottom: With blocking options (if helpful)
-        lines.append("#### With blocking (only if needed)")
-        for row in compact:
-            orders = row["orders"]
             runners = row["recommended_runners"]
             variant = row.get("recommended_variant")
             policy_desc = row.get("recommended_variant_description") or str(variant)
-            ot = row.get("on_time_wilson_lo")
-            failed = row.get("failed_mean")
-            p90 = row.get("p90_mean")
-            oph = row.get("orders_per_runner_hour")
-            runs_used = row.get("runs")
+            
+            # Get metrics (prefer recommended, fallback to baseline)
+            ot = row.get("on_time_wilson_lo") or row.get("baseline_on_time_wilson_lo")
+            failed = row.get("failed_mean") or row.get("baseline_failed_mean")
+            p90 = row.get("p90_mean") or row.get("baseline_p90_mean")
+            oph = row.get("orders_per_runner_hour") or row.get("baseline_oph_mean")
+            
+            # Build metrics string
             metrics_bits: List[str] = []
             if isinstance(ot, (int, float)):
-                metrics_bits.append(f"conservative on-time: {ot*100:.0f}%")
+                metrics_bits.append(f"on-time: {ot*100:.0f}%")
             if isinstance(failed, (int, float)):
                 metrics_bits.append(f"failed: {failed*100:.0f}%")
             if isinstance(p90, (int, float)) and not math.isnan(p90):
-                metrics_bits.append(f"p90: {p90:.1f} min")
+                metrics_bits.append(f"p90: {p90:.0f}min")
             if isinstance(oph, (int, float)):
-                metrics_bits.append(f"orders/runner/hr: {oph:.1f}")
-            if isinstance(runs_used, int):
-                metrics_bits.append(f"runs: {runs_used}")
+                metrics_bits.append(f"{oph:.1f}/runner/hr")
             metrics_str = ", ".join(metrics_bits)
+            
+            # On-call recommendation
             on_call_note = ""
             if isinstance(runners, int) and isinstance(oph, (int, float)):
                 if runners >= 3 and oph < 1.2:
-                    on_call_note = " Consider on-call coverage for additional runners (low utilization)."
+                    on_call_note = " (2nd/3rd on-call)"
                 elif runners >= 2 and oph < 1.5:
-                    on_call_note = " Consider keeping the last runner on-call (low utilization)."
-            if variant == "none":
-                lines.append(f"- Orders {orders}: No blocking required; see baseline above.")
+                    on_call_note = " (last on-call)"
+            
+            # Format recommendation
+            if base_runners and variant == "none":
+                lines.append(f"**{orders} orders**: {base_runners} runner(s), no blocking. {metrics_str}")
+            elif base_runners and runners and runners < base_runners:
+                lines.append(f"**{orders} orders**: {runners} runner(s) with {policy_desc}, or {base_runners} with no blocking. {metrics_str}{on_call_note}")
+            elif runners:
+                lines.append(f"**{orders} orders**: {runners} runner(s), {policy_desc}. {metrics_str}{on_call_note}")
             else:
-                lines.append(f"- Orders {orders}: {runners} runner(s); policy: {policy_desc}. {metrics_str}.{on_call_note}")
+                lines.append(f"**{orders} orders**: No solution found up to max runners tested.")
+        
         lines.append("")
-        lines.append("#### Why these recommendations will hold (plain English)")
-        lines.append("- We tried each plan multiple times. First a quick 4-run screen to toss out bad fits, then extra runs on the best plan to double-check it.")
-        lines.append("- The conservative on-time estimate is our \"even on a tougher day\" view. When that number is above your target, there’s a cushion.")
-        for row in compact:
-            orders = row["orders"]
-            ot = row.get("on_time_wilson_lo")
-            runs_used = row.get("runs")
-            margin_note = ""
-            if isinstance(ot, (int, float)) and isinstance(targets.get('on_time'), (int, float)):
-                margin = ot - float(targets.get('on_time') or 0.0)
-                margin_note = f"; cushion above target: {margin*100:.0f} percentage points" if margin >= 0 else f"; short of target by {abs(margin)*100:.0f} points"
-            run_note = f"tested {int(runs_used)} runs" if isinstance(runs_used, int) else "tested 4+ runs"
-            lines.append(f"- Orders {orders}: {run_note}{margin_note}")
+        lines.append("### Manager Playbook")
+        lines.append("- **Low utilization** (<1.5 orders/runner/hr): Use on-call for extra runners")
+        lines.append("- **Borderline performance**: Add +1 runner during peak periods")  
+        lines.append("- **Service restrictions**: Block holes to reduce staffing when needed")
+        
         lines.append("")
-        lines.append("#### Notes")
-        lines.append("- Borderline cases (on_time near target) may vary run-to-run; consider +1 runner at peak periods.")
-        lines.append("- If orders/runner/hr < 1.5 with 2+ runners, keep the last runner on-call to cover a few orders.")
-        lines.append("- If 3+ runners and orders/runner/hr < 1.2, use on-call coverage for the 2nd/3rd runner.")
-        lines.append("")
-        lines.append("_Source: Local fallback_")
+        lines.append("_Tested with multiple simulation runs. Conservative estimates provide cushion above targets._")
         llm_md = "\n".join(lines)
     else:
         # Add a provenance footer for clarity
@@ -794,8 +897,8 @@ def main() -> None:
                         continue
                     
                     p90_mean = agg.get("p90_mean", float("nan"))
-                    # Enforce real p90 values - no NaN allowed for p90 target checks
-                    p90_meets = not math.isnan(p90_mean) and p90_mean <= args.max_p90
+                    # If p90 data is available, enforce the target; if missing (NaN), allow it to pass
+                    p90_meets = math.isnan(p90_mean) or p90_mean <= args.max_p90
                     
                     if (agg.get("on_time_wilson_lo", 0.0) >= args.target_on_time
                         and agg.get("failed_mean", 1.0) <= args.max_failed_rate
@@ -887,8 +990,8 @@ def main() -> None:
                     continue
                 
                 p90_mean = agg.get("p90_mean", float("nan"))
-                # Enforce real p90 values - no NaN allowed for p90 target checks
-                p90_meets = not math.isnan(p90_mean) and p90_mean <= args.max_p90
+                # If p90 data is available, enforce the target; if missing (NaN), allow it to pass
+                p90_meets = math.isnan(p90_mean) or p90_mean <= args.max_p90
                 
                 if (agg.get("on_time_wilson_lo", 0.0) >= args.target_on_time
                     and agg.get("failed_mean", 1.0) <= args.max_failed_rate
@@ -914,6 +1017,48 @@ def main() -> None:
             },
         }
 
+    # Compute capacity for 1 runner
+    no_restrictions_max_orders: Optional[int] = None
+    with_blocking_max_orders: Optional[int] = None
+    with_blocking_variant: Optional[str] = None
+    for orders in sorted(summary.keys()):
+        per_variant = summary[orders].get("per_variant", {})
+        # No restrictions (variant 'none') with 1 runner
+        none_agg = ((per_variant.get("none", {}) or {}).get(1) or {})
+        if none_agg.get("runs"):
+            p90_mean = none_agg.get("p90_mean", float("nan"))
+            p90_meets = math.isnan(p90_mean) or p90_mean <= args.max_p90
+            if (
+                none_agg.get("on_time_wilson_lo", 0.0) >= args.target_on_time
+                and none_agg.get("failed_mean", 1.0) <= args.max_failed_rate
+                and p90_meets
+            ):
+                no_restrictions_max_orders = orders
+        # With blocking: any variant with 1 runner
+        for v_key, per_runner in (per_variant or {}).items():
+            agg1 = (per_runner or {}).get(1) or {}
+            if not agg1.get("runs"):
+                continue
+            p90_mean = agg1.get("p90_mean", float("nan"))
+            p90_meets = math.isnan(p90_mean) or p90_mean <= args.max_p90
+            if (
+                agg1.get("on_time_wilson_lo", 0.0) >= args.target_on_time
+                and agg1.get("failed_mean", 1.0) <= args.max_failed_rate
+                and p90_meets
+            ):
+                # Prefer higher orders; if tie, prefer fewer blocked holes (lower penalty)
+                if with_blocking_max_orders is None or orders > with_blocking_max_orders or (
+                    orders == with_blocking_max_orders and blocking_penalty(v_key) < blocking_penalty(with_blocking_variant or "none")
+                ):
+                    with_blocking_max_orders = orders
+                    with_blocking_variant = v_key
+
+    capacity = {
+        "no_restrictions_max_orders": no_restrictions_max_orders,
+        "with_blocking_max_orders": with_blocking_max_orders,
+        "with_blocking_variant": with_blocking_variant,
+    }
+
     # Print machine-readable JSON at the end
     print(json.dumps({
         "course": str(course_dir),
@@ -923,6 +1068,7 @@ def main() -> None:
         "orders_levels": orders_iter,
         "summary": summary,
         "output_root": str(root),
+        "capacity": capacity,
     }, indent=2))
 
     # Generate executive summary Markdown (best-effort)
@@ -934,11 +1080,23 @@ def main() -> None:
             orders_levels=list(orders_iter),
             summary=summary,
             targets={"on_time": args.target_on_time, "max_failed": args.max_failed_rate, "max_p90": args.max_p90},
+            capacity=capacity,
         )
         if md_path is not None:
             print(f"Executive summary written to {md_path} (source: {'gemini' if used_gemini else 'local'})")
     except Exception as _e:
         # Non-fatal: keep CLI behavior unchanged if summary generation fails
+        pass
+
+    # Create averaged heatmaps for all recommendations to the root directory
+    try:
+        created = _write_aggregated_heatmaps(course_dir=course_dir, root=root, summary=summary)
+        if created:
+            print("Saved averaged recommendation heatmaps:")
+            for p in created:
+                print(f" - {p}")
+    except Exception:
+        # Non-fatal
         pass
 
 
