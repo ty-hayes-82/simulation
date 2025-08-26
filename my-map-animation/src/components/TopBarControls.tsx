@@ -35,15 +35,12 @@ export default function TopBarControls() {
           <Flex align="center" gap="2">
             <Text size="2" weight="medium" style={{ minWidth: '60px' }}>Course:</Text>
             <Select.Root 
-              value={selectedCourseId || 'pinetree_country_club'}
+              value={(selectedCourseId || (manifest?.courses && manifest.courses[0]?.id)) as string}
               onValueChange={(value) => setSelectedCourseId(value)}
             >
               <Select.Trigger style={{ flex: 1 }} />
               <Select.Content>
-                {/* Default to Pinetree if none found */}
-                {((manifest?.courses && manifest.courses.length > 0) ? manifest.courses : [
-                  { id: 'pinetree_country_club', name: 'Pinetree Country Club' }
-                ]).map(c => (
+                {(manifest?.courses && manifest.courses.length > 0 ? manifest.courses : []).map(c => (
                   <Select.Item key={c.id} value={c.id}>{c.name}</Select.Item>
                 ))}
               </Select.Content>

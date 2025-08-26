@@ -324,7 +324,17 @@ export default function HeatmapView() {
                 'fill-color': [
                   'case',
                   ['==', ['get', 'has_data'], true],
-                  ['interpolate', ['linear'], ['get', 'avg_time'], 0, '#ffffff', 10, '#ff0000'],
+                  [
+                    'interpolate', ['linear'],
+                    // Clamp avg_time to [0,10] for consistent color scaling
+                    ['max', 0, ['min', 10, ['to-number', ['get', 'avg_time']]]],
+                    0, '#ffffff',
+                    2, '#ffe6e6',
+                    4, '#ffcccc',
+                    6, '#ff6666',
+                    8, '#ff3333',
+                    10, '#ff0000'
+                  ],
                   'rgba(0,0,0,0)'
                 ],
                 'fill-opacity': [

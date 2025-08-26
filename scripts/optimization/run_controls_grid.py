@@ -5,6 +5,19 @@ Batch grid to generate simulations for interactive controls (runners × orders).
 Writes outputs under outputs/<timestamp>_delivery_runner_<N>_runners_<scenario>... with per-run
 coordinates.csv, delivery_heatmap.png, simulation_metrics.json. Designed to be discovered by
 my-map-animation/run_map_app.py to build the manifest.
+
+Examples:
+    # Run idle hour course with 1-2 runners, 10 orders
+    python run_controls_grid.py --course-dir courses/idle_hour_country_club --runners 1 2 --orders 10
+    
+    # Run pinetree course with default settings (1-3 runners, 20-44 orders)
+    python run_controls_grid.py --course-dir courses/pinetree_country_club
+    
+    # Run with all blocking variants
+    python run_controls_grid.py --course-dir courses/idle_hour_country_club --runners 1 2 --orders 10 --run-blocking-variants
+    
+    # Run with minimal outputs for faster execution
+    python run_controls_grid.py --course-dir courses/idle_hour_country_club --runners 1 2 --orders 10 --minimal-outputs
 """
 
 from __future__ import annotations
@@ -54,23 +67,36 @@ def cleanup_old_simulation_outputs(output_root: Path) -> None:
             print("No old simulation outputs to clean")
             return
             
-        print(f"🧹 Cleaning up {len(old_dirs)} old simulation output directories")
+        print(f"Cleaning up {len(old_dirs)} old simulation output directories")
         for old_dir in old_dirs:
             try:
                 shutil.rmtree(old_dir)
                 print(f"   Removed: {old_dir.name}")
             except Exception as e:
-                print(f"   ⚠️ Failed to remove {old_dir.name}: {e}")
+                print(f"   Warning: Failed to remove {old_dir.name}: {e}")
                 
-        print("✅ Cleaned up old simulation outputs")
+        print("Cleaned up old simulation outputs")
         
     except Exception as e:
-        print(f"⚠️ Failed to cleanup old outputs: {e}")
+        print(f"Warning: Failed to cleanup old outputs: {e}")
+
+
+def get_course_default_tee_scenario(course_dir: Path) -> str:
+    """Determine the appropriate tee scenario based on the course directory."""
+    course_name = course_dir.name.lower()
+    
+    if "idle_hour" in course_name:
+        return "idle_hour"
+    elif "pinetree" in course_name:
+        return "real_tee_sheet"
+    else:
+        # Default fallback
+        return "real_tee_sheet"
 
 
 def update_map_animation_files():
     """Finds all simulation outputs and updates the map animation files."""
-    print("🚀 Updating map animation files...")
+    print("Updating map animation files...")
 
     # Add my-map-animation to path to import run_map_app
     project_root = Path(__file__).resolve().parent.parent.parent
@@ -84,23 +110,25 @@ def update_map_animation_files():
         all_simulations = find_all_simulations()
 
         if copy_all_coordinate_files(all_simulations, preferred_default_id=None):
-            print("✅ Successfully updated map animation files.")
+            print("Successfully updated map animation files.")
         else:
-            print("⚠️ Failed to update map animation files.")
+            print("Warning: Failed to update map animation files.")
 
     except ImportError:
         print(
-            "⚠️ Could not import from 'run_map_app.py'. "
+            "Warning: Could not import from 'run_map_app.py'. "
             "Skipping map animation files update. Run it manually."
         )
     except Exception as e:
-        print(f"❌ An error occurred while updating map animation files: {e}")
+        print(f"Error: An error occurred while updating map animation files: {e}")
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate runner×orders grid for the UI controls")
-    p.add_argument("--course-dir", default="courses/pinetree_country_club")
-    p.add_argument("--tee-scenario", default="real_tee_sheet")
+    p.add_argument("--course-dir", default="courses/pinetree_country_club", 
+                   help="Course directory (e.g., courses/idle_hour_country_club, courses/pinetree_country_club)")
+    p.add_argument("--tee-scenario", default=None, 
+                   help="Tee scenario (e.g., real_tee_sheet, idle_hour, etc.). If not specified, will use course-specific default")
     p.add_argument("--runners", nargs="+", type=int, default=[1, 2, 3])
     p.add_argument("--orders", nargs="+", type=int, default=[20, 28, 36, 44])
     p.add_argument("--runs-per", type=int, default=1)
@@ -166,6 +194,27 @@ def main() -> None:
     if not course_dir_abs.is_absolute():
         course_dir_abs = (project_root / a.course_dir)
     course_dir_abs = course_dir_abs.resolve()
+    
+    # Verify course directory exists
+    if not course_dir_abs.exists():
+        print(f"Error: Course directory does not exist: {course_dir_abs}")
+        sys.exit(1)
+    
+    print(f"Using course: {course_dir_abs.name}")
+    
+    # Determine tee scenario if not provided on the command line
+    if a.tee_scenario is None:
+        a.tee_scenario = get_course_default_tee_scenario(course_dir_abs)
+        print(f"Using course-specific tee scenario: {a.tee_scenario}")
+    else:
+        print(f"Using specified tee scenario: {a.tee_scenario}")
+    
+    print(f"Runners: {a.runners}")
+    print(f"Orders: {a.orders}")
+    print(f"Runs per combination: {a.runs_per}")
+    print(f"Blocking variants: {'All' if a.run_blocking_variants else 'None only'}")
+    print()
+
     combos = list(itertools.product(sorted(set(a.runners)), sorted(set(a.orders))))
     variants_to_run = BLOCKING_VARIANTS if a.run_blocking_variants else [BLOCKING_VARIANTS[0]]
 
@@ -196,7 +245,7 @@ def main() -> None:
                 extra_cli_args=variant.cli_flags,
                 coordinates_only_for_first_run=a.coordinates_only_for_first_run,
             )
-            print(f"✅ Generated runners={r}, orders={o}, variant={variant.key} → {out}")
+            print(f"Generated runners={r}, orders={o}, variant={variant.key} -> {out}")
 
             # Track this runner root; we'll scan once after all combos to avoid duplicates
             runner_roots_set.add(runner_root)
@@ -266,9 +315,9 @@ def main() -> None:
             out_path = runner_root / "@simulation_metrics.json"
             try:
                 out_path.write_text(json.dumps(avg, indent=2), encoding="utf-8")
-                print(f"📊 Wrote averaged metrics → {out_path}")
+                print(f"Wrote averaged metrics -> {out_path}")
             except Exception as e:
-                print(f"⚠️  Failed to write averaged metrics for {runner_root}: {e}")
+                print(f"Warning: Failed to write averaged metrics for {runner_root}: {e}")
 
     # Write overall averaged metrics across all runners in this batch
     overall_avg = compute_average_metrics(all_metrics_files)
@@ -278,9 +327,9 @@ def main() -> None:
         overall_path = overall_root / "@simulation_metrics.json"
         try:
             overall_path.write_text(json.dumps(overall_avg, indent=2), encoding="utf-8")
-            print(f"📈 Wrote overall averaged metrics → {overall_path}")
+            print(f"Wrote overall averaged metrics -> {overall_path}")
         except Exception as e:
-            print(f"⚠️  Failed to write overall averaged metrics: {e}")
+            print(f"Warning: Failed to write overall averaged metrics: {e}")
 
     # Also write a flat CSV of per-run delivery metrics across all generated runs
     try:
@@ -399,11 +448,11 @@ def main() -> None:
                         row["total_runner_shift_minutes"] = 0.0
                         
                     writer.writerow({k: row.get(k) for k in fieldnames})
-            print(f"🧾 Wrote per-run metrics CSV → {csv_path} ({len(metrics_files)} rows)")
+            print(f"Wrote per-run metrics CSV -> {csv_path} ({len(metrics_files)} rows)")
         else:
-            print("ℹ️  No delivery_runner_metrics_run_*.json files found; skipping CSV export.")
+            print("Info: No delivery_runner_metrics_run_*.json files found; skipping CSV export.")
     except Exception as e:
-        print(f"⚠️  Failed to write per-run metrics CSV: {e}")
+        print(f"Warning: Failed to write per-run metrics CSV: {e}")
 
     update_map_animation_files()
 

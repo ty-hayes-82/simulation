@@ -372,11 +372,10 @@ def create_course_heatmap(results: Dict,
     from matplotlib.colors import Normalize
     
     if hole_stats:
-        # Get delivery time range for color normalization
-        delivery_times = [stats['avg_time'] for stats in hole_stats.values()]
-        min_time = min(delivery_times)
-        max_time = max(delivery_times)
-        
+        # Fixed scale: 0 minutes (white) to 10 minutes (red). Values outside are clamped.
+        fixed_min_time = 0.0
+        fixed_max_time = 10.0
+
         # Create custom white-to-red colormap or use provided colormap
         if colormap == 'white_to_red' or colormap == 'RdYlBu_r':
             # Create custom white-to-bright-red colormap
@@ -386,7 +385,7 @@ def create_course_heatmap(results: Dict,
             cmap = LinearSegmentedColormap.from_list('white_to_red', colors, N=256)
         else:
             cmap = plt.get_cmap(colormap)
-        norm = Normalize(vmin=min_time, vmax=max_time)
+        norm = Normalize(vmin=fixed_min_time, vmax=fixed_max_time)
         
         # Build a GeoDataFrame from geofenced holes so we can plot polygons (incl. MultiPolygon)
         holes_gdf = gpd.GeoDataFrame(
@@ -394,8 +393,13 @@ def create_course_heatmap(results: Dict,
             crs="EPSG:4326",
         )
 
-        # Map avg time per hole
-        hole_to_avg = {h: s["avg_time"] for h, s in hole_stats.items()}
+        # Map avg time per hole (clamped to fixed range for consistent coloring)
+        def _clamp(v: float, lo: float, hi: float) -> float:
+            try:
+                return max(lo, min(hi, float(v)))
+            except Exception:
+                return lo
+        hole_to_avg = {h: _clamp(s["avg_time"], fixed_min_time, fixed_max_time) for h, s in hole_stats.items()}
         holes_gdf["avg_time"] = holes_gdf["hole"].map(hole_to_avg)
 
         # Split holes into those with data and those without
@@ -408,8 +412,8 @@ def create_course_heatmap(results: Dict,
                 ax=ax,
                 column="avg_time",
                 cmap=cmap,
-                vmin=min_time,
-                vmax=max_time,
+                vmin=fixed_min_time,
+                vmax=fixed_max_time,
                 edgecolor="black",
                 linewidth=1.2,
                 alpha=0.8,
@@ -500,6 +504,11 @@ def create_course_heatmap(results: Dict,
         try:
             cbar = plt.colorbar(sm, ax=ax, shrink=0.8, aspect=30)
             cbar.set_label('Average Drive Time to Golfer (minutes)', fontsize=12)
+            try:
+                cbar.set_ticks([0, 2, 4, 6, 8, 10])
+                cbar.set_ticklabels(['0', '2', '4', '6', '8', '10'])
+            except Exception:
+                pass
         except Exception as e:
             logger.warning("Failed to create colorbar: %s, trying without aspect ratio", e)
             try:

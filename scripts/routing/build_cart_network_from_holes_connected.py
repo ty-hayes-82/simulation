@@ -20,7 +20,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import geopandas as gpd
 import networkx as nx
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString
 import matplotlib.pyplot as plt
 
 from golfsim.viz.matplotlib_viz import (
@@ -160,6 +160,7 @@ def _auto_connect_clubhouse(G: nx.Graph, clubhouse: Clubhouse, max_distance_m: f
 def build_graph_from_holes_connected(
     course_dir: Path,
     add_shortcuts: bool = True,
+    crossing_shortcuts: bool = False,
     close_loop: bool = True,
     save_graph: bool = True,
     output_name: str = "cart_graph.pkl",
@@ -217,6 +218,8 @@ def build_graph_from_holes_connected(
                 d = _haversine_m(ax, ay, bx, by)
                 if not G.has_edge(a, b):
                     G.add_edge(a, b, length=float(d), shortcut=True)
+
+    # Crossing shortcuts removed: rely solely on manual shortcuts
 
     # Label junctions
     _label_junction_types(G)
@@ -298,6 +301,9 @@ def _render_graph_png(course_dir: Path, cart_graph: nx.Graph, save_path: Path) -
     plt.close(fig)
 
 
+    # Removed _add_crossing_shortcuts implementation
+
+
 # ----------------------------- CLI -----------------------------------------
 
 
@@ -306,6 +312,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build simplified network from generated/holes_connected.geojson")
     parser.add_argument("course_dir", nargs="?", default="courses/pinetree_country_club", help="Course directory")
     parser.add_argument("--no-shortcuts", action="store_true", help="Disable adding hard-coded shortcut links")
+    # crossing-shortcuts option removed
     parser.add_argument("--no-close-loop", action="store_true", help="Do not add closing edge between last and first index")
     parser.add_argument("--no-clubhouse", action="store_true", help="Do not auto-connect clubhouse to nearest node")
     parser.add_argument("--output-name", type=str, default="cart_graph.pkl", help="Output pickle filename")

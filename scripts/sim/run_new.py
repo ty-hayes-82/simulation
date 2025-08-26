@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 import shutil
 from typing import Any
+import subprocess
 
 # Ensure project root is importable
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -236,6 +237,25 @@ def main() -> None:
             else:
                 logger.warning("Could not find detailed results.json to generate heatmap data.")
         
+        # --- Auto-publish to my-map-animation/public/coordinates ---
+        try:
+            viewer_dir = Path("my-map-animation")
+            if viewer_dir.exists():
+                env = os.environ.copy()
+                try:
+                    output_dir = Path(results.get("output_dir", "")).resolve()
+                    outputs_root = output_dir.parent if output_dir else None
+                    if outputs_root and outputs_root.exists():
+                        env["SIM_BASE_DIR"] = str(outputs_root)
+                except Exception:
+                    pass
+                subprocess.run([sys.executable, "run_map_app.py"], cwd=str(viewer_dir), env=env, check=False)
+                logger.info("Published simulation artifacts to my-map-animation/public/coordinates via run_map_app.py")
+            else:
+                logger.info("Viewer directory '%s' not found; skipping auto-publish.", viewer_dir)
+        except Exception as e:
+            logger.warning("Failed to auto-publish to my-map-animation: %s", e)
+
         return
     else:
         raise SystemExit("Nothing to simulate: set --num-runners > 0")

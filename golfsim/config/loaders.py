@@ -91,8 +91,30 @@ def build_groups_from_scenario(course_dir: str, scenario_key: str, default_group
 
     scenarios = config.scenarios or {}
     if scenario_key not in scenarios:
-        logger.warning("tee-scenario '%s' not found; falling back to manual args", scenario_key)
-        return []
+        # Attempt alias resolution from tee_times_config.json top-level "aliases"
+        try:
+            course_path = Path(course_dir)
+            candidates = [
+                course_path / "config" / "tee_times_config.json",
+                course_path / "tee_times_config.json",
+            ]
+            alias_target = None
+            for p in candidates:
+                if p.exists():
+                    raw = json.loads(p.read_text())
+                    aliases = raw.get("aliases", {}) if isinstance(raw, dict) else {}
+                    if isinstance(aliases, dict):
+                        alias_target = aliases.get(scenario_key)
+                    break
+            if alias_target and alias_target in scenarios:
+                logger.info("Resolved tee-scenario alias '%s' -> '%s'", scenario_key, alias_target)
+                scenario_key = alias_target
+            else:
+                logger.warning("tee-scenario '%s' not found; falling back to manual args", scenario_key)
+                return []
+        except Exception:
+            logger.warning("tee-scenario '%s' not found; falling back to manual args", scenario_key)
+            return []
 
     scenario = scenarios[scenario_key]
     

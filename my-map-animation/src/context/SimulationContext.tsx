@@ -60,7 +60,7 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
   const [manifest, setManifest] = useState<SimulationManifest | null>(null);
   const [filters, setFilters] = useState<Filters>({ runners: 1, orders: 20, blockFront: false, blockBack: false, blockMid: false });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedCourseId, setSelectedCourseId] = useState<string | null>('pinetree_country_club');
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   // Timeline state shared across views/controls
   const [timelineMinutes, setTimelineMinutes] = useState<number>(0);
   const [timelineMaxMinutes, setTimelineMaxMinutes] = useState<number>(0);
@@ -89,6 +89,15 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     if (urlCourse) setSelectedCourseId(urlCourse);
   }, []);
 
+  // Ensure a valid default course is selected when manifest loads or when current selection is invalid
+  useEffect(() => {
+    if (!manifest || !Array.isArray(manifest.courses) || manifest.courses.length === 0) return;
+    const availableIds = new Set(manifest.courses.map(c => c.id));
+    if (!selectedCourseId || !availableIds.has(selectedCourseId)) {
+      setSelectedCourseId(manifest.courses[0].id);
+    }
+  }, [manifest, selectedCourseId]);
+
   // Resolve selected simulation by id or best match to filters
   const selectedSim: SimulationEntry | null = useMemo(() => {
     if (!manifest || (manifest.simulations || []).length === 0) return null;
@@ -111,8 +120,10 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     const filteredManifest = { ...manifest, simulations: pool } as SimulationManifest;
     const filtersWithVariant = { runners, orders, variantKey };
     const fallbackId = filteredManifest.defaultSimulation ?? manifest.defaultSimulation;
-    return selectBestMatch(filteredManifest, filtersWithVariant, fallbackId);
-  }, [manifest, selectedId, filters]);
+    const pick = selectBestMatch(filteredManifest, filtersWithVariant, fallbackId);
+    // Fallback to a global pick if course-specific pool is empty or no match found
+    return pick || selectBestMatch(manifest, filtersWithVariant, manifest.defaultSimulation) || null;
+  }, [manifest, selectedId, filters, selectedCourseId]);
 
   // Persist selection to URL when id changes
   useEffect(() => {
