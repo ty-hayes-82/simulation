@@ -160,6 +160,8 @@ def _auto_connect_clubhouse(G: nx.Graph, clubhouse: Clubhouse, max_distance_m: f
 def build_graph_from_holes_connected(
     course_dir: Path,
     add_shortcuts: bool = True,
+    shortcuts: Optional[List[Tuple[int, int]]] = None,
+    clubhouse_routes: Optional[List[Tuple[int, int]]] = None,
     crossing_shortcuts: bool = False,
     close_loop: bool = True,
     save_graph: bool = True,
@@ -202,14 +204,8 @@ def build_graph_from_holes_connected(
                 G.add_edge(idx_last, idx_first, length=float(d))
 
     # Add requested shortcut edges by (idx_a, idx_b)
-    if add_shortcuts:
-        default_shortcuts: List[Tuple[int, int]] = [
-            (233, 201),
-            (209, 191),
-            (40, 65),
-            (39, 67),
-        ]
-        for a, b in default_shortcuts:
+    if add_shortcuts and shortcuts:
+        for a, b in shortcuts:
             if a in G and b in G:
                 ax = float(G.nodes[a]["x"])
                 ay = float(G.nodes[a]["y"])
@@ -224,50 +220,34 @@ def build_graph_from_holes_connected(
     # Label junctions
     _label_junction_types(G)
 
-    # Optionally connect clubhouse to graph
+    # Connect clubhouse using manually defined routes
     if auto_connect_clubhouse:
-        # allow config override
-        cfg = _load_simulation_config(course_dir)
-        net_params = cfg.get("network_params", {}) if isinstance(cfg, dict) else {}
-        try:
-            max_conn_m = float(net_params.get("max_connection_distance_m", max_connection_distance_m))
-        except Exception:
-            max_conn_m = max_connection_distance_m
-
-        # Always ensure one nearest connection (backward compatible)
-        added = _auto_connect_clubhouse(G, clubhouse, max_distance_m=max_conn_m)
-        if added:
-            print(f"Auto-connected clubhouse to nearest node (<= {float(max_conn_m):.0f} m)")
-
-        # New: Explicitly connect clubhouse to specific indices when requested
-        # This supports true multi-way junction at the clubhouse for direct routing
-        indices_to_connect: List[int] = []
-        try:
-            explicit = net_params.get("connect_clubhouse_to_indices")
-            if isinstance(explicit, list):
-                indices_to_connect = [int(i) for i in explicit if isinstance(i, (int, float, str))]
-        except Exception:
-            indices_to_connect = []
-
-        # Fallback for Pinetree default: ensure connection to node 120 (after hole 9),
-        # and also connect to indices at the clubhouse coordinate (0 and 239) to form a 4-way.
-        if not indices_to_connect and course_dir.name == "pinetree_country_club":
-            indices_to_connect = [120, 0, 239]
-
-        # Create edges from clubhouse to the requested indices (if present in graph)
-        if indices_to_connect:
-            # Ensure clubhouse exists as a node
-            clubhouse_node = _ensure_clubhouse_node(G, clubhouse)
-            for idx in indices_to_connect:
-                if idx in G and not G.has_edge(clubhouse_node, idx):
+        clubhouse_node = _ensure_clubhouse_node(G, clubhouse)
+        
+        if clubhouse_routes:
+            # Use manually provided clubhouse routes
+            for a, b in clubhouse_routes:
+                if a in G and not G.has_edge(clubhouse_node, a):
                     try:
-                        ax = float(G.nodes[idx]["x"])
-                        ay = float(G.nodes[idx]["y"])
+                        ax = float(G.nodes[a]["x"])
+                        ay = float(G.nodes[a]["y"])
                         d = _haversine_m(clubhouse.longitude, clubhouse.latitude, ax, ay)
-                        G.add_edge(clubhouse_node, idx, length=float(d), clubhouse_link=True)
+                        G.add_edge(clubhouse_node, a, length=float(d), clubhouse_link=True)
                     except Exception:
-                        # Best-effort: skip if node lacks coordinates
                         continue
+                if b in G and not G.has_edge(clubhouse_node, b):
+                    try:
+                        bx = float(G.nodes[b]["x"])
+                        by = float(G.nodes[b]["y"])
+                        d = _haversine_m(clubhouse.longitude, clubhouse.latitude, bx, by)
+                        G.add_edge(clubhouse_node, b, length=float(d), clubhouse_link=True)
+                    except Exception:
+                        continue
+        else:
+            # Fallback: connect to nearest node if no manual routes provided
+            added = _auto_connect_clubhouse(G, clubhouse, max_distance_m=max_connection_distance_m)
+            if added:
+                print(f"Auto-connected clubhouse to nearest node (<= {float(max_connection_distance_m):.0f} m)")
 
     # Save pickle
     if save_graph:
@@ -307,11 +287,28 @@ def _render_graph_png(course_dir: Path, cart_graph: nx.Graph, save_path: Path) -
 # ----------------------------- CLI -----------------------------------------
 
 
+def _parse_pairs(pairs_str: str) -> List[Tuple[int, int]]:
+    """Parse comma-separated pairs like '138-173,225-189' into [(138,173), (225,189)]"""
+    pairs = []
+    if pairs_str:
+        for pair_str in pairs_str.split(','):
+            pair_str = pair_str.strip()
+            if '-' in pair_str:
+                try:
+                    a, b = pair_str.split('-', 1)
+                    pairs.append((int(a.strip()), int(b.strip())))
+                except ValueError:
+                    print(f"Warning: Invalid pair format '{pair_str}', skipping")
+    return pairs
+
+
 def main() -> int:
     init_logging()
     parser = argparse.ArgumentParser(description="Build simplified network from generated/holes_connected.geojson")
     parser.add_argument("course_dir", nargs="?", default="courses/pinetree_country_club", help="Course directory")
     parser.add_argument("--no-shortcuts", action="store_true", help="Disable adding hard-coded shortcut links")
+    parser.add_argument("--shortcuts", type=str, default=None, help="Comma-separated shortcut pairs (e.g., '138-173,225-189,13-191')")
+    parser.add_argument("--clubhouse-routes", type=str, default=None, help="Comma-separated clubhouse route pairs (e.g., '115-114,1-2,116-117')")
     # crossing-shortcuts option removed
     parser.add_argument("--no-close-loop", action="store_true", help="Do not add closing edge between last and first index")
     parser.add_argument("--no-clubhouse", action="store_true", help="Do not auto-connect clubhouse to nearest node")
@@ -324,10 +321,16 @@ def main() -> int:
     if save_png_path is not None and not save_png_path.is_absolute():
         save_png_path = course_path / save_png_path
 
+    # Parse shortcuts and clubhouse routes
+    shortcuts = _parse_pairs(args.shortcuts) if args.shortcuts else None
+    clubhouse_routes = _parse_pairs(args.clubhouse_routes) if args.clubhouse_routes else None
+
     try:
         build_graph_from_holes_connected(
             course_dir=course_path,
             add_shortcuts=not args.no_shortcuts,
+            shortcuts=shortcuts,
+            clubhouse_routes=clubhouse_routes,
             close_loop=not args.no_close_loop,
             save_graph=True,
             output_name=args.output_name,

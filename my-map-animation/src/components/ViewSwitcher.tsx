@@ -8,6 +8,7 @@ export default function ViewSwitcher() {
 
   const currentValue = () => {
     if (location.pathname.startsWith('/heatmap')) return 'heatmap';
+    if (location.pathname.startsWith('/shortcuts')) return 'shortcuts';
     return 'animation';
   };
 
@@ -20,6 +21,7 @@ export default function ViewSwitcher() {
       <SegmentedControl.Root value={currentValue()} onValueChange={handleValueChange}>
         <SegmentedControl.Item value="animation">Animation</SegmentedControl.Item>
         <SegmentedControl.Item value="heatmap">Heatmap</SegmentedControl.Item>
+        <SegmentedControl.Item value="shortcuts">Shortcuts</SegmentedControl.Item>
       </SegmentedControl.Root>
     </div>
   );
