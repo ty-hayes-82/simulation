@@ -257,7 +257,7 @@ export default function ShortcutsView() {
       </div>
       <Map
         initialViewState={{ longitude: -84.469878, latitude: 38.027532, zoom: 15 }}
-        mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
+        mapStyle="mapbox://styles/mapbox/outdoors-v12"
         mapboxAccessToken={MAPBOX_TOKEN}
         interactiveLayerIds={["nodes", "node-labels"]}
         onClick={onClick}

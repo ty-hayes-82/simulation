@@ -1,25 +1,34 @@
 {
-  "short_name": "Golf Setup",
-  "name": "Golf Course Setup Application",
-  "icons": [
+  "courses": [
     {
-      "src": "favicon.ico",
-      "sizes": "64x64 32x32 24x24 16x16",
-      "type": "image/x-icon"
+      "id": "gates_four",
+      "name": "Gates Four"
     },
     {
-      "src": "logo192.png",
-      "type": "image/png",
-      "sizes": "192x192"
+      "id": "idle_hour",
+      "name": "Idle Hour"
     },
     {
-      "src": "logo512.png",
-      "type": "image/png",
-      "sizes": "512x512"
+      "id": "keswick_hall",
+      "name": "Keswick Hall"
+    },
+    {
+      "id": "pinetree_country_club",
+      "name": "Pinetree Country Club"
+    },
+    {
+      "id": "purgatory",
+      "name": "Purgatory"
     }
   ],
-  "start_url": ".",
-  "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "defaultCourse": "gates_four",
+  "simulations": [
+    {
+      "id": "coordinates",
+      "name": "Simulation",
+      "filename": "coordinates.csv",
+      "description": "Delivery runner simulation (1 runner)"
+    }
+  ],
+  "defaultSimulation": "coordinates"
 }

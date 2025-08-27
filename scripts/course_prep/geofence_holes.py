@@ -318,6 +318,7 @@ def split_course_into_holes(
     debug_export_dir: str | None = None,
     ensure_min_width_m: float = 12.0,
     enforce_disjoint: bool = False,
+    simplify_m: float = 5.0,
 ) -> None:
     """Main pipeline to split the course into 18 sections with improved robustness."""
     import time
@@ -710,6 +711,23 @@ def split_course_into_holes(
         out_records.append({"hole": int(hid), "area_m2": float(area_m2), "geometry": poly})
 
     out_gdf = gpd.GeoDataFrame(out_records, crs=proj_crs)
+
+    # Simplify geometries in projected CRS (meters) to reduce vertex count
+    if simplify_m and simplify_m > 0:
+        logging.info(f"Simplifying boundaries with {simplify_m} m tolerance...")
+        try:
+            simplified = []
+            for geom in out_gdf.geometry:
+                try:
+                    simp = geom.simplify(simplify_m, preserve_topology=True)
+                    if simp.is_empty:
+                        simp = geom
+                    simplified.append(simp.buffer(0))
+                except Exception:
+                    simplified.append(geom)
+            out_gdf = out_gdf.set_geometry(simplified)
+        except Exception as e:
+            logging.warning(f"Failed to simplify geometries: {e}")
     # Reproject back to original CRS if present
     target_crs = course_gdf.crs if course_gdf.crs else "EPSG:4326"
     try:
@@ -920,13 +938,13 @@ def _resample_path_uniform(coords: List[Tuple[float, float]], num_points: int) -
 
 
 def generate_holes_connected(geojson_dir: Path, output_path: Path | None = None) -> Path:
-    """Generate a clubhouse-anchored continuous path across holes and minute nodes.
+    """Generate a simplified node connectivity GeoJSON showing which nodes connect to which.
 
     - Reads holes.geojson under geojson_dir
     - Reads simulation_config.json under course_dir to get clubhouse and golfer minutes
     - Builds a continuous path: clubhouse -> hole 1..18 path -> clubhouse
     - Resamples into exactly N points where N == golfer_18_holes_minutes
-    - Writes FeatureCollection to output_path (or geojson/generated/holes_connected.geojson)
+    - Creates simplified GeoJSON with nodes and their connections
     Returns the written output path.
     """
     if not isinstance(geojson_dir, Path):
@@ -958,23 +976,51 @@ def generate_holes_connected(geojson_dir: Path, output_path: Path | None = None)
     # Resample into exactly `minutes` points (one per minute)
     sampled = _resample_path_uniform(path_coords, minutes)
 
-    # Compose single FeatureCollection with line + points
+    # Create simplified node connectivity format with both nodes and connection lines
     features = []
-    features.append(
-        {
-            "type": "Feature",
-            "properties": {"name": "holes_connected_path"},
-            "geometry": {"type": "LineString", "coordinates": [[x, y] for (x, y) in path_coords]},
-        }
-    )
+    
+    # Add each node with its connections to adjacent nodes
     for idx, (x, y) in enumerate(sampled):
-        features.append(
-            {
-                "type": "Feature",
-                "properties": {"idx": int(idx)},
-                "geometry": {"type": "Point", "coordinates": [x, y]},
+        # Determine connections (previous and next nodes)
+        connections = []
+        if idx > 0:  # Connect to previous node
+            connections.append(idx - 1)
+        if idx < len(sampled) - 1:  # Connect to next node
+            connections.append(idx + 1)
+        
+        # Determine hole number (if available from existing tagging logic)
+        hole_num = -1  # Default for unassigned
+        
+        # Add the node point
+        features.append({
+            "type": "Feature",
+            "properties": {
+                "node_id": idx,
+                "hole": hole_num,
+                "connections": connections,
+                "is_clubhouse": idx == 0 or idx == len(sampled) - 1,
+                "feature_type": "node"
+            },
+            "geometry": {
+                "type": "Point", 
+                "coordinates": [x, y]
             }
-        )
+        })
+    
+    # Add LineString features for each connection with minimal properties for easier editing
+    for idx, (x, y) in enumerate(sampled):
+        if idx < len(sampled) - 1:  # Connect to next node
+            next_x, next_y = sampled[idx + 1]
+            features.append({
+                "type": "Feature",
+                "properties": {
+                    "feature_type": "connection"  # Keep type for easier parsing
+                },
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[x, y], [next_x, next_y]]
+                }
+            })
 
     fc = {"type": "FeatureCollection", "features": features}
 
@@ -985,7 +1031,7 @@ def generate_holes_connected(geojson_dir: Path, output_path: Path | None = None)
 
     output_path = Path(output_path)
     output_path.write_text(json.dumps(fc, indent=2))
-    logging.info(f"Wrote: {output_path}")
+    logging.info(f"Wrote simplified node connectivity: {output_path}")
     return output_path
 
 
@@ -1032,6 +1078,12 @@ def _parse_args(argv: List[str] | None = None):
         help="Cap on seed points per hole to control tessellation cost.",
     )
     parser.add_argument(
+        "--simplify",
+        type=float,
+        default=1.0,
+        help="Simplification tolerance in meters applied before export (default: 1.0).",
+    )
+    parser.add_argument(
         "--debug_dir",
         type=str,
         default=None,
@@ -1076,6 +1128,7 @@ def main(argv: List[str] | None = None) -> int:
         max_points_per_hole=args.max_points_per_hole,
         debug_export_dir=args.debug_dir,
         enforce_disjoint=bool(args.enforce_disjoint),
+        simplify_m=float(args.simplify),
     )
 
     # Also generate a connected path + minute nodes alongside the geofenced output

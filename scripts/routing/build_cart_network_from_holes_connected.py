@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Build a simplified cart network graph from generated/holes_connected.geojson.
+Build a cart network graph from holes_connected.geojson or holes_connected_updated.geojson.
 
-This builder uses the pre-connected holes path (indexed points) as the base
-loop and optionally adds a small set of hard-coded shortcuts by point index.
+This script loads the GeoJSON file containing nodes and connections, builds a NetworkX graph,
+and saves it as a pickle file for use in simulations.
 
-Outputs:
-- pkl/cart_graph.pkl (default)
+Node 0 is assumed to be the clubhouse where all deliveries start from.
 """
 
 from __future__ import annotations
@@ -14,37 +13,20 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import geopandas as gpd
 import networkx as nx
-from shapely.geometry import Point, LineString
-import matplotlib.pyplot as plt
-
-from golfsim.viz.matplotlib_viz import (
-    load_course_geospatial_data,
-    plot_course_features,
-    plot_cart_network,
-)
 
 from golfsim.logging import init_logging
-
-
-# ----------------------------- Data structures -----------------------------
-
-
-@dataclass(frozen=True)
-class Clubhouse:
-    longitude: float
-    latitude: float
 
 
 # ----------------------------- Helpers -------------------------------------
 
 
 def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+    """Calculate haversine distance in meters between two lat/lon points."""
     import math
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
@@ -55,288 +37,182 @@ def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     return 6371000.0 * c
 
 
-def _load_simulation_config(course_dir: Path) -> Dict:
-    cfg_path = course_dir / "config" / "simulation_config.json"
-    return json.loads(cfg_path.read_text(encoding="utf-8"))
-
-
-def _load_clubhouse(course_dir: Path) -> Clubhouse:
-    cfg = _load_simulation_config(course_dir)
-    lat = float(cfg["clubhouse"]["latitude"])  # type: ignore[index]
-    lon = float(cfg["clubhouse"]["longitude"])  # type: ignore[index]
-    return Clubhouse(longitude=lon, latitude=lat)
-
-
-def _ensure_output_dirs(course_dir: Path) -> Tuple[Path, Path]:
-    geojson_dir = course_dir / "geojson"
+def _ensure_output_dirs(course_dir: Path) -> Path:
+    """Ensure pkl directory exists."""
     pkl_dir = course_dir / "pkl"
-    geojson_dir.mkdir(parents=True, exist_ok=True)
     pkl_dir.mkdir(parents=True, exist_ok=True)
-    return geojson_dir, pkl_dir
+    return pkl_dir
 
 
-def _load_holes_connected_points(course_dir: Path) -> List[Tuple[int, float, float]]:
-    """Return list of (idx, lon, lat) from generated/holes_connected.geojson Points.
-
-    The file contains a LineString (index path) and a set of Point features with
-    an "idx" property that enumerates the sampling along the loop. We build our
-    nodes from these indexed Points for stable addressing.
+def _load_holes_connected_data(course_dir: Path) -> Tuple[List[Tuple[int, float, float]], List[Tuple[int, int]]]:
+    """Load nodes and connections from holes_connected GeoJSON files.
+    
+    Returns:
+        Tuple of (nodes, connections) where:
+        - nodes: List of (node_id, lon, lat)
+        - connections: List of (node_a, node_b) pairs extracted from LineString features
     """
-    path = course_dir / "geojson" / "generated" / "holes_connected.geojson"
-    gdf = gpd.read_file(path).to_crs(4326)
-
-    pts: List[Tuple[int, float, float]] = []
-    for _, row in gdf.iterrows():
-        if isinstance(row.geometry, Point) and ("idx" in row):
-            idx = int(row["idx"])  # type: ignore[index]
-            lon = float(row.geometry.x)
-            lat = float(row.geometry.y)
-            pts.append((idx, lon, lat))
-
-    if not pts:
-        # Fallback: derive from first LineString vertices if points missing
-        line_rows = gdf[gdf.geometry.type == "LineString"]
-        if not line_rows.empty:
-            coords = list(line_rows.iloc[0].geometry.coords)
-            pts = [(i, float(lon), float(lat)) for i, (lon, lat) in enumerate(coords)]
-
-    pts.sort(key=lambda t: t[0])
-    return pts
-
-
-def _label_junction_types(G: nx.Graph) -> None:
-    for node in G.nodes():
-        degree = G.degree(node)
-        if degree <= 1:
-            jt = "endpoint"
-        elif degree == 2:
-            jt = "pass_through"
-        elif degree == 3:
-            jt = "fork"
-        elif degree == 4:
-            jt = "four_way"
-        else:
-            jt = "multi_way"
-        G.nodes[node]["junction"] = jt
-
-
-def _ensure_clubhouse_node(G: nx.Graph, clubhouse: Clubhouse):
-    node_id = (round(float(clubhouse.longitude), 7), round(float(clubhouse.latitude), 7))
-    if node_id not in G:
-        G.add_node(node_id, x=float(clubhouse.longitude), y=float(clubhouse.latitude), kind="clubhouse")
+    # Try updated file first, then fall back to original
+    updated_path = course_dir / "geojson" / "generated" / "holes_connected_updated.geojson"
+    original_path = course_dir / "geojson" / "generated" / "holes_connected.geojson"
+    
+    if updated_path.exists():
+        path = updated_path
+        print(f"Using updated file: {path}")
+    elif original_path.exists():
+        path = original_path
+        print(f"Using original file: {path}")
     else:
-        G.nodes[node_id]["kind"] = "clubhouse"
-    return node_id
+        raise FileNotFoundError(f"Neither {updated_path} nor {original_path} exists")
+    
+    # Load as JSON first to handle the format better
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            geojson_data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Failed to parse GeoJSON file {path}: {e}")
+    
+    nodes: List[Tuple[int, float, float]] = []
+    node_coords = {}  # Map node_id to (lon, lat) for connection matching
+    connections: List[Tuple[int, int]] = []
+    
+    # First pass: collect all nodes
+    for feature in geojson_data.get("features", []):
+        if (feature.get("geometry", {}).get("type") == "Point" and 
+            "node_id" in feature.get("properties", {})):
+            
+            try:
+                props = feature["properties"]
+                node_id = int(props["node_id"])
+                coords = feature["geometry"]["coordinates"]
+                lon, lat = float(coords[0]), float(coords[1])
+                nodes.append((node_id, lon, lat))
+                node_coords[node_id] = (lon, lat)
+            except (ValueError, TypeError, KeyError) as e:
+                print(f"Warning: Skipping invalid node feature: {e}")
+                continue
+    
+    # Second pass: extract connections from LineString features
+    for feature in geojson_data.get("features", []):
+        if (feature.get("geometry", {}).get("type") == "LineString" and
+            feature.get("properties", {}).get("feature_type") == "connection"):
+            
+            try:
+                coords = feature["geometry"]["coordinates"]
+                if len(coords) >= 2:  # Handle both 2-point and multi-point lines
+                    tolerance = 1e-5  # Tolerance for coordinate matching
+                    
+                    # Find all nodes that match coordinates in this LineString
+                    matched_nodes = []
+                    for i, coord in enumerate(coords):
+                        coord_lon, coord_lat = float(coord[0]), float(coord[1])
+                        
+                        for node_id, (node_lon, node_lat) in node_coords.items():
+                            if (abs(node_lon - coord_lon) < tolerance and 
+                                abs(node_lat - coord_lat) < tolerance):
+                                matched_nodes.append((i, node_id))
+                                break
+                    
+                    # Create connections between consecutive matched nodes
+                    for i in range(len(matched_nodes) - 1):
+                        _, node_a = matched_nodes[i]
+                        _, node_b = matched_nodes[i + 1]
+                        
+                        if node_a != node_b:
+                            # Add connection (avoid duplicates by ensuring node_a < node_b)
+                            if node_a < node_b:
+                                connections.append((node_a, node_b))
+                            else:
+                                connections.append((node_b, node_a))
+                    
+                    # Warn if we couldn't match all coordinates
+                    if len(matched_nodes) != len(coords):
+                        unmatched = len(coords) - len(matched_nodes)
+                        print(f"Warning: Could not match {unmatched}/{len(coords)} coordinates in LineString")
+                        
+            except (ValueError, TypeError, KeyError, IndexError) as e:
+                print(f"Warning: Skipping invalid LineString feature: {e}")
+                continue
+    
+    # Remove duplicate connections
+    connections = list(set(connections))
+    
+    nodes.sort(key=lambda t: t[0])
+    print(f"Loaded {len(nodes)} nodes and {len(connections)} connections from LineStrings")
+    return nodes, connections
 
 
-def _auto_connect_clubhouse(G: nx.Graph, clubhouse: Clubhouse, max_distance_m: float = 500.0) -> int:
-    """Connect clubhouse to nearest graph node if within threshold. Returns added edges count (0 or 1)."""
-    if G.number_of_nodes() == 0:
-        return 0
-    clubhouse_node = _ensure_clubhouse_node(G, clubhouse)
-    best_node = None
-    best_dist = float("inf")
-    for n, data in G.nodes(data=True):
-        if n == clubhouse_node:
-            continue
-        x = data.get("x")
-        y = data.get("y")
-        if x is None or y is None:
-            continue
-        d = _haversine_m(clubhouse.longitude, clubhouse.latitude, float(x), float(y))
-        if d < best_dist:
-            best_dist = d
-            best_node = n
-    if best_node is not None and best_dist <= float(max_distance_m):
-        if not G.has_edge(clubhouse_node, best_node):
-            G.add_edge(clubhouse_node, best_node, length=float(best_dist), clubhouse_link=True)
-            return 1
-    return 0
-
-
-# ----------------------------- Build graph ---------------------------------
-
-
-def build_graph_from_holes_connected(
-    course_dir: Path,
-    add_shortcuts: bool = True,
-    shortcuts: Optional[List[Tuple[int, int]]] = None,
-    clubhouse_routes: Optional[List[Tuple[int, int]]] = None,
-    crossing_shortcuts: bool = False,
-    close_loop: bool = True,
-    save_graph: bool = True,
-    output_name: str = "cart_graph.pkl",
-    save_png: Optional[Path] = None,
-    auto_connect_clubhouse: bool = True,
-    max_connection_distance_m: float = 500.0,
-) -> nx.Graph:
-    """Build a simplified cart graph from holes_connected points and optional shortcuts."""
-    geojson_dir, pkl_dir = _ensure_output_dirs(course_dir)
-
-    clubhouse = _load_clubhouse(course_dir)
-    pts = _load_holes_connected_points(course_dir)
-    if not pts:
-        raise RuntimeError("holes_connected.geojson contains no usable Points or LineString coordinates")
-
-    # Create base graph nodes by idx
+def build_graph_from_holes_connected(course_dir: Path) -> nx.Graph:
+    """Build a cart network graph from holes_connected GeoJSON files."""
+    pkl_dir = _ensure_output_dirs(course_dir)
+    
+    # Load nodes and connections from GeoJSON
+    nodes, connections = _load_holes_connected_data(course_dir)
+    
+    if not nodes:
+        raise RuntimeError("No nodes found in holes_connected GeoJSON files")
+    
+    # Create NetworkX graph
     G = nx.Graph()
     G.graph["crs"] = "EPSG:4326"
-
-    for idx, lon, lat in pts:
-        G.add_node(int(idx), x=float(lon), y=float(lat), idx=int(idx))
-
-    # Connect consecutive indices along the loop path
-    for i in range(len(pts) - 1):
-        idx_a, lon_a, lat_a = pts[i]
-        idx_b, lon_b, lat_b = pts[i + 1]
-        d = _haversine_m(lon_a, lat_a, lon_b, lat_b)
-        if not G.has_edge(idx_a, idx_b):
-            G.add_edge(idx_a, idx_b, length=float(d))
-
-    # Close loop if requested: last -> first
-    if close_loop and len(pts) >= 2:
-        idx_first, lon_f, lat_f = pts[0]
-        idx_last, lon_l, lat_l = pts[-1]
-        # Only add if distinct indices
-        if idx_last != idx_first:
-            d = _haversine_m(lon_l, lat_l, lon_f, lat_f)
-            if not G.has_edge(idx_last, idx_first):
-                G.add_edge(idx_last, idx_first, length=float(d))
-
-    # Add requested shortcut edges by (idx_a, idx_b)
-    if add_shortcuts and shortcuts:
-        for a, b in shortcuts:
-            if a in G and b in G:
-                ax = float(G.nodes[a]["x"])
-                ay = float(G.nodes[a]["y"])
-                bx = float(G.nodes[b]["x"])
-                by = float(G.nodes[b]["y"])
-                d = _haversine_m(ax, ay, bx, by)
-                if not G.has_edge(a, b):
-                    G.add_edge(a, b, length=float(d), shortcut=True)
-
-    # Crossing shortcuts removed: rely solely on manual shortcuts
-
-    # Label junctions
-    _label_junction_types(G)
-
-    # Connect clubhouse using manually defined routes
-    if auto_connect_clubhouse:
-        clubhouse_node = _ensure_clubhouse_node(G, clubhouse)
-        
-        if clubhouse_routes:
-            # Use manually provided clubhouse routes
-            for a, b in clubhouse_routes:
-                if a in G and not G.has_edge(clubhouse_node, a):
-                    try:
-                        ax = float(G.nodes[a]["x"])
-                        ay = float(G.nodes[a]["y"])
-                        d = _haversine_m(clubhouse.longitude, clubhouse.latitude, ax, ay)
-                        G.add_edge(clubhouse_node, a, length=float(d), clubhouse_link=True)
-                    except Exception:
-                        continue
-                if b in G and not G.has_edge(clubhouse_node, b):
-                    try:
-                        bx = float(G.nodes[b]["x"])
-                        by = float(G.nodes[b]["y"])
-                        d = _haversine_m(clubhouse.longitude, clubhouse.latitude, bx, by)
-                        G.add_edge(clubhouse_node, b, length=float(d), clubhouse_link=True)
-                    except Exception:
-                        continue
+    
+    # Add nodes
+    for node_id, lon, lat in nodes:
+        G.add_node(node_id, x=float(lon), y=float(lat))
+        # Mark node 0 as clubhouse
+        if node_id == 0:
+            G.nodes[node_id]["kind"] = "clubhouse"
+    
+    # Add edges based on connections
+    for node_a, node_b in connections:
+        if node_a in G and node_b in G:
+            # Calculate distance
+            lon_a = G.nodes[node_a]["x"]
+            lat_a = G.nodes[node_a]["y"]
+            lon_b = G.nodes[node_b]["x"]
+            lat_b = G.nodes[node_b]["y"]
+            distance = _haversine_m(lon_a, lat_a, lon_b, lat_b)
+            G.add_edge(node_a, node_b, length=float(distance))
         else:
-            # Fallback: connect to nearest node if no manual routes provided
-            added = _auto_connect_clubhouse(G, clubhouse, max_distance_m=max_connection_distance_m)
-            if added:
-                print(f"Auto-connected clubhouse to nearest node (<= {float(max_connection_distance_m):.0f} m)")
-
-    # Save pickle
-    if save_graph:
-        out_pkl = pkl_dir / output_name
-        with out_pkl.open("wb") as f:
-            pickle.dump(G, f)
-
-    # Optional PNG rendering
-    if save_png is not None:
-        _render_graph_png(course_dir, G, save_png)
-
-    # Brief report
+            print(f"Warning: Skipping connection {node_a}-{node_b}, nodes not found in graph")
+    
+    # Save as pickle file
+    pkl_path = pkl_dir / "cart_graph.pkl"
+    with open(pkl_path, "wb") as f:
+        pickle.dump(G, f)
+    
+    # Report
     total_nodes = G.number_of_nodes()
     total_edges = G.number_of_edges()
-    forks = sum(1 for n in G.nodes if G.nodes[n].get("junction") == "fork")
-    four_way = sum(1 for n in G.nodes if G.nodes[n].get("junction") == "four_way")
-    print(f"Built holes-connected graph: {total_nodes} nodes, {total_edges} edges")
-    print(f"Junctions: forks={forks}, four_way={four_way}")
-
+    clubhouse_node = 0 if 0 in G else None
+    print(f"Built cart network graph: {total_nodes} nodes, {total_edges} edges")
+    print(f"Clubhouse node: {clubhouse_node}")
+    print(f"Saved to: {pkl_path}")
+    
     return G
-
-
-def _render_graph_png(course_dir: Path, cart_graph: nx.Graph, save_path: Path) -> None:
-    course_data = load_course_geospatial_data(course_dir)
-    fig, ax = plt.subplots(1, 1, figsize=(16, 12))
-    plot_course_features(ax, course_data)
-    plot_cart_network(ax, cart_graph, alpha=0.6, color='steelblue')
-    ax.set_title(f"{course_dir.name.replace('_', ' ').title()} - Holes-Connected Network")
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-
-
-    # Removed _add_crossing_shortcuts implementation
 
 
 # ----------------------------- CLI -----------------------------------------
 
 
-def _parse_pairs(pairs_str: str) -> List[Tuple[int, int]]:
-    """Parse comma-separated pairs like '138-173,225-189' into [(138,173), (225,189)]"""
-    pairs = []
-    if pairs_str:
-        for pair_str in pairs_str.split(','):
-            pair_str = pair_str.strip()
-            if '-' in pair_str:
-                try:
-                    a, b = pair_str.split('-', 1)
-                    pairs.append((int(a.strip()), int(b.strip())))
-                except ValueError:
-                    print(f"Warning: Invalid pair format '{pair_str}', skipping")
-    return pairs
-
-
 def main() -> int:
+    """Main entry point for the script."""
     init_logging()
-    parser = argparse.ArgumentParser(description="Build simplified network from generated/holes_connected.geojson")
-    parser.add_argument("course_dir", nargs="?", default="courses/pinetree_country_club", help="Course directory")
-    parser.add_argument("--no-shortcuts", action="store_true", help="Disable adding hard-coded shortcut links")
-    parser.add_argument("--shortcuts", type=str, default=None, help="Comma-separated shortcut pairs (e.g., '138-173,225-189,13-191')")
-    parser.add_argument("--clubhouse-routes", type=str, default=None, help="Comma-separated clubhouse route pairs (e.g., '115-114,1-2,116-117')")
-    # crossing-shortcuts option removed
-    parser.add_argument("--no-close-loop", action="store_true", help="Do not add closing edge between last and first index")
-    parser.add_argument("--no-clubhouse", action="store_true", help="Do not auto-connect clubhouse to nearest node")
-    parser.add_argument("--output-name", type=str, default="cart_graph.pkl", help="Output pickle filename")
-    parser.add_argument("--save-png", type=str, default=None, help="Optional path to save PNG visualization (e.g., outputs/cart_network.png)")
-
+    parser = argparse.ArgumentParser(
+        description="Build cart network graph from holes_connected GeoJSON files and save as pickle"
+    )
+    parser.add_argument(
+        "course_dir", 
+        nargs="?", 
+        default="courses/pinetree_country_club", 
+        help="Course directory containing geojson/generated/ folder"
+    )
+    
     args = parser.parse_args()
     course_path = Path(args.course_dir)
-    save_png_path: Optional[Path] = Path(args.save_png) if args.save_png else None
-    if save_png_path is not None and not save_png_path.is_absolute():
-        save_png_path = course_path / save_png_path
-
-    # Parse shortcuts and clubhouse routes
-    shortcuts = _parse_pairs(args.shortcuts) if args.shortcuts else None
-    clubhouse_routes = _parse_pairs(args.clubhouse_routes) if args.clubhouse_routes else None
-
+    
     try:
-        build_graph_from_holes_connected(
-            course_dir=course_path,
-            add_shortcuts=not args.no_shortcuts,
-            shortcuts=shortcuts,
-            clubhouse_routes=clubhouse_routes,
-            close_loop=not args.no_close_loop,
-            save_graph=True,
-            output_name=args.output_name,
-            save_png=save_png_path,
-            auto_connect_clubhouse=not args.no_clubhouse,
-        )
+        G = build_graph_from_holes_connected(course_path)
         return 0
     except Exception as e:
         print(f"Error: {e}")
@@ -345,5 +221,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

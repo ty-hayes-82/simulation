@@ -1,8 +1,7 @@
 import * as React from 'react';
-import { Theme, Flex, Tabs, Select } from '@radix-ui/themes';
+import { Theme, Select } from '@radix-ui/themes';
 import ShortcutsView from './views/ShortcutsView';
 import { CourseProvider, useCourse, Course } from './context/CourseContext';
-import PolygonEditorView from './views/PolygonEditorView';
 
 function CourseSelector() {
   const { courses, selectedCourse, setSelectedCourse } = useCourse();
@@ -37,18 +36,9 @@ function MainApp() {
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
       <CourseSelector />
-      <Tabs.Root defaultValue="shortcuts" style={{height: '100%', display: 'flex', flexDirection: 'column'}}>
-        <Tabs.List style={{position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 20}}>
-          <Tabs.Trigger value="shortcuts">Shortcuts</Tabs.Trigger>
-          <Tabs.Trigger value="polygons">Polygon Editor</Tabs.Trigger>
-        </Tabs.List>
-        <Tabs.Content value="shortcuts" style={{flexGrow: 1}}>
-          <ShortcutsView />
-        </Tabs.Content>
-        <Tabs.Content value="polygons" style={{flexGrow: 1}}>
-            <PolygonEditorView />
-        </Tabs.Content>
-      </Tabs.Root>
+      <div style={{ height: '100%', width: '100%' }}>
+        <ShortcutsView />
+      </div>
     </div>
   )
 }

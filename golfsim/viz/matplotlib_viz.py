@@ -61,7 +61,7 @@ def load_course_geospatial_data(course_dir: str | Path) -> Dict:
         # Load all available geospatial features
         geojson_files = {
             'course_polygon': 'course_polygon.geojson',
-            'holes': 'generated/holes_geofenced.geojson',  # Use the geofenced version
+            'holes': 'generated/holes_geofenced_updated.geojson',  # Prefer updated version
             'cart_paths': 'cart_paths.geojson',
             'greens': 'greens.geojson',
             'tees': 'tees.geojson',
@@ -69,6 +69,14 @@ def load_course_geospatial_data(course_dir: str | Path) -> Dict:
         
         for feature_name, filename in geojson_files.items():
             file_path = geojson_path / filename
+            
+            # Special handling for holes - fallback to regular geofenced if updated doesn't exist
+            if feature_name == 'holes' and not file_path.exists():
+                fallback_path = geojson_path / 'generated/holes_geofenced.geojson'
+                if fallback_path.exists():
+                    file_path = fallback_path
+                    logger.debug("Using fallback holes_geofenced.geojson (updated version not found)")
+            
             if file_path.exists():
                 try:
                     with timed_file_io(f"load_{feature_name}_geojson"):

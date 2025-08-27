@@ -59,7 +59,7 @@ def generate_golfer_points_for_groups(course_dir: str, groups: List[Dict]) -> Li
 
 
 def load_holes_connected_points(course_dir: str) -> List[Tuple[float, float]]:
-    """Load Point features from holes_connected.geojson sorted by `idx` ascending.
+    """Load Point features from holes_connected.geojson or holes_connected_updated.geojson sorted by node_id.
 
     Args:
         course_dir: Path to course directory
@@ -68,17 +68,26 @@ def load_holes_connected_points(course_dir: str) -> List[Tuple[float, float]]:
         List of (lon, lat) coordinates
         
     Raises:
-        FileNotFoundError: If holes_connected.geojson is not found
+        FileNotFoundError: If neither holes_connected file is found
         SystemExit: If the file is invalid or contains no valid points
     """
-    path = Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson"
-    if not path.exists():
-        raise FileNotFoundError(f"holes_connected.geojson not found at {path}")
+    # Try updated file first, then fall back to original
+    updated_path = Path(course_dir) / "geojson" / "generated" / "holes_connected_updated.geojson"
+    original_path = Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson"
+    
+    path = None
+    if updated_path.exists():
+        path = updated_path
+    elif original_path.exists():
+        path = original_path
+    else:
+        raise FileNotFoundError(f"Neither holes_connected.geojson nor holes_connected_updated.geojson found")
+    
     try:
         with path.open("r", encoding="utf-8") as f:
             gj = json.load(f)
     except Exception as e:  # noqa: BLE001
-        raise SystemExit(f"Failed reading holes_connected.geojson: {e}")
+        raise SystemExit(f"Failed reading {path.name}: {e}")
 
     pts: Dict[int, Tuple[float, float]] = {}
     for feat in (gj.get("features") or []):
@@ -89,21 +98,31 @@ def load_holes_connected_points(course_dir: str) -> List[Tuple[float, float]]:
         if geom.get("type") != "Point":
             continue
         props = (feat or {}).get("properties") or {}
-        if "idx" not in props:
+        
+        # Support both old format (idx) and new format (node_id)
+        node_id = None
+        if "node_id" in props:
+            try:
+                node_id = int(props["node_id"])
+            except Exception:
+                continue
+        elif "idx" in props:
+            try:
+                node_id = int(props["idx"])
+            except Exception:
+                continue
+        else:
             continue
-        try:
-            idx = int(props["idx"])  # enforce sortable
-        except Exception:
-            continue
+            
         coords = geom.get("coordinates") or []
         if not coords or len(coords) < 2:
             continue
         lon = float(coords[0])
         lat = float(coords[1])
-        pts[idx] = (lon, lat)
+        pts[node_id] = (lon, lat)
 
     if not pts:
-        raise SystemExit("holes_connected.geojson contains no Point features with integer 'idx'")
+        raise SystemExit(f"{path.name} contains no Point features with integer 'node_id' or 'idx'")
 
     ordered = [pts[i] for i in sorted(pts.keys())]
     return ordered

@@ -166,25 +166,64 @@ def load_hole_geometry(course_dir: str) -> Dict[int, LineString]:
 
 def generate_golfer_track(course_dir: str, tee_time_s: int) -> List[Dict]:
     """
-    Generate golfer GPS track using the simple track generator.
-    
+    Generate golfer GPS track using cart_graph.pkl nodes in chronological order.
+
+    The golfer path is a consistent sequence starting at node 1 and ending at
+    the highest integer node id in the graph. One point per minute.
+
     Args:
         course_dir: Path to course directory
-        tee_time_s: When golfer starts their round
-        
+        tee_time_s: When golfer starts their round (seconds since 7 AM baseline)
+
     Returns:
-        List of golfer GPS coordinate dictionaries
+        List of golfer GPS coordinate dicts with fields: latitude, longitude, timestamp, type
     """
-    gen_module = runpy.run_path("scripts/sim/generate_simple_tracks.py")
-    generate_tracks = gen_module["generate_tracks"]
-    tracks = generate_tracks(course_dir)
-    golfer_points: List[Dict] = tracks.get("golfer", [])
-    
-    # Align timestamps to tee time
-    for p in golfer_points:
-        p["timestamp"] = int(p.get("timestamp", 0)) + int(tee_time_s)
-        p["type"] = p.get("type", "golfer")
-        
+    import pickle
+    from pathlib import Path
+    import networkx as nx  # type: ignore
+
+    pkl_path = Path(course_dir) / "pkl" / "cart_graph.pkl"
+    if not pkl_path.exists():
+        # Fallback to previous generator if pkl is missing
+        gen_module = runpy.run_path("scripts/sim/generate_simple_tracks.py")
+        generate_tracks = gen_module["generate_tracks"]
+        tracks = generate_tracks(course_dir)
+        golfer_points: List[Dict] = tracks.get("golfer", [])
+        for p in golfer_points:
+            p["timestamp"] = int(p.get("timestamp", 0)) + int(tee_time_s)
+            p["type"] = p.get("type", "golfer")
+        return golfer_points
+
+    # Load graph
+    with open(pkl_path, "rb") as f:
+        G: nx.Graph = pickle.load(f)
+
+    # Collect integer node ids (exclude non-int identifiers like clubhouse tuple)
+    int_nodes: List[int] = sorted([n for n in G.nodes if isinstance(n, int)])
+    # Ensure chronological path starts at 1 and ends at highest node id
+    if 1 in int_nodes:
+        # Reorder to start from 1 strictly ascending
+        max_node = max(int_nodes)
+        ordered_nodes = [n for n in int_nodes if n >= 1]
+    else:
+        # If node 1 does not exist, start from the smallest integer node
+        ordered_nodes = int_nodes
+
+    # Build one point per minute along ordered nodes
+    golfer_points: List[Dict] = []
+    timestamp = int(tee_time_s)
+    for n in ordered_nodes:
+        data = G.nodes[n]
+        lon = float(data.get("x"))
+        lat = float(data.get("y"))
+        golfer_points.append({
+            "latitude": lat,
+            "longitude": lon,
+            "timestamp": int(timestamp),
+            "type": "golfer",
+        })
+        timestamp += 60  # one-minute resolution
+
     return golfer_points
 
 

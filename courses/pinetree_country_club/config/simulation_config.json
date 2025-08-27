@@ -19,11 +19,11 @@
     "max_connection_distance_m": 500.0,
     "connect_on_network_build": true
   },
-  "golfer_18_holes_minutes": 240,
+  "golfer_18_holes_minutes": 255,
   "speeds": {
-    "runner_mps": 6.0,
+    "runner_mps": 2.8,
     "time_quantum_s": 60,
-    "golfer_total_minutes": 240
+    "golfer_total_minutes": 255
   },
   "delivery_prep_time_sec": 600,
   "bev_cart_avg_order_usd": 12.5,
@@ -32,10 +32,9 @@
   "delivery_total_orders": 30,
   "minutes_for_delivery_order_failure": 60,
   "delivery_hourly_distribution": {
-    "10:00": 0.05,
-    "11:00": 0.12,
-    "12:00": 0.22,
-    "13:00": 0.18,
+    "11:00": 0.14,
+    "12:00": 0.24,
+    "13:00": 0.19,
     "14:00": 0.1,
     "15:00": 0.12,
     "16:00": 0.13,
@@ -43,13 +42,16 @@
     "18:00": 0.02
   },
   "delivery_service_hours": {
-    "open_time": "10:00",
+    "open_time": "11:00",
     "close_time": "18:00",
-    "description": "Delivery service operates 10:00 AM to 7:00 PM"
+    "description": "Delivery service operates 11:00 AM to 7:00 PM"
   },
   "bev_cart_service_hours": {
     "start_time": "09:00",
     "end_time": "18:00",
     "description": "Beverage cart operates 9:00 AM to 6:00 PM"
-  }
+  },
+  "golfer_18_holes_hours": 4.25,
+  "bev_cart_order_probability": 0.4,
+  "delivery_order_probability_per_9_holes": 0.2
 }

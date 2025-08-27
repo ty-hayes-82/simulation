@@ -552,6 +552,18 @@ def main() -> int:
     parser.add_argument("--geofence-step", type=float, default=20.0, help="Densify step in meters along hole centerlines for geofencing (default: 20.0)")
     parser.add_argument("--geofence-smooth", type=float, default=1.0, help="Boundary smoothing distance in meters for geofenced holes (default: 1.0)")
     parser.add_argument("--geofence-max-points", type=int, default=300, help="Maximum seed points per hole for geofencing tessellation (default: 300)")
+    parser.add_argument(
+        "--geofence-simplify", "--simplify",
+        dest="geofence_simplify",
+        nargs="?",
+        type=float,
+        const=5.0,
+        default=None,
+        help=(
+            "Simplification tolerance in meters for geofenced holes. "
+            "Provide a number (e.g., 3). If used without a value, defaults to 5.0."
+        ),
+    )
 
     parser.add_argument("--output-dir", default="courses/pinetree_country_club", help="Output directory for saved data")
     
@@ -700,6 +712,7 @@ def main() -> int:
                         smooth_m=args.geofence_smooth,
                         max_points_per_hole=args.geofence_max_points,
                         enforce_disjoint=True,
+                        simplify_m=(args.geofence_simplify if args.geofence_simplify is not None else 5.0),
                     )
                     print(f"✓ Saved geofenced holes to {out_path}")
                     logger.info(f"Generated geofenced holes with {args.geofence_step}m step, {args.geofence_smooth}m smoothing")

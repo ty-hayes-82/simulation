@@ -11,8 +11,7 @@ Pass 2 (second_pass):
 
 Notes:
 - This substitutes the staged 4/8/8 logic with a simpler 10 + 10 confirmation.
-- Outputs are organized under `<output_root>/<stamp>_<scenario>/orders_XXX/...` with
-  subfolders `first_pass` and `second_pass` inside each runners group directory.
+- Outputs are organized under `<output_root>/<stamp>_<scenario>/{first_pass|second_pass}/orders_XXX/...`.
 
 Example:
   python scripts/optimization/optimize_staffing_policy_two_pass.py \
@@ -43,12 +42,42 @@ from scripts.optimization.optimize_staffing_policy import (
     aggregate_runs,
     choose_best_variant,
     parse_range,
+    utility_score,
     _make_group_context,
     _row_from_context_and_agg,
     _write_group_aggregate_file,
     _write_group_aggregate_heatmap,
     _write_final_csv,
 )
+
+
+def choose_top_variants(
+    results_by_variant: Dict[str, Dict[int, Dict[str, Any]]], *, target_on_time: float, max_failed: float, max_p90: float
+) -> List[Tuple[str, int, Dict[str, Any]]]:
+    """Find all candidates that meet targets and return the top 3 based on utility score."""
+    candidates: List[Tuple[str, int, Dict[str, Any]]] = []
+    for variant_key, per_runner in results_by_variant.items():
+        for n in sorted(per_runner.keys()):
+            agg = per_runner[n]
+            if not agg or not agg.get("runs"):
+                continue
+
+            p90_mean = agg.get("p90_mean", float("nan"))
+            p90_meets = math.isnan(p90_mean) or p90_mean <= max_p90
+
+            meets = (
+                agg.get("on_time_wilson_lo", 0.0) >= target_on_time
+                and agg.get("failed_mean", 1.0) <= max_failed
+                and p90_meets
+            )
+            if meets:
+                candidates.append((variant_key, n, agg))
+
+    if not candidates:
+        return []
+
+    candidates.sort(key=lambda t: utility_score(t[0], t[1], t[2]))
+    return candidates[:3]
 
 
 def run_combo(
@@ -99,18 +128,36 @@ def run_combo(
     subprocess.run(cmd, check=True)
 
 
-def _collect_run_dirs(group_dir: Path, include_first: bool = True, include_second: bool = True) -> List[Path]:
-    """Collect run_* directories from first_pass and/or second_pass under a group dir."""
+def _collect_run_dirs(
+    root: Path, orders: int, variant_key: str, runners: int, include_first: bool = True, include_second: bool = True
+) -> List[Path]:
+    """Collect run_* directories from first_pass and/or second_pass for a specific combo."""
     run_dirs: List[Path] = []
+    details = f"orders_{orders:03d}/runners_{runners}/{variant_key}"
     if include_first:
-        fp = group_dir / "first_pass"
+        fp = root / "first_pass" / details
         if fp.exists():
             run_dirs += sorted([p for p in fp.glob("run_*") if p.is_dir()])
     if include_second:
-        sp = group_dir / "second_pass"
+        sp = root / "second_pass" / details
         if sp.exists():
             run_dirs += sorted([p for p in sp.glob("run_*") if p.is_dir()])
     return run_dirs
+
+
+def meets_targets(agg: Dict[str, Any], args: argparse.Namespace) -> bool:
+    """Check if an aggregated result meets performance targets."""
+    if not agg or not agg.get("runs"):
+        return False
+
+    p90_mean = agg.get("p90_mean", float("nan"))
+    p90_meets = math.isnan(p90_mean) or p90_mean <= args.max_p90
+
+    return (
+        agg.get("on_time_wilson_lo", 0.0) >= args.target_on_time
+        and agg.get("failed_mean", 1.0) <= args.max_failed_rate
+        and p90_meets
+    )
 
 
 def main() -> None:
@@ -169,15 +216,34 @@ def main() -> None:
 
     # Identify orders levels
     if args.summarize_only:
-        orders_iter: List[int] = []
-        for d in sorted(root.glob("orders_*")):
-            if not d.is_dir():
+        orders_found: List[int] = []
+        seen: set = set()
+        for pass_dir in [root / "first_pass", root / "second_pass"]:
+            if not pass_dir.exists():
                 continue
-            try:
-                orders_iter.append(int(str(d.name).split("_")[-1]))
-            except Exception:
-                continue
-        orders_iter = sorted(orders_iter)
+            for d in sorted(pass_dir.glob("orders_*")):
+                if not d.is_dir():
+                    continue
+                try:
+                    val = int(str(d.name).split("_")[-1])
+                    if val not in seen:
+                        orders_found.append(val)
+                        seen.add(val)
+                except Exception:
+                    continue
+        # Fallback for legacy layouts that may have orders_* at the root
+        if not orders_found:
+            for d in sorted(root.glob("orders_*")):
+                if not d.is_dir():
+                    continue
+                try:
+                    val = int(str(d.name).split("_")[-1])
+                    if val not in seen:
+                        orders_found.append(val)
+                        seen.add(val)
+                except Exception:
+                    continue
+        orders_iter = sorted(orders_found)
     else:
         if not args.orders_levels:
             print(json.dumps({"error": "--orders-levels is required unless --summarize-only is set"}))
@@ -196,8 +262,9 @@ def main() -> None:
             with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
                 for variant in selected_variants:
                     for n in runner_values:
-                        group_dir = root / f"orders_{orders:03d}" / variant.key / f"runners_{n}"
-                        out_dir = group_dir / "first_pass"
+                        details = f"orders_{orders:03d}/runners_{n}/{variant.key}"
+                        out_dir = root / "first_pass" / details
+                        group_dir = root / "first_pass" / details
                         fut = executor.submit(
                             run_combo,
                             py=args.python_bin,
@@ -220,8 +287,11 @@ def main() -> None:
         # Aggregate after first pass (only first_pass runs for selection)
         for variant in selected_variants:
             for n in runner_values:
-                group_dir = root / f"orders_{orders:03d}" / variant.key / f"runners_{n}"
-                run_dirs = _collect_run_dirs(group_dir, include_first=True, include_second=False)
+                details = f"orders_{orders:03d}/runners_{n}/{variant.key}"
+                group_dir = root / "first_pass" / details
+                run_dirs = _collect_run_dirs(
+                    root, orders=orders, variant_key=variant.key, runners=n, include_first=True, include_second=False
+                )
                 agg = aggregate_runs(run_dirs)
                 results_by_variant.setdefault(variant.key, {})[n] = agg
                 context = _make_group_context(
@@ -248,64 +318,98 @@ def main() -> None:
 
                 _upsert_row(csv_rows, _write)
 
-        # Select recommended winner for this orders level
+        # Select top 3 + baseline for each runner count for the second pass
+        winners_for_2nd_pass: List[Tuple[str, int]] = []
+        for n in runner_values:
+            candidates_for_n: List[Tuple[str, int, Dict[str, Any]]] = []
+            for variant in selected_variants:
+                if variant.key == "none":
+                    continue
+                agg = results_by_variant.get(variant.key, {}).get(n)
+                if meets_targets(agg, args):
+                    candidates_for_n.append((variant.key, n, agg))
+
+            candidates_for_n.sort(key=lambda t: utility_score(t[0], t[1], t[2]))
+            top_3_blocking_for_n = candidates_for_n[:3]
+            for v_key, v_runners, _ in top_3_blocking_for_n:
+                winners_for_2nd_pass.append((v_key, v_runners))
+
+            none_agg = results_by_variant.get("none", {}).get(n)
+            if meets_targets(none_agg, args):
+                winners_for_2nd_pass.append(("none", n))
+
+        winners = sorted(list(set(winners_for_2nd_pass)))
+
+        if not winners:
+            print(f"Orders {orders}: No variant met targets up to {max(runner_values)} runners after first pass.")
+        else:
+            print(f"Orders {orders}: Found {len(winners)} candidates for second pass...")
+            for v_key, v_runners in winners:
+                desc = next((v.description for v in BLOCKING_VARIANTS if v.key == v_key), v_key)
+                print(f"  - Candidate: {v_runners} runner(s) with policy: {desc}")
+
+            # Second pass: run confirmation for all winners (full outputs)
+            if not args.summarize_only:
+                with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+                    futures = []
+                    for v_key, v_runners in winners:
+                        details = f"orders_{orders:03d}/runners_{v_runners}/{v_key}"
+                        out_dir = root / "second_pass" / details
+                        fut = executor.submit(
+                            run_combo,
+                            py=args.python_bin,
+                            course_dir=course_dir,
+                            scenario=args.tee_scenario,
+                            runners=v_runners,
+                            orders=orders,
+                            runs=args.second_pass_runs,
+                            out=out_dir,
+                            log_level=args.log_level,
+                            variant=next(v for v in BLOCKING_VARIANTS if v.key == v_key),
+                            runner_speed=args.runner_speed,
+                            prep_time=args.prep_time,
+                            minimal_output=False,
+                        )
+                        futures.append(fut)
+                    for fut in as_completed(futures):
+                        _ = fut.result()
+
+            # Re-aggregate winners including both passes
+            for v_key, v_runners in winners:
+                details = f"orders_{orders:03d}/runners_{v_runners}/{v_key}"
+                group_dir = root / "second_pass" / details
+                win_run_dirs = _collect_run_dirs(
+                    root, orders=orders, variant_key=v_key, runners=v_runners, include_first=True, include_second=True
+                )
+                win_agg = aggregate_runs(win_run_dirs)
+                results_by_variant.setdefault(v_key, {})[v_runners] = win_agg
+                win_context = _make_group_context(
+                    course_dir=course_dir,
+                    tee_scenario=args.tee_scenario,
+                    orders=orders,
+                    variant_key=v_key,
+                    runners=v_runners,
+                )
+                _write_group_aggregate_file(group_dir, win_context, win_agg)
+                _write_group_aggregate_heatmap(
+                    group_dir,
+                    course_dir=course_dir,
+                    tee_scenario=args.tee_scenario,
+                    variant_key=v_key,
+                    runners=v_runners,
+                    run_dirs=win_run_dirs,
+                )
+                from scripts.optimization.optimize_staffing_policy import _upsert_row
+
+                _upsert_row(csv_rows, _row_from_context_and_agg(win_context, win_agg, group_dir))
+
+        # Final choice after second pass
         chosen = choose_best_variant(
             results_by_variant,
             target_on_time=args.target_on_time,
             max_failed=args.max_failed_rate,
             max_p90=args.max_p90,
         )
-
-        if chosen is None:
-            print(f"Orders {orders}: No variant met targets up to {max(runner_values)} runners after first pass.")
-        else:
-            v_key, v_runners, _ = chosen
-            desc = next((v.description for v in BLOCKING_VARIANTS if v.key == v_key), v_key)
-            print(f"Orders {orders}: Recommended {v_runners} runner(s) with policy: {desc} (first pass). Running second pass confirmation...")
-
-            # Second pass: run confirmation for the winner (full outputs)
-            if not args.summarize_only:
-                group_dir = root / f"orders_{orders:03d}" / v_key / f"runners_{v_runners}"
-                out_dir = group_dir / "second_pass"
-                run_combo(
-                    py=args.python_bin,
-                    course_dir=course_dir,
-                    scenario=args.tee_scenario,
-                    runners=v_runners,
-                    orders=orders,
-                    runs=args.second_pass_runs,
-                    out=out_dir,
-                    log_level=args.log_level,
-                    variant=next(v for v in BLOCKING_VARIANTS if v.key == v_key),
-                    runner_speed=args.runner_speed,
-                    prep_time=args.prep_time,
-                    minimal_output=False,
-                )
-
-            # Re-aggregate winner including both passes
-            group_dir = root / f"orders_{orders:03d}" / v_key / f"runners_{v_runners}"
-            win_run_dirs = _collect_run_dirs(group_dir, include_first=True, include_second=True)
-            win_agg = aggregate_runs(win_run_dirs)
-            results_by_variant.setdefault(v_key, {})[v_runners] = win_agg
-            win_context = _make_group_context(
-                course_dir=course_dir,
-                tee_scenario=args.tee_scenario,
-                orders=orders,
-                variant_key=v_key,
-                runners=v_runners,
-            )
-            _write_group_aggregate_file(group_dir, win_context, win_agg)
-            _write_group_aggregate_heatmap(
-                group_dir,
-                course_dir=course_dir,
-                tee_scenario=args.tee_scenario,
-                variant_key=v_key,
-                runners=v_runners,
-                run_dirs=win_run_dirs,
-            )
-            from scripts.optimization.optimize_staffing_policy import _upsert_row  # local import
-
-            _upsert_row(csv_rows, _row_from_context_and_agg(win_context, win_agg, group_dir))
 
         # Baseline reporting for transparency (no-blocks)
         baseline_none_runners = None
