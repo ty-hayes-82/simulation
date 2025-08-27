@@ -1,5 +1,11 @@
 {
-  "simulations": [],
-  "defaultSimulation": null,
-  "courses": []
+  "simulations": [
+    {
+      "id": "coordinates",
+      "name": "Simulation",
+      "filename": "coordinates.csv",
+      "description": "Delivery runner simulation (4 runners)"
+    }
+  ],
+  "defaultSimulation": "coordinates"
 }
