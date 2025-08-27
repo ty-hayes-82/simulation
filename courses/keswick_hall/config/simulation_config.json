@@ -1,13 +1,16 @@
 {
   "course_name": "Keswick Hall",
+  "within": null,
+  "state": null,
+  "bbox": null,
   "clubhouse": {
-    "latitude": 38.016941,
-    "longitude": -78.366161
+    "latitude": 38.0185,
+    "longitude": -78.3675
   },
   "extraction_params": {
     "broaden": false,
-    "include_streets": true,
-    "street_buffer_m": 750,
+    "include_streets": false,
+    "street_buffer_m": 500,
     "course_buffer_m": 100,
     "combined_network": true
   },

@@ -38,6 +38,7 @@ import geopandas as gpd
 from shapely.geometry import mapping, Point
 import networkx as nx
 from pathlib import Path
+import osmnx as ox
 
 # Add the project root to Python path to enable imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -57,7 +58,7 @@ from utils.cli import add_log_level_argument
 logger = get_logger(__name__)
 
 
-def save_course_data(data, output_dir):
+def save_course_data(data: dict, output_dir: str) -> None:
     """Save course data to files"""
     geojson_dir = os.path.join(output_dir, "geojson")
     os.makedirs(geojson_dir, exist_ok=True)
@@ -102,7 +103,7 @@ def _save_extra_layer(gdf: gpd.GeoDataFrame, output_dir: str, filename: str, lab
         return False
 
 
-def save_cart_paths(graph, output_dir):
+def save_cart_paths(graph: nx.Graph, output_dir: str) -> bool:
     """Save cart path graph as GeoJSON and pickle"""
     geojson_dir = os.path.join(output_dir, "geojson")
     pkl_dir = os.path.join(output_dir, "pkl")
@@ -156,7 +157,7 @@ def save_cart_paths(graph, output_dir):
         return False
 
 
-def save_route_data(route_data, output_dir, save_hole_lines=True):
+def save_route_data(route_data: dict, output_dir: str, save_hole_lines: bool = True) -> None:
     """Save golf route data"""
     geojson_dir = os.path.join(output_dir, "geojson")
     pkl_dir = os.path.join(output_dir, "pkl")
@@ -202,7 +203,7 @@ def save_route_data(route_data, output_dir, save_hole_lines=True):
     print(f"Saved route summary to {output_dir}/route_summary.json")
 
 
-def save_streets_data(streets_gdf, output_dir):
+def save_streets_data(streets_gdf: gpd.GeoDataFrame, output_dir: str) -> bool:
     """Save streets data to a GeoJSON file."""
     if streets_gdf is not None and not streets_gdf.empty:
         geojson_dir = os.path.join(output_dir, "geojson")
@@ -227,7 +228,7 @@ def save_streets_data(streets_gdf, output_dir):
         return False
 
 
-def build_street_graph(streets_gdf):
+def build_street_graph(streets_gdf: gpd.GeoDataFrame) -> nx.Graph:
     """Build a NetworkX graph from street GeoDataFrame"""
     G = nx.Graph()
     G.graph["crs"] = "EPSG:4326"
@@ -248,7 +249,7 @@ def build_street_graph(streets_gdf):
     return G
 
 
-def _add_linestring_to_graph_with_data(G, coords, edge_data):
+def _add_linestring_to_graph_with_data(G: nx.Graph, coords: list, edge_data: dict) -> None:
     """Add a linestring to the graph with metadata (copied from osm_ingest.py)"""
     last = None
     for lon, lat in coords:
@@ -256,17 +257,13 @@ def _add_linestring_to_graph_with_data(G, coords, edge_data):
         if node not in G:
             G.add_node(node, x=lon, y=lat)
         if last is not None:
-            # Calculate distance in meters
-            from math import radians, cos, sin, asin, sqrt
-            
-            # Haversine formula for accurate distance
-            lat1, lon1 = radians(G.nodes[last]["y"]), radians(G.nodes[last]["x"])
-            lat2, lon2 = radians(lat), radians(lon)
-            dlat = lat2 - lat1
-            dlon = lon2 - lon1
-            a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-            c = 2 * asin(sqrt(a))
-            length = 6371000 * c  # Earth radius in meters
+            # Calculate distance in meters using OSMnx
+            length = ox.distance.great_circle(
+                lat1=G.nodes[last]["y"],
+                lng1=G.nodes[last]["x"],
+                lat2=lat,
+                lng2=lon
+            )
             
             # Combine length with edge data
             edge_attrs = {"length": length}
@@ -275,7 +272,7 @@ def _add_linestring_to_graph_with_data(G, coords, edge_data):
         last = node
 
 
-def save_combined_routing_network(cart_graph, street_graph, output_dir):
+def save_combined_routing_network(cart_graph: nx.Graph, street_graph: nx.Graph, output_dir: str) -> nx.Graph:
     """Combine cart paths and nearby streets into a unified routing network"""
     pkl_dir = os.path.join(output_dir, "pkl")
     os.makedirs(pkl_dir, exist_ok=True)
@@ -323,7 +320,9 @@ def save_combined_routing_network(cart_graph, street_graph, output_dir):
     return combined_graph
 
 
-def _connect_cart_paths_to_streets(combined_graph, cart_graph, street_graph, max_connection_distance_m=100):
+def _connect_cart_paths_to_streets(
+    combined_graph: nx.Graph, cart_graph: nx.Graph, street_graph: nx.Graph, max_connection_distance_m: int = 100
+) -> int:
     """Connect cart path network to street network at nearby intersection points"""
     connections_made = 0
     
@@ -338,15 +337,10 @@ def _connect_cart_paths_to_streets(combined_graph, cart_graph, street_graph, max
         for street_node in street_graph.nodes():
             street_x, street_y = street_graph.nodes[street_node]['x'], street_graph.nodes[street_node]['y']
             
-            # Calculate distance
-            from math import radians, cos, sin, asin, sqrt
-            lat1, lon1 = radians(cart_y), radians(cart_x)
-            lat2, lon2 = radians(street_y), radians(street_x)
-            dlat = lat2 - lat1
-            dlon = lon2 - lon1
-            a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-            c = 2 * asin(sqrt(a))
-            distance_m = 6371000 * c
+            # Calculate distance using OSMnx
+            distance_m = ox.distance.great_circle(
+                lat1=cart_y, lng1=cart_x, lat2=street_y, lng2=street_x
+            )
             
             if distance_m < min_dist:
                 min_dist = distance_m
@@ -444,7 +438,7 @@ def tag_holes_on_connected_points(geojson_dir: str) -> str:
     return connected_path
 
 
-def save_simulation_config(args, output_dir):
+def save_simulation_config(args: argparse.Namespace, output_dir: str) -> None:
     """Create or merge simulation configuration without overwriting existing values unnecessarily."""
     config_dir = os.path.join(output_dir, "config")
     os.makedirs(config_dir, exist_ok=True)
@@ -528,7 +522,7 @@ def save_simulation_config(args, output_dir):
         logger.info(f"Created simulation config at {config_path}")
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Extract OpenStreetMap data for golf course simulation")
     add_log_level_argument(parser)
     parser.add_argument("--course", required=True, help="Course name, e.g., 'Pinetree Country Club'")
@@ -537,7 +531,7 @@ def main():
     parser.add_argument("--bbox", default=None, help="Optional bbox 'west,south,east,north'")
     parser.add_argument("--clubhouse-lat", type=float, required=True, help="Clubhouse latitude")
     parser.add_argument("--clubhouse-lon", type=float, required=True, help="Clubhouse longitude")
-    parser.add_argument("--search-radius-km", type=float, default=10.0, help="Radius in km for coordinate-based OSM search (default: 10.0)")
+    parser.add_argument("--radius-km", type=float, default=10.0, help="Radius in km for coordinate-based OSM search (default: 10.0)")
     parser.add_argument("--broaden", action="store_true", help="Broaden OSM path filter if cart paths are sparse")
     
     # Street extraction options
@@ -581,7 +575,7 @@ def main():
             state=args.state,
             center_lat=args.clubhouse_lat,
             center_lon=args.clubhouse_lon,
-            radius_km=args.search_radius_km,
+            radius_km=args.radius_km,
             include_cart_paths=True,
             broaden=args.broaden,
             include_streets=False  # We'll handle this separately to use custom buffer

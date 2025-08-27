@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 # Overpass/requests timeouts (seconds)
 OVERPASS_TIMEOUT = 180
-REQUESTS_TIMEOUT = (15, 90)  # (connect, read)
+REQUESTS_TIMEOUT = 90  # (connect, read) - was (15, 90) but tuple causes Overpass error
 OVERPASS_ENDPOINTS: List[str] = [
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass-api.de/api/interpreter",
@@ -70,40 +70,26 @@ def _with_overpass_retries(operation: Callable[[], Any], desc: str, max_attempts
     for attempt in range(max_attempts):
         endpoint = endpoints[attempt % len(endpoints)]
         try:
-            # Configure settings for both OSMnx v1 and v2 APIs
-            try:
-                ox.settings.requests_timeout = REQUESTS_TIMEOUT  # v2
-            except Exception:
-                pass
-            try:
-                ox.settings.timeout = OVERPASS_TIMEOUT  # v1 (deprecated in v2)
-            except Exception:
-                pass
-            try:
-                ox.settings.overpass_url = endpoint  # v2
-            except Exception:
-                pass
-            try:
-                ox.settings.overpass_endpoint = endpoint  # v1 (deprecated in v2)
-            except Exception:
-                pass
+            # Configure settings for OSMnx v2 API
+            ox.settings.requests_timeout = REQUESTS_TIMEOUT
+            ox.settings.overpass_url = endpoint
 
             # Avoid osmnx internal /status polling which can fail behind firewalls
             ox.settings.overpass_rate_limit = False
             ox.settings.use_cache = True
             ox.settings.log_console = False
 
-            result = operation()
-            try:
-                import pandas as _pd  # type: ignore
-                if isinstance(result, _pd.DataFrame) and getattr(result, "empty", False):
-                    raise RuntimeError("Empty Overpass result: " + desc)
-            except Exception:
-                pass
-            return result
+            return operation()
+        
         except Exception as e:
+            # If no features are found, it's a valid result, not an error to retry.
+            # Return an empty GeoDataFrame immediately.
+            if "No matching features" in str(e):
+                logger.warning("No features found for %s, continuing.", desc)
+                return gpd.GeoDataFrame()
+            
             last_exc = e
-            wait = min(20.0, sleep_base_sec * (2 ** attempt))
+            wait = min(20.0, sleep_base_sec * (2**attempt))
             logger.warning(
                 "Overpass op failed (%s) on %s [attempt %d/%d]: %s; retrying in %.1fs",
                 desc,
@@ -252,7 +238,7 @@ def features_within_radius(
         radius_m: Search radius in meters
 
     Returns:
-        GeoDataFrame of matching features (possibly empty) in EPSG:4326
+        GeoDataFrame of matching features (possibly empty) in EPSG:42
     """
     try:
         center_point = Point(center_lon, center_lat)
