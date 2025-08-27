@@ -705,6 +705,7 @@ def main() -> int:
                         step_m=args.geofence_step,
                         smooth_m=args.geofence_smooth,
                         max_points_per_hole=args.geofence_max_points,
+                        enforce_disjoint=True,
                     )
                     print(f"✓ Saved geofenced holes to {out_path}")
                     logger.info(f"Generated geofenced holes with {args.geofence_step}m step, {args.geofence_smooth}m smoothing")

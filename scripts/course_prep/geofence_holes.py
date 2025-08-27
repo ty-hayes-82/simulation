@@ -575,8 +575,22 @@ def split_course_into_holes(
                 continue
             hole_polys[hid] = unary_union([hole_polys.get(hid), corridor]).buffer(0)
 
+    # Assess area balance and decide if we should enforce disjointness automatically
+    areas_list = [poly.area for poly in hole_polys.values() if poly and not poly.is_empty]
+    expected_area = course_area / max(len(unique_ids), 1)
+    imbalance = False
+    if areas_list:
+        max_area = max(areas_list)
+        min_area = min(areas_list)
+        if (max_area > expected_area * 3.0) or (min_area < expected_area * 0.15) or (len(hole_polys) != len(unique_ids)):
+            imbalance = True
+            logging.warning(
+                f"Area imbalance detected (max={max_area:,.1f}, min={min_area:,.1f}, expected≈{expected_area:,.1f}); auto-enforcing disjoint."
+            )
+    need_disjoint = enforce_disjoint or imbalance
+
     # Enforce disjoint property: remove overlaps deterministically
-    if enforce_disjoint:
+    if need_disjoint:
         logging.info("Enforcing disjoint property (pairwise resolution)...")
         # First do a pairwise resolution pass to reduce overlaps intelligently
         hole_polys = _resolve_overlaps_pairwise(hole_polys, clipped_holes)
@@ -596,7 +610,7 @@ def split_course_into_holes(
     
     # Recover holes that became empty by carving non-overlapping corridors
     empty_after_disjoint: List[int] = []
-    if enforce_disjoint:
+    if need_disjoint:
         empty_after_disjoint = [hid for hid in sorted_hole_ids if (hid not in hole_polys or hole_polys[hid].is_empty)]
     if empty_after_disjoint:
         logging.warning(f"Holes became empty after disjoint: {empty_after_disjoint}")
@@ -618,7 +632,7 @@ def split_course_into_holes(
             union_so_far = unary_union([union_so_far, hole_polys[hid]]) if union_so_far is not None else hole_polys[hid]
 
     # Final disjoint pass after recovery to ensure no overlaps
-    if enforce_disjoint:
+    if need_disjoint:
         logging.info("Final disjointness enforcement after recovery...")
         union_so_far = None
         for hid in sorted(hole_polys.keys()):
@@ -645,6 +659,19 @@ def split_course_into_holes(
         logging.warning(f"Overlaps detected: {overlap_area:,.1f} m²")
     else:
         logging.info("No significant overlaps detected")
+
+    # Area validation check (post-processing)
+    final_areas = {hid: poly.area for hid, poly in hole_polys.items() if poly and not poly.is_empty}
+    if len(final_areas) != len(unique_ids):
+        logging.warning(f"Output has {len(final_areas)} holes after processing (expected {len(unique_ids)}).")
+    if final_areas:
+        max_final = max(final_areas.values())
+        min_final = min(final_areas.values())
+        expected_final = course_area / max(len(unique_ids), 1)
+        if (max_final > expected_final * 3.0) or (min_final < expected_final * 0.10):
+            logging.warning(
+                f"Post-validation area imbalance: max={max_final:,.1f}, min={min_final:,.1f}, expected≈{expected_final:,.1f}"
+            )
 
     # Optional smoothing
     if smooth_m and smooth_m > 0:
