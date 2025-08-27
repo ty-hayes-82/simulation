@@ -463,6 +463,10 @@ def _select_representative_runs(all_items: List[Tuple[str, str, str]]) -> Dict[s
     for core delivery metrics, then pick the run whose metrics vector is closest (z-score distance) to the mean.
     Returns a mapping from csv_path → 'selected' (value is the same path for quick lookup).
     """
+    # Optional override: prefer the first run deterministically when requested
+    # Set env RUN_MAP_SELECT_RUNS to one of {"run_01", "first", "first_run"} to enable
+    selection_mode = os.environ.get("RUN_MAP_SELECT_RUNS", "").strip().lower()
+    prefer_first_run = selection_mode in {"run_01", "first", "first_run"}
     # Group candidates by combo key derived from path
     groups: Dict[str, List[Tuple[str, str, str]]] = {}
     for sim_id, display_name, csv_path in all_items:
@@ -544,6 +548,22 @@ def _select_representative_runs(all_items: List[Tuple[str, str, str]]) -> Dict[s
             # Single run, select it
             selected[per_run[0][0]] = per_run[0][0]
             continue
+
+        # If preferring the first run, choose run_01 when available
+        if prefer_first_run:
+            try:
+                for csv_path, run_dir in per_run:
+                    if run_dir.name.lower() == "run_01":
+                        selected[csv_path] = csv_path
+                        break
+                else:
+                    # No explicit run_01 found; fall back to stable lexical ordering of run directories
+                    per_run_sorted = sorted(per_run, key=lambda t: t[1].name)
+                    selected[per_run_sorted[0][0]] = per_run_sorted[0][0]
+                continue
+            except Exception:
+                # If anything goes wrong, fall back to representative logic below
+                pass
 
         # Load metrics for each run
         run_metrics: List[Tuple[str, Dict[str, float]]] = []

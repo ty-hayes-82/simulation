@@ -118,6 +118,9 @@ def run_combo(
     # Minimal outputs only for first pass
     if minimal_output:
         cmd += ["--minimal-outputs"]
+    # Always ensure only run_01 coordinates are generated and avoid auto-publish
+    # so that aggregation and map copying are handled centrally after optimization
+    cmd += ["--coordinates-only-for-first-run", "--skip-publish"]
 
     if variant.cli_flags:
         cmd += variant.cli_flags
@@ -472,6 +475,22 @@ def main() -> None:
             print(f"Aggregated metrics CSV written to {csv_path}")
     except Exception:
         pass
+
+    # Post-run: copy coordinates and related artifacts for this optimization root
+    # into the map app's public directories by invoking run_map_app.py.
+    try:
+        env = os.environ.copy()
+        env["SIM_BASE_DIR"] = str(root)
+        # Instruct the map app to prefer run_01 when selecting representative runs
+        env["RUN_MAP_SELECT_RUNS"] = "run_01"
+        run_map_script = (project_root / "my-map-animation" / "run_map_app.py")
+        if run_map_script.exists():
+            print("\n🔁 Updating map assets (coordinates, manifests, heatmaps)...")
+            subprocess.run([args.python_bin, str(run_map_script)], check=False, env=env)
+        else:
+            print(f"⚠️  Map app script not found at {run_map_script}; skipping asset update")
+    except Exception as e:
+        print(f"⚠️  Skipped map asset update due to error: {e}")
 
 
 if __name__ == "__main__":
