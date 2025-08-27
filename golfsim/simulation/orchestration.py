@@ -543,7 +543,18 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
             logger.warning("Failed to generate and save detailed metrics: %s", e)
 
         # Coordinate generation
-        if not bool(getattr(config, "minimal_outputs", False)):
+        # Write coordinates when:
+        # - full outputs (not minimal), OR
+        # - minimal outputs but first run and coordinates_only_for_first_run is enabled
+        should_write_coords = (
+            not bool(getattr(config, "minimal_outputs", False))
+            or (
+                bool(getattr(config, "minimal_outputs", False))
+                and bool(getattr(config, "coordinates_only_for_first_run", False))
+                and run_idx == 1
+            )
+        )
+        if should_write_coords:
             if not bool(getattr(config, "coordinates_only_for_first_run", False)) or run_idx == 1:
                 try:
                     events: list[dict[str, Any]] = []
@@ -570,6 +581,7 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                         cart_graph = None
 
                     # Generate golfer coordinates first
+                    golfer_points_csv: dict[str, list[dict[str, Any]]] = {}
                     if groups:
                         gp = generate_golfer_points_for_groups(config.course_dir, groups)
                         by_gid: dict[int, list[dict[str, Any]]] = {}
@@ -606,7 +618,6 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                                 except Exception:
                                     order_timing_df = None
 
-                                golfer_points_csv: dict[str, list[dict[str, Any]]] = {}
                                 runner_points = generate_runner_coordinates_from_events(
                                     events_df=events_df,
                                     golfer_coords_df=golfer_coords_df,
