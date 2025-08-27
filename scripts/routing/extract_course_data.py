@@ -545,6 +545,7 @@ def main() -> int:
     parser.add_argument("--pitch-radius-yards", type=float, default=200.0, help="Radius in yards from clubhouse for sports pitches (default: 200 yards)")
     parser.add_argument("--include-water", action="store_true", help="Include swimming pools and water features within radius of clubhouse")
     parser.add_argument("--water-radius-yards", type=float, default=200.0, help="Radius in yards from clubhouse for pools/water (default: 200 yards)")
+    parser.add_argument("--skip-water-on-error", action="store_true", help="Skip water features if fetching fails (useful when APIs are down)")
     
     # Geofencing options
     parser.add_argument("--skip-geofencing", action="store_true", help="Skip automatic generation of geofenced hole polygons")
@@ -599,41 +600,31 @@ def main() -> int:
             print(f"\nFetching swimming pools and water within {args.water_radius_yards:.0f} yards (~{radius_m_w:.0f} m) of clubhouse...")
             # Gather union of common pool/water tags via separate queries, then concat
             water_frames = []
-            # Natural water bodies
-            water_frames.append(
-                features_within_radius(
-                    tags={"natural": "water"},
-                    center_lat=args.clubhouse_lat,
-                    center_lon=args.clubhouse_lon,
-                    radius_m=radius_m_w,
-                )
-            )
-            # Swimming pools (common tagging is leisure=swimming_pool; amenity=swimming_pool appears too)
-            water_frames.append(
-                features_within_radius(
-                    tags={"leisure": "swimming_pool"},
-                    center_lat=args.clubhouse_lat,
-                    center_lon=args.clubhouse_lon,
-                    radius_m=radius_m_w,
-                )
-            )
-            water_frames.append(
-                features_within_radius(
-                    tags={"amenity": "swimming_pool"},
-                    center_lat=args.clubhouse_lat,
-                    center_lon=args.clubhouse_lon,
-                    radius_m=radius_m_w,
-                )
-            )
-            # Some pools are mapped as water=pool with natural=water
-            water_frames.append(
-                features_within_radius(
-                    tags={"water": "pool"},
-                    center_lat=args.clubhouse_lat,
-                    center_lon=args.clubhouse_lon,
-                    radius_m=radius_m_w,
-                )
-            )
+            
+            # Try each water feature type, but don't fail if one doesn't work
+            water_queries = [
+                ({"natural": "water"}, "natural water bodies"),
+                ({"leisure": "swimming_pool"}, "leisure swimming pools"),
+                ({"amenity": "swimming_pool"}, "amenity swimming pools"),
+                ({"water": "pool"}, "water pools")
+            ]
+            
+            for tags, description in water_queries:
+                try:
+                    result = features_within_radius(
+                        tags=tags,
+                        center_lat=args.clubhouse_lat,
+                        center_lon=args.clubhouse_lon,
+                        radius_m=radius_m_w,
+                    )
+                    if result is not None and not result.empty:
+                        water_frames.append(result)
+                        print(f"   ✓ Found {len(result)} {description}")
+                except Exception as e:
+                    print(f"   ⚠ Could not fetch {description}: {str(e)[:100]}")
+                    logger.warning(f"Failed to fetch {description}: {e}")
+                    continue
+            
             # Concatenate and drop duplicates if any
             try:
                 frames = [f for f in water_frames if f is not None and not f.empty]
@@ -641,10 +632,13 @@ def main() -> int:
                     pools_water_gdf = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True))
                     # Ensure CRS
                     pools_water_gdf = pools_water_gdf.set_crs("EPSG:4326", allow_override=True)
+                    print(f"   ✓ Total water features found: {len(pools_water_gdf)}")
                 else:
                     pools_water_gdf = gpd.GeoDataFrame()
-            except Exception:
+                    print("   ⚠ No water features found in the area")
+            except Exception as e:
                 pools_water_gdf = gpd.GeoDataFrame()
+                print(f"   ⚠ Error combining water features: {e}")
         
         # Handle street extraction with custom buffer distance
         if args.include_streets:

@@ -18,6 +18,9 @@ Example (PowerShell line breaks with `):
     --runs-per 4 `
     --target-on-time 0.90 --max-failed-rate 0.05 --max-p90 40
 
+Single line version:
+  python scripts/optimization/optimize_staffing_policy.py --course-dir courses/pinetree_country_club --tee-scenario real_tee_sheet --orders-levels 10 20 30 40 50 --runner-range 1-4 --runs-per 4
+
 Outputs a human-readable summary and prints a JSON recommendation to stdout.
 """
 
