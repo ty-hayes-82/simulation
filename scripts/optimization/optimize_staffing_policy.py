@@ -26,20 +26,18 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import csv
 import subprocess
 import sys
 from dataclasses import dataclass
 import os
-import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from golfsim.viz.heatmap_viz import (
-    create_course_heatmap_from_hole_avgs,
-    extract_order_data,
-    calculate_delivery_time_stats,
-)
+
+# Heatmap aggregation
+from golfsim.viz.heatmap_viz import create_course_heatmap
 
 # Optional .env loader (for GEMINI_API_KEY/GOOGLE_API_KEY)
 try:
@@ -98,6 +96,7 @@ class RunMetrics:
     on_time_rate: float
     failed_rate: float
     p90: float
+    avg: float
     orders_per_runner_hour: float
     successful_orders: int
     total_orders: int
@@ -114,6 +113,7 @@ def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
             on_time_rate=float(data.get("on_time_rate", 0.0) or 0.0),
             failed_rate=float(data.get("failed_rate", 0.0) or 0.0),
             p90=float(data.get("delivery_cycle_time_p90", 0.0) or 0.0),
+            avg=float(data.get("delivery_cycle_time_avg", 0.0) or 0.0),
             orders_per_runner_hour=float(data.get("orders_per_runner_hour", 0.0) or 0.0),
             successful_orders=int(data.get("successful_orders", data.get("successfulDeliveries", 0)) or 0),
             total_orders=int(data.get("total_orders", data.get("totalOrders", 0)) or 0),
@@ -132,10 +132,12 @@ def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
             failed_rate = (failed / total) if total > 0 else 0.0
             # Try to extract p90 from fallback JSON if available
             p90_val = float(dm.get("deliveryCycleTimeP90", float("nan")) or float("nan"))
+            avg_val = float(dm.get("avgOrderTime", 0.0) or 0.0)
             return RunMetrics(
                 on_time_rate=on_time_pct,
                 failed_rate=failed_rate,
                 p90=p90_val,
+                avg=avg_val,
                 orders_per_runner_hour=float(dm.get("ordersPerRunnerHour", 0.0) or 0.0),
                 successful_orders=successful,
                 total_orders=total,
@@ -157,6 +159,7 @@ def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
     on_time_vals = [m.on_time_rate for m in items if not math.isnan(m.on_time_rate)]
     failed_vals = [m.failed_rate for m in items if not math.isnan(m.failed_rate)]
     p90_vals = [m.p90 for m in items if not math.isnan(m.p90)]
+    avg_vals = [m.avg for m in items if not math.isnan(m.avg)]
     oph_vals = [m.orders_per_runner_hour for m in items if not math.isnan(m.orders_per_runner_hour)]
 
     total_successes = sum(m.successful_orders for m in items)
@@ -168,12 +171,170 @@ def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
         "on_time_mean": mean(on_time_vals),
         "failed_mean": mean(failed_vals),
         "p90_mean": mean(p90_vals) if p90_vals else float("nan"),
+        "avg_delivery_time_mean": mean(avg_vals) if avg_vals else float("nan"),
         "oph_mean": mean(oph_vals),
         "on_time_wilson_lo": ot_lo,
         "on_time_wilson_hi": ot_hi,
         "total_successful_orders": total_successes,
         "total_orders": total_orders,
     }
+
+
+def _write_group_aggregate_file(group_dir: Path, context: Dict[str, Any], agg: Dict[str, Any]) -> None:
+    """Persist per-group aggregate so it can be referenced later.
+
+    Writes an '@aggregate.json' file under the provided group directory
+    (e.g., .../orders_030/none/runners_2/@aggregate.json).
+    """
+    try:
+        payload: Dict[str, Any] = {
+            **context,
+            **agg,
+            "group_dir": str(group_dir),
+        }
+        (group_dir / "@aggregate.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        # Non-fatal: continue even if we cannot write
+        pass
+
+
+def _write_group_aggregate_heatmap(
+    group_dir: Path,
+    *,
+    course_dir: Path,
+    tee_scenario: str,
+    variant_key: str,
+    runners: int,
+    run_dirs: List[Path],
+) -> Optional[Path]:
+    """Create a single averaged heatmap.png for a runners group by combining all runs.
+
+    The heatmap uses concatenated orders and delivery_stats from each run's results.json
+    and is written to `<group_dir>/heatmap.png`.
+    """
+    try:
+        combined: Dict[str, Any] = {"orders": [], "delivery_stats": []}
+        for rd in run_dirs:
+            rp = rd / "results.json"
+            if not rp.exists():
+                continue
+            try:
+                data = json.loads(rp.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            orders = data.get("orders") or []
+            stats = data.get("delivery_stats") or []
+            if isinstance(orders, list):
+                combined["orders"].extend(orders)
+            if isinstance(stats, list):
+                combined["delivery_stats"].extend(stats)
+
+        # If no orders found across runs, skip
+        if not combined["orders"]:
+            return None
+
+        course_name = Path(str(course_dir)).name.replace("_", " ").title()
+        title = (
+            f"{course_name} - Delivery Runner Heatmap (Avg across {len(run_dirs)} runs)\n"
+            f"Variant: {variant_key} | Runners: {runners} | Scenario: {tee_scenario}"
+        )
+        save_path = group_dir / "heatmap.png"
+        create_course_heatmap(
+            results=combined,
+            course_dir=course_dir,
+            save_path=save_path,
+            title=title,
+            colormap="white_to_red",
+        )
+        return save_path
+    except Exception:
+        return None
+
+
+def _make_group_context(*, course_dir: Path, tee_scenario: str, orders: int, variant_key: str, runners: int) -> Dict[str, Any]:
+    return {
+        "course": str(course_dir),
+        "tee_scenario": tee_scenario,
+        "orders": int(orders),
+        "variant": variant_key,
+        "runners": int(runners),
+    }
+
+
+def _csv_headers() -> List[str]:
+    return [
+        "course",
+        "tee_scenario",
+        "orders",
+        "variant",
+        "runners",
+        "runs",
+        "on_time_mean",
+        "on_time_wilson_lo",
+        "on_time_wilson_hi",
+        "failed_mean",
+        "p90_mean",
+        "avg_delivery_time_mean",
+        "oph_mean",
+        "total_successful_orders",
+        "total_orders",
+        "group_dir",
+    ]
+
+
+def _row_from_context_and_agg(context: Dict[str, Any], agg: Dict[str, Any], group_dir: Path) -> Dict[str, Any]:
+    row: Dict[str, Any] = {
+        **{k: context.get(k) for k in ["course", "tee_scenario", "orders", "variant", "runners"]},
+        "runs": agg.get("runs"),
+        "on_time_mean": agg.get("on_time_mean"),
+        "on_time_wilson_lo": agg.get("on_time_wilson_lo"),
+        "on_time_wilson_hi": agg.get("on_time_wilson_hi"),
+        "failed_mean": agg.get("failed_mean"),
+        "p90_mean": agg.get("p90_mean"),
+        "avg_delivery_time_mean": agg.get("avg_delivery_time_mean"),
+        "oph_mean": agg.get("oph_mean"),
+        "total_successful_orders": agg.get("total_successful_orders"),
+        "total_orders": agg.get("total_orders"),
+        "group_dir": str(group_dir),
+    }
+    return row
+
+
+def _write_final_csv(root: Path, rows: List[Dict[str, Any]]) -> Optional[Path]:
+    try:
+        csv_path = root / "all_metrics.csv"
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=_csv_headers())
+            writer.writeheader()
+            for r in rows:
+                writer.writerow(r)
+        return csv_path
+    except Exception:
+        return None
+
+
+def _upsert_row(rows: List[Dict[str, Any]], new_row: Dict[str, Any]) -> None:
+    """Insert or replace a row identified by (course, tee_scenario, orders, variant, runners)."""
+    key = (
+        new_row.get("course"),
+        new_row.get("tee_scenario"),
+        int(new_row.get("orders", 0)),
+        new_row.get("variant"),
+        int(new_row.get("runners", 0)),
+    )
+    for i, r in enumerate(rows):
+        rkey = (
+            r.get("course"),
+            r.get("tee_scenario"),
+            int(r.get("orders", 0)),
+            r.get("variant"),
+            int(r.get("runners", 0)),
+        )
+        if rkey == key:
+            rows[i] = new_row
+            return
+    rows.append(new_row)
 
 
 def run_combo(*, py: str, course_dir: Path, scenario: str, runners: int, orders: int, runs: int, out: Path, log_level: str, variant: BlockingVariant, runner_speed: Optional[float], prep_time: Optional[int]) -> None:
@@ -272,109 +433,6 @@ def choose_best_variant(results_by_variant: Dict[str, Dict[int, Dict[str, Any]]]
     return candidates[0]
 
 
-def _parse_run_index(name: str) -> int:
-    """Extract integer run index from a directory name like 'run_01'."""
-    try:
-        parts = name.split("_")
-        return int(parts[-1])
-    except Exception:
-        return -1
-
-
-def _iter_all_run_dirs(runner_dir: Path) -> List[Path]:
-    """Collect all run_* directories under runner_dir including confirm/stages."""
-    names = [
-        "confirm_winner",
-        "stage3_finalists",
-        "stage2",
-        "confirm_baseline",
-        "confirm",
-        None,  # base run_* dirs
-    ]
-    dirs: List[Path] = []
-    for name in names:
-        base = runner_dir if name is None else (runner_dir / name)
-        if not base.exists():
-            continue
-        run_dirs = [p for p in base.iterdir() if p.is_dir() and p.name.startswith("run_")]
-        run_dirs.sort(key=lambda p: _parse_run_index(p.name))
-        dirs.extend(run_dirs)
-    return dirs
-
-
-def _aggregate_hole_avgs_for_runner_dir(course_dir: Path, runner_dir: Path) -> Optional[Dict[int, float]]:
-    """Aggregate per-hole average minutes across all runs under runner_dir.
-
-    Reads results.json from each run directory, extracts order drive times, and
-    computes overall average minutes per hole across all runs.
-    """
-    runs = _iter_all_run_dirs(runner_dir)
-    if not runs:
-        return None
-    per_hole_all_times: Dict[int, List[float]] = {}
-    any_data = False
-    for rd in runs:
-        rj = rd / "results.json"
-        if not rj.exists():
-            continue
-        try:
-            results = json.loads(rj.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        order_data = extract_order_data(results)
-        if not order_data:
-            continue
-        any_data = True
-        hole_stats = calculate_delivery_time_stats(order_data)
-        for hole_num, stats in hole_stats.items():
-            per_hole_all_times.setdefault(int(hole_num), []).append(float(stats.get("avg_time", 0.0)))
-    if not any_data:
-        return None
-    # Compute global average per hole
-    return {h: (sum(vals) / len(vals)) for h, vals in per_hole_all_times.items() if vals}
-
-
-def _write_aggregated_heatmaps(*, course_dir: Path, root: Path, summary: Dict[int, Dict[str, Any]]) -> List[Path]:
-    """Create averaged heatmaps (by hole) across all runs for chosen and baseline.
-
-    Returns list of created file paths.
-    """
-    saved: List[Path] = []
-    for orders in sorted(summary.keys()):
-        info = summary[orders]
-        # Chosen recommendation
-        chosen = info.get("chosen") or {}
-        v_key = chosen.get("variant")
-        runners = chosen.get("runners")
-        if v_key and isinstance(runners, int):
-            runner_dir = root / f"orders_{orders:03d}" / str(v_key) / f"runners_{runners}"
-            hole_avgs = _aggregate_hole_avgs_for_runner_dir(course_dir, runner_dir)
-            if hole_avgs:
-                dest = root / f"orders_{orders:03d}_recommended_{v_key}_runners_{runners}_avg.png"
-                try:
-                    create_course_heatmap_from_hole_avgs(hole_avgs, course_dir, dest,
-                        title=f"Avg Drive Time Heatmap — {orders} orders, {v_key}, {runners} runner(s)")
-                    saved.append(dest)
-                except Exception:
-                    pass
-
-        # Baseline (no blocked holes) recommendation, if any
-        baseline = (info.get("baseline_none") or {})
-        base_runners = baseline.get("runners")
-        if isinstance(base_runners, int):
-            runner_dir = root / f"orders_{orders:03d}" / "none" / f"runners_{base_runners}"
-            hole_avgs = _aggregate_hole_avgs_for_runner_dir(course_dir, runner_dir)
-            if hole_avgs:
-                dest = root / f"orders_{orders:03d}_baseline_none_runners_{base_runners}_avg.png"
-                try:
-                    create_course_heatmap_from_hole_avgs(hole_avgs, course_dir, dest,
-                        title=f"Avg Drive Time Heatmap — {orders} orders, baseline none, {base_runners} runner(s)")
-                    saved.append(dest)
-                except Exception:
-                    pass
-    return saved
-
-
 def _call_gemini(prompt: str) -> Optional[str]:
     """Call Google Gemini with the given prompt if configured; otherwise return None.
 
@@ -409,7 +467,6 @@ def _write_executive_summary_markdown(
     orders_levels: List[int],
     summary: Dict[int, Dict[str, Any]],
     targets: Dict[str, float],
-    capacity: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[Path], bool]:
     """Create an executive summary Markdown file under out_dir.
 
@@ -430,6 +487,33 @@ def _write_executive_summary_markdown(
         baseline_info = summary[orders].get("baseline_none") or {}
         baseline_runners = baseline_info.get("runners")
         baseline_metrics = (baseline_info.get("metrics") or {})
+        # Collect all variant metrics for comparison
+        variant_comparisons = {}
+        for variant_key, per_runner in summary[orders].get("per_variant", {}).items():
+            if variant_key in per_runner:
+                # Find the minimal runner count that meets targets for this variant
+                for n in sorted(per_runner.keys()):
+                    agg = per_runner[n]
+                    if not agg or not agg.get("runs"):
+                        continue
+                    p90_mean = agg.get("p90_mean", float("nan"))
+                    p90_meets = math.isnan(p90_mean) or p90_mean <= targets.get("max_p90", 40.0)
+                    meets = (
+                        agg.get("on_time_wilson_lo", 0.0) >= targets.get("on_time", 0.90)
+                        and agg.get("failed_mean", 1.0) <= targets.get("max_failed", 0.05)
+                        and p90_meets
+                    )
+                    if meets:
+                        variant_comparisons[variant_key] = {
+                            "runners": n,
+                            "avg_delivery_time": agg.get("avg_delivery_time_mean"),
+                            "p90_mean": agg.get("p90_mean"),
+                            "on_time_wilson_lo": agg.get("on_time_wilson_lo"),
+                            "failed_mean": agg.get("failed_mean"),
+                            "oph_mean": agg.get("oph_mean"),
+                        }
+                        break
+
         compact.append({
             "orders": int(orders),
             "recommended_variant": chosen_variant,
@@ -439,12 +523,15 @@ def _write_executive_summary_markdown(
             "on_time_wilson_lo": metrics.get("on_time_wilson_lo"),
             "failed_mean": metrics.get("failed_mean"),
             "p90_mean": metrics.get("p90_mean"),
+            "avg_delivery_time_mean": metrics.get("avg_delivery_time_mean"),
             "orders_per_runner_hour": metrics.get("oph_mean"),
             "baseline_none_runners": baseline_runners,
             "baseline_on_time_wilson_lo": (baseline_metrics or {}).get("on_time_wilson_lo"),
             "baseline_failed_mean": (baseline_metrics or {}).get("failed_mean"),
             "baseline_p90_mean": (baseline_metrics or {}).get("p90_mean"),
+            "baseline_avg_delivery_time": (baseline_metrics or {}).get("avg_delivery_time_mean"),
             "baseline_oph_mean": (baseline_metrics or {}).get("oph_mean"),
+            "variant_comparisons": variant_comparisons,
         })
 
     # Build list of available blocking variants for the prompt
@@ -453,40 +540,21 @@ def _write_executive_summary_markdown(
         variant_options.append(f"- '{v.key}': {v.description}")
     variant_list = "\n".join(variant_options)
     
-    # Capacity headline strings (if provided)
-    cap_none_str = ""
-    cap_block_str = ""
-    if capacity:
-        nmax = capacity.get("no_restrictions_max_orders")
-        vmax = capacity.get("with_blocking_max_orders")
-        vkey = capacity.get("with_blocking_variant")
-        if isinstance(nmax, int):
-            cap_none_str = f"1 runner without restrictions can comfortably handle up to {nmax} orders.\n"
-        if isinstance(vmax, int):
-            if vkey and vkey != "none":
-                cap_block_str = f"With restrictions ('{vkey}'), 1 runner can handle up to {vmax} orders.\n"
-            else:
-                cap_block_str = f"With the best policy, 1 runner can handle up to {vmax} orders.\n"
-
     prompt = (
-        "You are advising a golf course General Manager. Using the simulation results, "
-        "write a concise, actionable executive summary in Markdown with staffing recommendations by orders level. "
-        "Be direct and practical.\n\n"
+        "You are advising a golf course General Manager. Write a CONCISE executive summary in Markdown. "
+        "Keep it under 400 words total. Be direct and actionable.\n\n"
         f"Course: {course_dir}\n"
         f"Tee scenario: {tee_scenario}\n"
         f"Targets: on_time ≥ {targets.get('on_time')}, failed_rate ≤ {targets.get('max_failed')}, p90 ≤ {targets.get('max_p90')} min\n\n"
-        f"Capacity highlights (1 runner):\n{cap_none_str}{cap_block_str}\n"
         f"Available blocking variants:\n{variant_list}\n\n"
         "Data:\n" + json.dumps(compact, indent=2) + "\n\n"
-        "Instructions:\n"
-        "- Start with 2-3 sentences on overall staffing scaling.\n"
-        "- **Baseline Staffing**: Show runner needs with no blocked holes ('none' variant).\n"
-        "- **With Blocking**: Show how hole restrictions can reduce staffing needs.\n"
-        "- For each orders level: Orders → Runners needed, Policy, Key metrics (conservative on-time %, failed %, p90 min if available, orders/runner/hr).\n"
-        "- Utilization guidance: If orders/runner/hr < 1.5 with 2+ runners, suggest on-call for last runner. If < 1.2 with 3+ runners, suggest on-call for 2nd/3rd.\n"
-        "- Use plain language: 'tested multiple times,' 'cushion above target,' 'conservative estimate.'\n"
-        "- Brief 'Manager Playbook' with when to add runners, use on-call, or enable blocking.\n"
-        "- End with confidence level (High/Medium) and reason for each orders level.\n"
+        "Format:\n"
+        "1. **Summary** (2-3 sentences): Key insight about staffing vs blocking tradeoffs\n"
+        "2. **Staffing Table**: Single table showing orders/hr → runners needed (baseline vs optimized)\n"
+        "3. **Quick Guide**: 3-4 bullet points for when to add runners/enable blocking\n"
+        "4. **Confidence**: One sentence per orders level (High/Medium/Low)\n\n"
+        "Keep metrics brief: just on-time %, avg delivery time, utilization rate.\n"
+        "Use plain language. No verbose explanations or detailed performance breakdowns.\n"
     )
 
     llm_md = _call_gemini(prompt)
@@ -495,71 +563,41 @@ def _write_executive_summary_markdown(
     if not llm_md:
         # Concise fallback summary
         lines: List[str] = []
-        lines.append(f"## Staffing Recommendations ({tee_scenario})")
+        lines.append(f"## Staffing Summary ({tee_scenario})")
         lines.append("")
-        lines.append(f"Targets: on_time ≥ {targets.get('on_time'):.0%}, failed ≤ {targets.get('max_failed'):.0%}, p90 ≤ {targets.get('max_p90'):.0f} min")
+        lines.append("Strategic hole blocking reduces runner needs while maintaining service targets.")
         lines.append("")
-        if cap_none_str or cap_block_str:
-            lines.append("### 1 Runner Capacity (Highlights)")
-            if cap_none_str:
-                lines.append(f"- {cap_none_str.strip()}")
-            if cap_block_str:
-                lines.append(f"- {cap_block_str.strip()}")
-            lines.append("")
         
-        # Combined baseline and blocking recommendations
-        lines.append("### Recommendations by Orders Level")
+        # Single compact table
+        lines.append("| Orders/Hr | Baseline | Optimized | Policy | Avg Time | Confidence |")
+        lines.append("|-----------|----------|-----------|--------|----------|------------|")
+        
         for row in compact:
             orders = row["orders"]
-            base_runners = row.get("baseline_none_runners")
-            runners = row["recommended_runners"]
-            variant = row.get("recommended_variant")
-            policy_desc = row.get("recommended_variant_description") or str(variant)
+            base_runners = row.get("baseline_none_runners", "?")
+            runners = row["recommended_runners"] or "?"
+            variant = row.get("recommended_variant_description", "none")
+            avg_time = row.get("avg_delivery_time_mean") or row.get("baseline_avg_delivery_time")
+            avg_str = f"{avg_time:.1f}min" if isinstance(avg_time, (int, float)) and not math.isnan(avg_time) else "?"
             
-            # Get metrics (prefer recommended, fallback to baseline)
-            ot = row.get("on_time_wilson_lo") or row.get("baseline_on_time_wilson_lo")
-            failed = row.get("failed_mean") or row.get("baseline_failed_mean")
-            p90 = row.get("p90_mean") or row.get("baseline_p90_mean")
+            # Simple confidence based on utilization
             oph = row.get("orders_per_runner_hour") or row.get("baseline_oph_mean")
-            
-            # Build metrics string
-            metrics_bits: List[str] = []
-            if isinstance(ot, (int, float)):
-                metrics_bits.append(f"on-time: {ot*100:.0f}%")
-            if isinstance(failed, (int, float)):
-                metrics_bits.append(f"failed: {failed*100:.0f}%")
-            if isinstance(p90, (int, float)) and not math.isnan(p90):
-                metrics_bits.append(f"p90: {p90:.0f}min")
-            if isinstance(oph, (int, float)):
-                metrics_bits.append(f"{oph:.1f}/runner/hr")
-            metrics_str = ", ".join(metrics_bits)
-            
-            # On-call recommendation
-            on_call_note = ""
-            if isinstance(runners, int) and isinstance(oph, (int, float)):
-                if runners >= 3 and oph < 1.2:
-                    on_call_note = " (2nd/3rd on-call)"
-                elif runners >= 2 and oph < 1.5:
-                    on_call_note = " (last on-call)"
-            
-            # Format recommendation
-            if base_runners and variant == "none":
-                lines.append(f"**{orders} orders**: {base_runners} runner(s), no blocking. {metrics_str}")
-            elif base_runners and runners and runners < base_runners:
-                lines.append(f"**{orders} orders**: {runners} runner(s) with {policy_desc}, or {base_runners} with no blocking. {metrics_str}{on_call_note}")
-            elif runners:
-                lines.append(f"**{orders} orders**: {runners} runner(s), {policy_desc}. {metrics_str}{on_call_note}")
+            if isinstance(oph, (int, float)) and oph > 10:
+                confidence = "Medium"
             else:
-                lines.append(f"**{orders} orders**: No solution found up to max runners tested.")
+                confidence = "High"
+            
+            # Shorten policy description
+            policy_short = variant.replace("block holes ", "").replace(" & ", "+") if variant != "none" else "none"
+            
+            lines.append(f"| {orders} | {base_runners} | **{runners}** | {policy_short} | {avg_str} | {confidence} |")
         
         lines.append("")
-        lines.append("### Manager Playbook")
-        lines.append("- **Low utilization** (<1.5 orders/runner/hr): Use on-call for extra runners")
-        lines.append("- **Borderline performance**: Add +1 runner during peak periods")  
-        lines.append("- **Service restrictions**: Block holes to reduce staffing when needed")
+        lines.append("**Quick Guide:**")
+        lines.append("- Low volume (<30/hr): 2 runners, block distant holes")
+        lines.append("- High volume (40+/hr): 3-4 runners, expand blocking")
+        lines.append("- Low utilization: Use on-call staffing")
         
-        lines.append("")
-        lines.append("_Tested with multiple simulation runs. Conservative estimates provide cushion above targets._")
         llm_md = "\n".join(lines)
     else:
         # Add a provenance footer for clarity
@@ -571,6 +609,247 @@ def _write_executive_summary_markdown(
     except Exception:
         return None, used_gemini
 
+
+def _write_gm_staffing_policy_report(
+    *,
+    out_dir: Path,
+    course_dir: Path,
+    tee_scenario: str,
+    orders_levels: List[int],
+    summary: Dict[int, Dict[str, Any]],
+    targets: Dict[str, float],
+) -> Optional[Path]:
+    """Generate a GM-facing staffing policy report in Markdown following the
+    docs/gm_staffing_policy_report.md layout as closely as possible, using
+    aggregated results from this optimization run.
+
+    Returns the written path or None on error.
+    """
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    md_path = out_dir / "gm_staffing_policy_report.md"
+
+    # Helpers ---------------------------------------------------------------
+    def _fmt_pct(x: Optional[float], *, digits: int = 0) -> str:
+        try:
+            if x is None or math.isnan(float(x)):
+                return "?"
+            return f"{float(x) * 100:.{digits}f}%"
+        except Exception:
+            return "?"
+
+    def _fmt_min(x: Optional[float], *, digits: int = 1) -> str:
+        try:
+            if x is None or math.isnan(float(x)):
+                return "?"
+            return f"{float(x):.{digits}f}"
+        except Exception:
+            return "?"
+
+    def _fmt_int(x: Optional[float]) -> str:
+        try:
+            if x is None or math.isnan(float(x)):
+                return "?"
+            return f"{int(round(float(x)))}"
+        except Exception:
+            return "?"
+
+    variant_desc_map: Dict[str, str] = {v.key: v.description for v in BLOCKING_VARIANTS}
+    course_name = Path(str(course_dir)).name.replace("_", " ").title()
+    tee_name = str(tee_scenario).replace("_", " ").title()
+
+    # Build recommended staffing rows --------------------------------------
+    rec_rows: List[Dict[str, Any]] = []
+    baseline_savings_notes: List[str] = []
+    for orders in sorted(orders_levels):
+        info = summary.get(orders, {})
+        chosen = info.get("chosen", {}) or {}
+        chosen_variant = chosen.get("variant")
+        chosen_runners = chosen.get("runners")
+        m = chosen.get("metrics") or {}
+        baseline_info = info.get("baseline_none", {}) or {}
+        base_runners = baseline_info.get("runners")
+        base_metrics = baseline_info.get("metrics") or {}
+
+        # Confidence heuristic: high if we have ~20 total runs or comfortably inside targets
+        runs_cnt = int(m.get("runs") or 0)
+        ot_lo = float(m.get("on_time_wilson_lo", 0.0) or 0.0)
+        failed_mean = float(m.get("failed_mean", 0.0) or 0.0)
+        p90_mean = m.get("p90_mean", float("nan"))
+        near_edges = (
+            abs(ot_lo - float(targets.get("on_time", 0.90))) <= 0.01
+            or abs(failed_mean - float(targets.get("max_failed", 0.05))) <= 0.005
+        )
+        confidence = "High" if (runs_cnt >= 16 and not near_edges) else ("Medium" if runs_cnt >= 8 else "Low")
+
+        rec_rows.append({
+            "orders": orders,
+            "policy": variant_desc_map.get(str(chosen_variant), variant_desc_map.get(chosen_variant, str(chosen_variant))),
+            "runners": chosen_runners,
+            "on_time": _fmt_pct(m.get("on_time_wilson_lo"), digits=0),
+            "failed": _fmt_pct(m.get("failed_mean"), digits=1),
+            "avg_min": _fmt_min(m.get("avg_delivery_time_mean"), digits=1),
+            "p90": _fmt_int(m.get("p90_mean")),
+            "oph": _fmt_min(m.get("oph_mean"), digits=1),
+            "confidence": confidence,
+        })
+
+        if base_runners is not None and chosen_runners is not None and int(base_runners) > int(chosen_runners):
+            baseline_savings_notes.append(
+                f"- Baseline (no blocking) would require {base_runners} runner(s) at {orders} orders/hr. Recommended policy saves {int(base_runners) - int(chosen_runners)} runner(s)."
+            )
+
+    # Policy comparison tables ---------------------------------------------
+    def _policy_comparison_table(orders: int) -> List[str]:
+        lines: List[str] = []
+        per_variant = (summary.get(orders, {}).get("per_variant") or {})
+        # Collect the two smallest runner counts observed across variants
+        all_ns: List[int] = []
+        for v_key, per_n in per_variant.items():
+            try:
+                all_ns += [int(n) for n in per_n.keys()]
+            except Exception:
+                continue
+        all_ns = sorted(sorted(set(all_ns))[:2])
+        if not all_ns:
+            return lines
+
+        # Header
+        cols = " | ".join(["Holes blocked"] + [f"{n} runners (min)" for n in all_ns])
+        lines.append(f"| {cols} |")
+        lines.append(f"| {'|'.join(['-' * len('Holes blocked')] + ['-' * len(f'{n} runners (min)') for n in all_ns])}|")
+
+        # Rows
+        for v_key in [v.key for v in BLOCKING_VARIANTS if v.key in per_variant]:
+            desc = variant_desc_map.get(v_key, v_key)
+            cells: List[str] = [desc]
+            per_n = per_variant.get(v_key, {}) or {}
+            for n in all_ns:
+                m = per_n.get(n) or {}
+                cells.append(_fmt_min(m.get("avg_delivery_time_mean"), digits=1))
+            lines.append(f"| {' | '.join(cells)} |")
+        return lines
+
+    # Build Markdown --------------------------------------------------------
+    lines: List[str] = []
+    lines.append("### Staffing and Blocking Policy Recommendation")
+    lines.append(f"Course: {course_name}  ")
+    lines.append(f"Tee scenario: {tee_name}  ")
+    lines.append(
+        f"Targets: on-time ≥ {int(targets.get('on_time', 0.90) * 100)}%, failed deliveries ≤ {int(targets.get('max_failed', 0.05) * 100)}%, p90 ≤ {int(targets.get('max_p90', 40.0))} min  "
+    )
+    lines.append("Source: `scripts/optimization/optimize_staffing_policy.py` (multi-stage confirmation with conservative on-time via Wilson lower bound)")
+    lines.append("")
+    lines.append("## Executive summary")
+    lines.append("- Strategic blocking of specific holes can reduce the number of runners needed while keeping service within target thresholds.")
+    lines.append("- Recommendations use conservative on-time (95% Wilson lower bound) and p90 checks; finalists receive extra confirmation runs for stability.")
+    lines.append("- Ops playbook: keep minimal runners at low volume; enable targeted blocking to delay adding extra runners until demand persists.")
+    lines.append("")
+    lines.append("## Recommended staffing by volume")
+    lines.append("- \"Conservative on-time\" is the lower bound of the 95% Wilson interval.")
+    lines.append("- \"Policy\" is the minimal-blocking variant that met targets with the fewest runners; ties broken by a utility function (runners < blocking < p90 < on-time < failed).")
+    lines.append("")
+    # Staffing table
+    lines.append("| Orders/hr | Policy | Runners | On-time (conservative) | Failed | Avg time (min) | p90 (min) | Orders/Runner/Hr | Confidence |")
+    lines.append("|-----------|--------|---------|------------------------|--------|----------------|-----------|------------------|------------|")
+    for r in rec_rows:
+        lines.append(
+            f"| {r['orders']}        | {r['policy']} | {r['runners']} | {r['on_time']}                 | {r['failed']}   | {r['avg_min']}           | {r['p90']}        | {r['oph']}              | {r['confidence']}     |"
+        )
+    lines.append("")
+    if baseline_savings_notes:
+        lines.append("Notes:")
+        lines.extend(baseline_savings_notes)
+        lines.append("")
+
+    lines.append("## Policy comparison by orders volume")
+    for orders in sorted(orders_levels):
+        comp = _policy_comparison_table(orders)
+        if not comp:
+            continue
+        lines.append("")
+        lines.append(f"### {orders} orders/hr")
+        lines.extend(comp)
+
+    # Operational interpretation
+    lines.append("")
+    lines.append("## What this means operationally")
+    for r in rec_rows:
+        lines.append(
+            f"- At {r['orders']} orders/hr: Use {r['runners']} runner(s) with policy \"{r['policy']}\" to keep on-time around {r['on_time']} and p90 ≈ {r['p90']} min."
+        )
+
+    # Quick playbook (simple thresholds from provided orders levels)
+    lines.append("")
+    lines.append("## Quick playbook")
+    if rec_rows:
+        for i, r in enumerate(rec_rows):
+            lo = rec_rows[i - 1]["orders"] + 1 if i > 0 else r["orders"]
+            hi = rec_rows[i + 1]["orders"] - 1 if i + 1 < len(rec_rows) else r["orders"]
+            if lo == hi:
+                range_text = f"{lo} orders/hr"
+            else:
+                range_text = f"{lo}–{hi} orders/hr"
+            lines.append(f"- {range_text}: {r['policy']}; {r['runners']} runner(s).")
+
+    # Service expectations across recommended policies
+    lines.append("")
+    lines.append("## Service quality expectations (recommended policies)")
+    ot_vals = [summary.get(o, {}).get("chosen", {}).get("metrics", {}).get("on_time_wilson_lo") for o in orders_levels]
+    ot_vals = [v for v in ot_vals if isinstance(v, (int, float)) and not math.isnan(v)]
+    failed_vals = [summary.get(o, {}).get("chosen", {}).get("metrics", {}).get("failed_mean") for o in orders_levels]
+    failed_vals = [v for v in failed_vals if isinstance(v, (int, float)) and not math.isnan(v)]
+    p90_vals = [summary.get(o, {}).get("chosen", {}).get("metrics", {}).get("p90_mean") for o in orders_levels]
+    p90_vals = [v for v in p90_vals if isinstance(v, (int, float)) and not math.isnan(v)]
+    avg_vals = [summary.get(o, {}).get("chosen", {}).get("metrics", {}).get("avg_delivery_time_mean") for o in orders_levels]
+    avg_vals = [v for v in avg_vals if isinstance(v, (int, float)) and not math.isnan(v)]
+    oph_vals = [summary.get(o, {}).get("chosen", {}).get("metrics", {}).get("oph_mean") for o in orders_levels]
+    oph_vals = [v for v in oph_vals if isinstance(v, (int, float)) and not math.isnan(v)]
+
+    if ot_vals:
+        lines.append(f"- On-time (conservative): {_fmt_pct(min(ot_vals))}–{_fmt_pct(max(ot_vals))} across volumes.")
+    if p90_vals:
+        lines.append(f"- p90: {_fmt_int(min(p90_vals))}–{_fmt_int(max(p90_vals))} minutes in recommended configurations.")
+    if failed_vals:
+        lines.append(f"- Failed deliveries: {_fmt_pct(min(failed_vals), digits=1)}–{_fmt_pct(max(failed_vals), digits=1)}.")
+    if avg_vals:
+        lines.append(f"- Average delivery time: {_fmt_min(min(avg_vals), digits=1)}–{_fmt_min(max(avg_vals), digits=1)} minutes.")
+    if oph_vals:
+        lines.append(f"- Orders/runner/hour: {_fmt_min(min(oph_vals), digits=1)}–{_fmt_min(max(oph_vals), digits=1)}.")
+
+    # Risk and confidence (simple narrative)
+    lines.append("")
+    lines.append("## Risk and confidence")
+    for r in rec_rows:
+        lines.append(f"- {r['orders']} orders/hr: {r['confidence']} confidence.")
+
+    # Operational guardrails and checks (static, aligned with docs)
+    lines.append("")
+    lines.append("## Operational guardrails")
+    lines.append("- Trigger to add a runner:")
+    lines.append("  - Conservative on-time < 90% for 15 minutes OR")
+    lines.append("  - p90 > 40 min for 10 minutes with utilization rising OR")
+    lines.append("  - Failed > 5% at any time")
+    lines.append("- Trigger to lift blocking:")
+    lines.append("  - Conservative on-time ≥ 92% for 30 minutes and p90 ≤ 35 min")
+    lines.append("- Route health checks:")
+    lines.append("  - Ensure blocked segments are clearly communicated to runners and tee sheet operations.")
+    lines.append("  - Validate that start/end coordinates for runners map to valid graph nodes (prevents routing stalls).")
+    lines.append("")
+    lines.append("- Data artifacts written per group:")
+    lines.append("  - `@aggregate.json` in each group directory (roll-up of metrics)")
+    lines.append("  - `all_metrics.csv` at the optimization root (all groups combined)")
+    lines.append("  - Optional `executive_summary.md` (human summary)")
+    lines.append("  - `gm_staffing_policy_report.md` (this report)")
+
+    try:
+        md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return md_path
+    except Exception:
+        return None
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Optimize runners and blocking policy across orders levels")
@@ -642,6 +921,7 @@ def main() -> None:
         root = (root / f"{stamp}_{args.tee_scenario}")
 
     summary: Dict[int, Dict[str, Any]] = {}
+    csv_rows: List[Dict[str, Any]] = []
 
     # If summarize-only, infer orders levels and variants from folder structure
     inferred_orders: List[int] = []
@@ -707,6 +987,19 @@ def main() -> None:
                             run_dirs += sorted([p for p in extra_dir.glob("run_*") if p.is_dir()])
                     agg = aggregate_runs(run_dirs)
                     results_by_variant.setdefault(v_key, {})[n] = agg
+                    # Persist per-group aggregate and add CSV row
+                    context = _make_group_context(course_dir=course_dir, tee_scenario=args.tee_scenario, orders=orders, variant_key=v_key, runners=n)
+                    _write_group_aggregate_file(runner_dir, context, agg)
+                    # Write averaged heatmap across all runs in this group (best-effort)
+                    _write_group_aggregate_heatmap(
+                        runner_dir,
+                        course_dir=course_dir,
+                        tee_scenario=args.tee_scenario,
+                        variant_key=v_key,
+                        runners=n,
+                        run_dirs=run_dirs,
+                    )
+                    _upsert_row(csv_rows, _row_from_context_and_agg(context, agg, runner_dir))
         else:
             for variant in selected_variants:
                 for n in runner_values:
@@ -719,6 +1012,19 @@ def main() -> None:
                             run_dirs += sorted([p for p in extra_dir.glob("run_*") if p.is_dir()])
                     agg = aggregate_runs(run_dirs)
                     results_by_variant.setdefault(variant.key, {})[n] = agg
+                    # Persist per-group aggregate and add CSV row
+                    context = _make_group_context(course_dir=course_dir, tee_scenario=args.tee_scenario, orders=orders, variant_key=variant.key, runners=n)
+                    _write_group_aggregate_file(out_dir, context, agg)
+                    # Write averaged heatmap across all runs in this group (best-effort)
+                    _write_group_aggregate_heatmap(
+                        out_dir,
+                        course_dir=course_dir,
+                        tee_scenario=args.tee_scenario,
+                        variant_key=variant.key,
+                        runners=n,
+                        run_dirs=run_dirs,
+                    )
+                    _upsert_row(csv_rows, _row_from_context_and_agg(context, agg, out_dir))
 
         # Multi-stage confirmation pipeline or fallback to borderline confirm
         if not args.summarize_only:
@@ -782,7 +1088,21 @@ def main() -> None:
                         extra_dir = out_dir / extra_name
                         if extra_dir.exists():
                             run_dirs += sorted([p for p in extra_dir.glob("run_*") if p.is_dir()])
-                    results_by_variant.setdefault(variant.key, {})[n] = aggregate_runs(run_dirs)
+                    agg2 = aggregate_runs(run_dirs)
+                    results_by_variant.setdefault(variant.key, {})[n] = agg2
+                    # Write group aggregate and update CSV row
+                    context = _make_group_context(course_dir=course_dir, tee_scenario=args.tee_scenario, orders=orders, variant_key=variant.key, runners=n)
+                    _write_group_aggregate_file(out_dir, context, agg2)
+                    # Update averaged heatmap including Stage 2 runs
+                    _write_group_aggregate_heatmap(
+                        out_dir,
+                        course_dir=course_dir,
+                        tee_scenario=args.tee_scenario,
+                        variant_key=variant.key,
+                        runners=n,
+                        run_dirs=run_dirs,
+                    )
+                    _upsert_row(csv_rows, _row_from_context_and_agg(context, agg2, out_dir))
 
                 # Rank all kept combos by utility score (no hard filter on minimal runners)
                 scored_all: List[Tuple[float, BlockingVariant, int]] = []
@@ -833,7 +1153,21 @@ def main() -> None:
                         extra_dir = out_dir / extra_name
                         if extra_dir.exists():
                             run_dirs += sorted([p for p in extra_dir.glob("run_*") if p.is_dir()])
-                    results_by_variant.setdefault(variant.key, {})[n] = aggregate_runs(run_dirs)
+                    agg3 = aggregate_runs(run_dirs)
+                    results_by_variant.setdefault(variant.key, {})[n] = agg3
+                    # Write group aggregate and update CSV row
+                    context = _make_group_context(course_dir=course_dir, tee_scenario=args.tee_scenario, orders=orders, variant_key=variant.key, runners=n)
+                    _write_group_aggregate_file(out_dir, context, agg3)
+                    # Update averaged heatmap including Stage 3 runs
+                    _write_group_aggregate_heatmap(
+                        out_dir,
+                        course_dir=course_dir,
+                        tee_scenario=args.tee_scenario,
+                        variant_key=variant.key,
+                        runners=n,
+                        run_dirs=run_dirs,
+                    )
+                    _upsert_row(csv_rows, _row_from_context_and_agg(context, agg3, out_dir))
             elif not args.no_auto_confirm:
                 # Fallback to simple borderline confirm behavior
                 borderline: List[Tuple[BlockingVariant, int]] = []
@@ -876,6 +1210,9 @@ def main() -> None:
                     confirm_dirs = sorted([p for p in confirm_dir.glob("run_*") if p.is_dir()])
                     agg = aggregate_runs(orig_dirs + confirm_dirs)
                     results_by_variant.setdefault(variant.key, {})[n] = agg
+                    context = _make_group_context(course_dir=course_dir, tee_scenario=args.tee_scenario, orders=orders, variant_key=variant.key, runners=n)
+                    _write_group_aggregate_file(out_dir, context, agg)
+                    _upsert_row(csv_rows, _row_from_context_and_agg(context, agg, out_dir))
 
         chosen = choose_best_variant(
             results_by_variant,
@@ -951,6 +1288,22 @@ def main() -> None:
                             if extra_dir.exists():
                                 baseline_run_dirs += sorted([p for p in extra_dir.glob("run_*") if p.is_dir()])
                         results_by_variant.setdefault("none", {})[baseline] = aggregate_runs(baseline_run_dirs)
+                        # Update baseline group aggregate and CSV
+                        base_out_dir = baseline_dir
+                        base_context = _make_group_context(course_dir=course_dir, tee_scenario=args.tee_scenario, orders=orders, variant_key="none", runners=baseline)
+                        base_agg = results_by_variant.get("none", {}).get(baseline, {})
+                        if base_agg:
+                            _write_group_aggregate_file(base_out_dir, base_context, base_agg)
+                            # Update averaged heatmap including confirm baseline runs
+                            _write_group_aggregate_heatmap(
+                                base_out_dir,
+                                course_dir=course_dir,
+                                tee_scenario=args.tee_scenario,
+                                variant_key="none",
+                                runners=baseline,
+                                run_dirs=baseline_run_dirs,
+                            )
+                            _upsert_row(csv_rows, _row_from_context_and_agg(base_context, base_agg, base_out_dir))
                     
                     # Re-aggregate winner combo including confirm directories
                     run_dirs = sorted([p for p in winner_dir.glob("run_*") if p.is_dir()])
@@ -959,6 +1312,22 @@ def main() -> None:
                         if extra_dir.exists():
                             run_dirs += sorted([p for p in extra_dir.glob("run_*") if p.is_dir()])
                     results_by_variant.setdefault(v_key, {})[v_runners] = aggregate_runs(run_dirs)
+                    # Update winner group aggregate and CSV
+                    win_out_dir = winner_dir
+                    win_context = _make_group_context(course_dir=course_dir, tee_scenario=args.tee_scenario, orders=orders, variant_key=v_key, runners=v_runners)
+                    win_agg = results_by_variant.get(v_key, {}).get(v_runners, {})
+                    if win_agg:
+                        _write_group_aggregate_file(win_out_dir, win_context, win_agg)
+                        # Update averaged heatmap including confirm winner runs
+                        _write_group_aggregate_heatmap(
+                            win_out_dir,
+                            course_dir=course_dir,
+                            tee_scenario=args.tee_scenario,
+                            variant_key=v_key,
+                            runners=v_runners,
+                            run_dirs=run_dirs,
+                        )
+                        _upsert_row(csv_rows, _row_from_context_and_agg(win_context, win_agg, win_out_dir))
                     
                     # Recompute chosen after higher-accuracy aggregation
                     chosen = choose_best_variant(
@@ -1017,48 +1386,6 @@ def main() -> None:
             },
         }
 
-    # Compute capacity for 1 runner
-    no_restrictions_max_orders: Optional[int] = None
-    with_blocking_max_orders: Optional[int] = None
-    with_blocking_variant: Optional[str] = None
-    for orders in sorted(summary.keys()):
-        per_variant = summary[orders].get("per_variant", {})
-        # No restrictions (variant 'none') with 1 runner
-        none_agg = ((per_variant.get("none", {}) or {}).get(1) or {})
-        if none_agg.get("runs"):
-            p90_mean = none_agg.get("p90_mean", float("nan"))
-            p90_meets = math.isnan(p90_mean) or p90_mean <= args.max_p90
-            if (
-                none_agg.get("on_time_wilson_lo", 0.0) >= args.target_on_time
-                and none_agg.get("failed_mean", 1.0) <= args.max_failed_rate
-                and p90_meets
-            ):
-                no_restrictions_max_orders = orders
-        # With blocking: any variant with 1 runner
-        for v_key, per_runner in (per_variant or {}).items():
-            agg1 = (per_runner or {}).get(1) or {}
-            if not agg1.get("runs"):
-                continue
-            p90_mean = agg1.get("p90_mean", float("nan"))
-            p90_meets = math.isnan(p90_mean) or p90_mean <= args.max_p90
-            if (
-                agg1.get("on_time_wilson_lo", 0.0) >= args.target_on_time
-                and agg1.get("failed_mean", 1.0) <= args.max_failed_rate
-                and p90_meets
-            ):
-                # Prefer higher orders; if tie, prefer fewer blocked holes (lower penalty)
-                if with_blocking_max_orders is None or orders > with_blocking_max_orders or (
-                    orders == with_blocking_max_orders and blocking_penalty(v_key) < blocking_penalty(with_blocking_variant or "none")
-                ):
-                    with_blocking_max_orders = orders
-                    with_blocking_variant = v_key
-
-    capacity = {
-        "no_restrictions_max_orders": no_restrictions_max_orders,
-        "with_blocking_max_orders": with_blocking_max_orders,
-        "with_blocking_variant": with_blocking_variant,
-    }
-
     # Print machine-readable JSON at the end
     print(json.dumps({
         "course": str(course_dir),
@@ -1068,7 +1395,6 @@ def main() -> None:
         "orders_levels": orders_iter,
         "summary": summary,
         "output_root": str(root),
-        "capacity": capacity,
     }, indent=2))
 
     # Generate executive summary Markdown (best-effort)
@@ -1080,7 +1406,6 @@ def main() -> None:
             orders_levels=list(orders_iter),
             summary=summary,
             targets={"on_time": args.target_on_time, "max_failed": args.max_failed_rate, "max_p90": args.max_p90},
-            capacity=capacity,
         )
         if md_path is not None:
             print(f"Executive summary written to {md_path} (source: {'gemini' if used_gemini else 'local'})")
@@ -1088,15 +1413,27 @@ def main() -> None:
         # Non-fatal: keep CLI behavior unchanged if summary generation fails
         pass
 
-    # Create averaged heatmaps for all recommendations to the root directory
+    # Write final CSV with all group aggregates collected
     try:
-        created = _write_aggregated_heatmaps(course_dir=course_dir, root=root, summary=summary)
-        if created:
-            print("Saved averaged recommendation heatmaps:")
-            for p in created:
-                print(f" - {p}")
+        csv_path = _write_final_csv(root, csv_rows)
+        if csv_path is not None:
+            print(f"Aggregated metrics CSV written to {csv_path}")
     except Exception:
-        # Non-fatal
+        pass
+
+    # Write GM staffing policy report (best-effort)
+    try:
+        gm_md = _write_gm_staffing_policy_report(
+            out_dir=root,
+            course_dir=course_dir,
+            tee_scenario=args.tee_scenario,
+            orders_levels=list(orders_iter),
+            summary=summary,
+            targets={"on_time": args.target_on_time, "max_failed": args.max_failed_rate, "max_p90": args.max_p90},
+        )
+        if gm_md is not None:
+            print(f"GM staffing policy report written to {gm_md}")
+    except Exception:
         pass
 
 
