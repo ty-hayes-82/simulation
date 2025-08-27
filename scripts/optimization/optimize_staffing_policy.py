@@ -225,12 +225,39 @@ def _write_group_aggregate_heatmap(
                 data = json.loads(rp.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            orders = data.get("orders") or []
-            stats = data.get("delivery_stats") or []
-            if isinstance(orders, list):
-                combined["orders"].extend(orders)
-            if isinstance(stats, list):
-                combined["delivery_stats"].extend(stats)
+
+            # To avoid cross-run collisions where order_ids typically restart at 1
+            # for every run, we rewrite order_id values with a run-specific suffix
+            # for both orders and delivery_stats before concatenation.
+            run_tag = rd.name  # e.g., "run_01"
+
+            raw_orders = data.get("orders") or []
+            raw_stats = data.get("delivery_stats") or []
+
+            if isinstance(raw_orders, list):
+                rewritten_orders: List[Dict[str, Any]] = []
+                for idx, o in enumerate(raw_orders):
+                    try:
+                        oi = o.copy()
+                        base_id = oi.get("order_id", f"order_{idx}")
+                        oi["order_id"] = f"{base_id}@{run_tag}"
+                        rewritten_orders.append(oi)
+                    except Exception:
+                        # Best-effort: skip malformed entry
+                        continue
+                combined["orders"].extend(rewritten_orders)
+
+            if isinstance(raw_stats, list):
+                rewritten_stats: List[Dict[str, Any]] = []
+                for idx, s in enumerate(raw_stats):
+                    try:
+                        si = s.copy()
+                        base_id = si.get("order_id", f"order_{idx}")
+                        si["order_id"] = f"{base_id}@{run_tag}"
+                        rewritten_stats.append(si)
+                    except Exception:
+                        continue
+                combined["delivery_stats"].extend(rewritten_stats)
 
         # If no orders found across runs, skip
         if not combined["orders"]:

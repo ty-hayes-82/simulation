@@ -1,11 +1,1681 @@
 {
   "simulations": [
     {
-      "id": "coordinates",
-      "name": "Simulation",
-      "filename": "coordinates.csv",
-      "description": "Delivery runner simulation (4 runners)"
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_confirm_winner_run_01_coordinates",
+      "name": "Other Simulations: confirm_winner | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_confirm_winner_run_01_coordinates.csv",
+      "description": "17,736 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:22:32.928330",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_confirm_winner_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_confirm_winner_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_confirm_winner_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_run_01_coordinates.csv",
+      "description": "17,630 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:34.756859",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage2_run_01_coordinates",
+      "name": "Other Simulations: stage2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage2_run_01_coordinates.csv",
+      "description": "17,622 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:20:59.068895",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage3_finalists_run_01_coordinates",
+      "name": "Other Simulations: stage3_finalists | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage3_finalists_run_01_coordinates.csv",
+      "description": "17,633 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:21:48.062292",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage3_finalists_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage3_finalists_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_1_stage3_finalists_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_2_run_01_coordinates.csv",
+      "description": "17,749 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:34.719481",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_3_run_01_coordinates.csv",
+      "description": "17,522 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:34.721485",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_back_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_1_run_01_coordinates.csv",
+      "description": "17,437 coordinate points",
+      "variantKey": "front_back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:46.503022",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_2_run_01_coordinates.csv",
+      "description": "17,620 coordinate points",
+      "variantKey": "front_back",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:58.276416",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_3_run_01_coordinates.csv",
+      "description": "17,708 coordinate points",
+      "variantKey": "front_back",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:58.137796",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_back_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_1_run_01_coordinates.csv",
+      "description": "17,200 coordinate points",
+      "variantKey": "front_mid_back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:20:09.267661",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_2_run_01_coordinates.csv",
+      "description": "17,425 coordinate points",
+      "variantKey": "front_mid_back",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:20:09.267661",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_3_run_01_coordinates.csv",
+      "description": "17,431 coordinate points",
+      "variantKey": "front_mid_back",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:20:09.809635",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_back_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_1_run_01_coordinates.csv",
+      "description": "17,436 coordinate points",
+      "variantKey": "front_mid",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:46.369723",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_2_run_01_coordinates.csv",
+      "description": "17,485 coordinate points",
+      "variantKey": "front_mid",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:46.310138",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_3_run_01_coordinates.csv",
+      "description": "17,578 coordinate points",
+      "variantKey": "front_mid",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:46.650024",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_mid_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_1_run_01_coordinates.csv",
+      "description": "17,631 coordinate points",
+      "variantKey": "front",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:12.677496",
+        "blockedHoles": [
+          1,
+          2,
+          3
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_2_run_01_coordinates.csv",
+      "description": "17,660 coordinate points",
+      "variantKey": "front",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:22.409452",
+        "blockedHoles": [
+          1,
+          2,
+          3
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_3_run_01_coordinates.csv",
+      "description": "17,637 coordinate points",
+      "variantKey": "front",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:22.610921",
+        "blockedHoles": [
+          1,
+          2,
+          3
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_front_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_run_01_coordinates.csv",
+      "description": "17,707 coordinate points",
+      "variantKey": "mid_back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:58.434317",
+        "blockedHoles": [
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage2_run_01_coordinates",
+      "name": "Other Simulations: stage2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage2_run_01_coordinates.csv",
+      "description": "17,478 coordinate points",
+      "variantKey": "mid_back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:20:58.971073",
+        "blockedHoles": [
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage3_finalists_run_01_coordinates",
+      "name": "Other Simulations: stage3_finalists | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage3_finalists_run_01_coordinates.csv",
+      "description": "17,503 coordinate points",
+      "variantKey": "mid_back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:21:47.974842",
+        "blockedHoles": [
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage3_finalists_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage3_finalists_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_1_stage3_finalists_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_2_run_01_coordinates.csv",
+      "description": "17,461 coordinate points",
+      "variantKey": "mid_back",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:58.612047",
+        "blockedHoles": [
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_3_run_01_coordinates.csv",
+      "description": "17,481 coordinate points",
+      "variantKey": "mid_back",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:20:09.249660",
+        "blockedHoles": [
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_back_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_run_01_coordinates.csv",
+      "description": "17,495 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:22.493189",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage2_run_01_coordinates",
+      "name": "Other Simulations: stage2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage2_run_01_coordinates.csv",
+      "description": "17,534 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:20:59.046747",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage3_finalists_run_01_coordinates",
+      "name": "Other Simulations: stage3_finalists | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage3_finalists_run_01_coordinates.csv",
+      "description": "17,755 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:21:48.239001",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage3_finalists_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage3_finalists_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_1_stage3_finalists_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_2_run_01_coordinates.csv",
+      "description": "17,597 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:22.929838",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_3_run_01_coordinates.csv",
+      "description": "17,714 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:34.660217",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_mid_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_1_run_01_coordinates.csv",
+      "description": "17,618 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:12.779470",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_2_run_01_coordinates.csv",
+      "description": "17,683 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:12.829987",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_confirm_baseline_run_01_coordinates",
+      "name": "Other Simulations: confirm_baseline | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_confirm_baseline_run_01_coordinates.csv",
+      "description": "17,615 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:23:03.299204",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_confirm_baseline_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_confirm_baseline_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_confirm_baseline_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_run_01_coordinates.csv",
+      "description": "17,662 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:19:12.716997",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_020_none_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_1_run_01_coordinates.csv",
+      "description": "17,747 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:40.326900",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_2_run_01_coordinates.csv",
+      "description": "18,495 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:40.464542",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_3_run_01_coordinates.csv",
+      "description": "18,684 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:41.885485",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_back_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_1_run_01_coordinates.csv",
+      "description": "17,562 coordinate points",
+      "variantKey": "front_back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:25:00.745855",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_2_run_01_coordinates.csv",
+      "description": "18,415 coordinate points",
+      "variantKey": "front_back",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:25:14.526946",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_3_run_01_coordinates.csv",
+      "description": "18,341 coordinate points",
+      "variantKey": "front_back",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:25:15.207652",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_back_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_1_run_01_coordinates.csv",
+      "description": "17,396 coordinate points",
+      "variantKey": "front_mid_back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:25:30.173129",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_2_run_01_coordinates.csv",
+      "description": "17,989 coordinate points",
+      "variantKey": "front_mid_back",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:25:30.433355",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_3_run_01_coordinates.csv",
+      "description": "17,841 coordinate points",
+      "variantKey": "front_mid_back",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:25:31.487207",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_back_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_1_run_01_coordinates.csv",
+      "description": "17,697 coordinate points",
+      "variantKey": "front_mid",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:59.380793",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_2_run_01_coordinates.csv",
+      "description": "18,001 coordinate points",
+      "variantKey": "front_mid",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:59.635318",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_3_run_01_coordinates.csv",
+      "description": "18,359 coordinate points",
+      "variantKey": "front_mid",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:59.944167",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_mid_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_1_run_01_coordinates.csv",
+      "description": "17,692 coordinate points",
+      "variantKey": "front",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:23:55.832034",
+        "blockedHoles": [
+          1,
+          2,
+          3
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_2_run_01_coordinates.csv",
+      "description": "18,619 coordinate points",
+      "variantKey": "front",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:20.853934",
+        "blockedHoles": [
+          1,
+          2,
+          3
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_3_run_01_coordinates.csv",
+      "description": "18,656 coordinate points",
+      "variantKey": "front",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:19.899421",
+        "blockedHoles": [
+          1,
+          2,
+          3
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_front_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_1_run_01_coordinates.csv",
+      "description": "17,598 coordinate points",
+      "variantKey": "mid_back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:25:15.472686",
+        "blockedHoles": [
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_2_run_01_coordinates.csv",
+      "description": "18,019 coordinate points",
+      "variantKey": "mid_back",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:25:16.325641",
+        "blockedHoles": [
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_3_run_01_coordinates.csv",
+      "description": "18,273 coordinate points",
+      "variantKey": "mid_back",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:25:29.910228",
+        "blockedHoles": [
+          4,
+          5,
+          6,
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_back_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_1_run_01_coordinates.csv",
+      "description": "17,717 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:21.199056",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_2_run_01_coordinates.csv",
+      "description": "18,564 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:21.964593",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_3_run_01_coordinates.csv",
+      "description": "18,569 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:24:39.934656",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_mid_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_1_run_01_coordinates",
+      "name": "Other Simulations: runners_1 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_1_run_01_coordinates.csv",
+      "description": "17,745 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:23:56.028497",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_1_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_1_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_1_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_confirm_winner_run_01_coordinates",
+      "name": "Other Simulations: confirm_winner | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_confirm_winner_run_01_coordinates.csv",
+      "description": "18,476 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:26:13.634967",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_confirm_winner_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_confirm_winner_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_confirm_winner_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_run_01_coordinates",
+      "name": "Other Simulations: runners_2 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_run_01_coordinates.csv",
+      "description": "18,730 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:23:57.100952",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_2_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_3_run_01_coordinates",
+      "name": "Other Simulations: runners_3 | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_3_run_01_coordinates.csv",
+      "description": "18,398 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 3,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 40,
+        "lastModified": "2025-08-27T06:23:56.780133",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_3_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_3_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_061905_real_tee_sheet_orders_040_none_runners_3_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_1_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_1_first_pass_run_01_coordinates.csv",
+      "description": "17,729 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:43.820538",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_1_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_1_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_1_first_pass_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_2_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_2_first_pass_run_01_coordinates.csv",
+      "description": "17,706 coordinate points",
+      "variantKey": "back",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:42.162811",
+        "blockedHoles": [
+          10,
+          11,
+          12
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_2_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_2_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_back_runners_2_first_pass_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_1_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_1_first_pass_run_01_coordinates.csv",
+      "description": "17,597 coordinate points",
+      "variantKey": "front_mid",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:43.900741",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_1_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_1_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_1_first_pass_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_2_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_2_first_pass_run_01_coordinates.csv",
+      "description": "17,483 coordinate points",
+      "variantKey": "front_mid",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:41.700916",
+        "blockedHoles": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_2_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_2_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_front_mid_runners_2_first_pass_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_1_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_1_first_pass_run_01_coordinates.csv",
+      "description": "17,749 coordinate points",
+      "variantKey": "front",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:44.140974",
+        "blockedHoles": [
+          1,
+          2,
+          3
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_1_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_1_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_1_first_pass_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_2_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_2_first_pass_run_01_coordinates.csv",
+      "description": "17,599 coordinate points",
+      "variantKey": "front",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:42.273207",
+        "blockedHoles": [
+          1,
+          2,
+          3
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_2_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_2_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_2_first_pass_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_1_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_1_first_pass_run_01_coordinates.csv",
+      "description": "17,425 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:43.439973",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_1_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_1_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_1_first_pass_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_2_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_2_first_pass_run_01_coordinates.csv",
+      "description": "17,543 coordinate points",
+      "variantKey": "mid",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:42.146808",
+        "blockedHoles": [
+          4,
+          5,
+          6
+        ]
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_2_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_2_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_mid_runners_2_first_pass_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_1_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_1_first_pass_run_01_coordinates.csv",
+      "description": "17,653 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 1,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:43.387321",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_1_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_1_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_1_first_pass_run_01_coordinates.geojson"
+    },
+    {
+      "id": "policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_2_first_pass_run_01_coordinates",
+      "name": "Other Simulations: first_pass | RUN_01 | GPS Coordinates",
+      "filename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_2_first_pass_run_01_coordinates.csv",
+      "description": "17,761 coordinate points",
+      "variantKey": "none",
+      "meta": {
+        "runners": 2,
+        "bevCarts": 0,
+        "golfers": 0,
+        "orders": 20,
+        "lastModified": "2025-08-27T06:49:42.193812",
+        "blockedHoles": []
+      },
+      "courseId": "pinetree_country_club",
+      "courseName": "Pinetree Country Club",
+      "heatmapFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_2_first_pass_run_01_coordinates_delivery_heatmap.png",
+      "metricsFilename": "policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_2_first_pass_run_01_coordinates_metrics.json",
+      "holeDeliveryGeojson": "hole_delivery_times_policy_opt_20250827_064924_real_tee_sheet_orders_020_none_runners_2_first_pass_run_01_coordinates.geojson"
     }
   ],
-  "defaultSimulation": "coordinates"
+  "defaultSimulation": "policy_opt_20250827_064924_real_tee_sheet_orders_020_front_runners_1_first_pass_run_01_coordinates",
+  "courses": [
+    {
+      "id": "pinetree_country_club",
+      "name": "Pinetree Country Club"
+    }
+  ]
 }

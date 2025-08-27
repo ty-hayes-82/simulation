@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 from datetime import datetime
+import socket
 try:
     # Make stdout UTF-8 capable on Windows PowerShell to avoid emoji crash
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[attr-defined]
@@ -32,6 +33,8 @@ PROJECT_ROOT = (SCRIPT_DIR / "..").resolve()
 
 # Configuration - Copy to my-map-animation/public only
 PUBLIC_DIRS = [str(SCRIPT_DIR / "public")]
+# Setup app public directory (for required lightweight assets only)
+SETUP_PUBLIC_DIR = PROJECT_ROOT / "my-map-setup" / "public"
 COORDINATES_DIR = "coordinates"
 LOCAL_CSV_FILE = str(SCRIPT_DIR / "public" / "coordinates.csv")
 
@@ -584,7 +587,7 @@ def _select_representative_runs(all_items: List[Tuple[str, str, str]]) -> Dict[s
     return selected
 
 
-def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, str]]], preferred_default_id: Optional[str] = None) -> bool:
+def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, str]]], preferred_default_id: Optional[str] = None) -> Tuple[bool, List[str]]:
     """
     Copy all coordinate files to both public directories and create hierarchical manifests.
     
@@ -592,7 +595,7 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
         all_simulations: Dict with simulation groups and their files
         
     Returns:
-        True if successful, False otherwise
+        A tuple of (success_boolean, discovered_course_ids)
     """
     try:
         # Create coordinates directories in both locations
@@ -626,7 +629,7 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                     shutil.rmtree(coordinates_dir)
                 except Exception as e:
                     print(f"Error clearing coordinates directory {coordinates_dir}: {e}")
-                    return False
+                    return False, []
 
             os.makedirs(coordinates_dir, exist_ok=True)
         
@@ -716,7 +719,7 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                             name = parent.name.lower()
                             if "delivery_runner_" in name and "_runners_" in name:
                                 # Extract runner count from pattern like _X_runners_
-                                import re
+                                # use top-level 're' to avoid local shadowing causing 'referenced before assignment'
                                 match = re.search(r'_(\d+)_runners_', name)
                                 if match:
                                     try:
@@ -941,7 +944,7 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
                     manifest["simulations"].append(entry)
                     print(f"✅ {display_name} ({source_size//1024:,} KB) - copied to all locations")
                 else:
-                    return False
+                    return False, []
         
         # Set default simulation
         if manifest["simulations"]:
@@ -1007,11 +1010,12 @@ def copy_all_coordinate_files(all_simulations: Dict[str, List[Tuple[str, str, st
         
         print(f"\n✅ Successfully copied {copied_count} simulations ({total_size//1024:,} KB total)")
         
-        return True
+        # Return success state and the list of discovered course IDs
+        return True, list(discovered_courses.keys())
         
     except Exception as e:
         print(f"❌ Error copying files: {e}")
-        return False
+        return False, []
 
 def get_file_info(file_path: str) -> str:
     """Get information about the coordinate file."""
@@ -1133,27 +1137,156 @@ def copy_hole_delivery_geojson(coordinates_dirs: List[str]) -> None:
             except Exception as e:
                 print(f"⚠️  Warning: Could not copy hole_delivery_times.geojson to {public_dir}: {e}")
 
-def run_react_app() -> bool:
+def ensure_setup_required_assets(course_ids: list[str]) -> None:
+    """Ensure the Setup app has the minimal required geojson assets for each course."""
+    try:
+        # Source base directory for course assets
+        courses_base_dir = PROJECT_ROOT / "courses"
+        
+        # Target base directory in the setup app
+        target_base_dir = SETUP_PUBLIC_DIR
+        target_base_dir.mkdir(exist_ok=True)
+        
+        for course_id in course_ids:
+            course_src_dir = courses_base_dir / course_id
+            course_target_dir = target_base_dir / course_id
+            course_target_dir.mkdir(exist_ok=True)
+
+            assets_to_copy = {
+                "holes_connected.geojson": f"geojson{os.sep}holes_connected.geojson",
+                "course_polygon.geojson": f"geojson{os.sep}course_polygon.geojson",
+                "holes_geofenced.geojson": f"geojson{os.sep}generated{os.sep}holes_geofenced.geojson"
+            }
+            
+            for target_name, source_subpath in assets_to_copy.items():
+                source_path = course_src_dir / source_subpath
+                target_path = course_target_dir / target_name
+                
+                if not source_path.exists():
+                    # Fallback for holes_connected which may not be in the canonical courses folder
+                    if target_name == "holes_connected.geojson":
+                        fallback_dir = SCRIPT_DIR / "public" / course_id
+                        if fallback_dir.exists():
+                           source_path = fallback_dir / target_name
+                    if not source_path.exists():
+                        print(f"⚠️  Asset not found for course '{course_id}': {source_subpath}")
+                        continue
+                
+                try:
+                    # Copy if target doesn't exist or is older than source
+                    if not target_path.exists() or source_path.stat().st_mtime > target_path.stat().st_mtime:
+                        shutil.copy2(str(source_path), str(target_path))
+                        print(f"🧩 Copied/updated asset for '{course_id}': {target_name}")
+                except Exception as e:
+                    print(f"⚠️  Warning: Could not copy {source_path} to {target_path}: {e}")
+
+    except Exception as e:
+        print(f"⚠️  Warning: ensure_setup_required_assets failed: {e}")
+
+def _is_port_in_use(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.3)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+    except Exception:
+        return False
+
+def _find_available_port(preferred_port: int, avoid_ports: Optional[set[int]] = None, max_tries: int = 5) -> int:
+    avoid = avoid_ports or set()
+    port = preferred_port
+    tries = 0
+    while tries < max_tries and (port in avoid or _is_port_in_use(port)):
+        port += 1
+        tries += 1
+    return port
+
+def run_react_app(setup_only: bool = False) -> bool:
     """
-    Start the React development server.
+    Start the React development server(s).
+    
+    Args:
+        setup_only: If True, only start the setup app. If False, start both apps.
     
     Returns:
-        True if app started successfully, False otherwise
+        True if app(s) started successfully, False otherwise
     """
     try:
-        print("\n🚀 Starting React map animation app...")
-        print("📍 The app will open in your default browser")
-        print("🔄 Use Ctrl+C to stop the server when done")
-        print("-" * 60)
-        
-        # Start the React app
-        result = subprocess.run(
-            ["npm", "start"],
-            cwd=str(SCRIPT_DIR),
-            shell=True
-        )
-        
-        return result.returncode == 0
+        if setup_only:
+            print("\n🚀 Starting React setup app...")
+            print("📍 Setup app will open at http://localhost:3001")
+            print("🔄 Use Ctrl+C to stop the server when done")
+            print("-" * 60)
+            
+            # Start only the setup app
+            setup_dir = SCRIPT_DIR.parent / "my-map-setup"
+            env = os.environ.copy()
+            # Pin Setup app to port 3001 to keep UX consistent
+            env["PORT"] = "3001"
+            result = subprocess.run(
+                ["npm", "start"],
+                cwd=str(setup_dir),
+                shell=True,
+                env=env,
+            )
+            return result.returncode == 0
+        else:
+            print("\n🚀 Starting both React apps...")
+            # Resolve animation app port automatically if 3000 is busy
+            animation_port = _find_available_port(3000, avoid_ports={3001})
+            print(f"📍 Animation app will open at http://localhost:{animation_port}")
+            print("📍 Setup app will open at http://localhost:3001")
+            print("🔄 Use Ctrl+C to stop both servers when done")
+            print("-" * 60)
+            
+            import threading
+            import time
+            
+            # Function to run a single app
+            def run_single_app(app_dir: str, app_name: str, env: Optional[Dict[str, str]] = None):
+                try:
+                    print(f"Starting {app_name}...")
+                    subprocess.run(
+                        ["npm", "start"],
+                        cwd=app_dir,
+                        shell=True,
+                        env=env,
+                    )
+                except Exception as e:
+                    print(f"❌ Error starting {app_name}: {e}")
+            
+            # Prepare envs
+            animation_env = os.environ.copy()
+            animation_env["PORT"] = str(animation_port)
+            setup_env = os.environ.copy()
+            setup_env["PORT"] = "3001"
+
+            # Start animation app in a thread
+            animation_thread = threading.Thread(
+                target=run_single_app,
+                args=[str(SCRIPT_DIR), "Animation App", animation_env],
+                daemon=True
+            )
+            animation_thread.start()
+            
+            # Wait a moment before starting the second app
+            time.sleep(2)
+            
+            # Start setup app in a thread
+            setup_dir = SCRIPT_DIR.parent / "my-map-setup"
+            setup_thread = threading.Thread(
+                target=run_single_app,
+                args=[str(setup_dir), "Setup App", setup_env],
+                daemon=True
+            )
+            setup_thread.start()
+            
+            # Keep main thread alive
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n⏹️  Both apps stopped by user")
+                return True
         
     except KeyboardInterrupt:
         print("\n⏹️  App stopped by user")
@@ -1169,6 +1302,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Prepare map app coordinates and manifest")
     parser.add_argument("--default-id", dest="default_id", default=None, help="Preferred default simulation id (manifest id)")
+    parser.add_argument("--setup-only", action="store_true", help="Only start the setup app (shortcuts)")
+    parser.add_argument("--both-apps", action="store_true", help="Start both animation and setup apps")
     args = parser.parse_args()
 
     print("🔍 Scanning for simulation coordinate files...")
@@ -1188,14 +1323,27 @@ def main():
         
         print(f"\n📂 Copying simulations to React app...")
         
-        # Copy coordinate files
-        if not copy_all_coordinate_files(all_simulations, preferred_default_id=args.default_id):
+        # Copy coordinate files and get the list of discovered courses
+        ok, courses = copy_all_coordinate_files(all_simulations, preferred_default_id=args.default_id)
+        if not ok:
             print("❌ Failed to copy coordinate files")
             sys.exit(1)
         
         print("✅ Simulation is ready!")
-        print(f"💡 You can start the app manually with: npm start")
-        print(f"🎮 The golfer coordinates will be displayed on the map")
+        
+        # Ensure Setup app has required lightweight assets for all discovered courses
+        ensure_setup_required_assets(courses)
+        
+        # Launch apps based on arguments
+        if args.setup_only:
+            run_react_app(setup_only=True)
+        elif args.both_apps:
+            run_react_app(setup_only=False)
+        else:
+            print(f"💡 You can start the animation app manually with: npm start")
+            print(f"💡 You can start the setup app with: --setup-only")
+            print(f"💡 You can start both apps with: --both-apps")
+            print(f"🎮 The golfer coordinates will be displayed on the map")
             
     except FileNotFoundError as e:
         print(f"❌ {e}")

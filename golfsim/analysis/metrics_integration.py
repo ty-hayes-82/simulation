@@ -221,6 +221,7 @@ def save_metrics_to_directory(
     bev_cart_metrics: Optional[BevCartMetrics] = None,
     delivery_runner_metrics: Optional[DeliveryRunnerMetrics] = None,
     run_suffix: str = "",
+    minimal: bool = False,
 ) -> None:
     """
     Save metrics to files in the specified directory.
@@ -230,6 +231,7 @@ def save_metrics_to_directory(
         bev_cart_metrics: Optional beverage cart metrics to save
         delivery_runner_metrics: Optional delivery runner metrics to save
         run_suffix: Optional suffix for filenames (e.g., "_01" for run 1)
+        minimal: If True, only saves essential JSON files, skipping Markdown reports.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -237,21 +239,25 @@ def save_metrics_to_directory(
     # Save beverage cart metrics
     if bev_cart_metrics:
         try:
-            # Markdown report
-            bev_report = format_bev_metrics_report(bev_cart_metrics)
             bev_md_path = output_dir / f"bev_cart_metrics{run_suffix}.md"
-            bev_md_path.write_text(bev_report, encoding="utf-8")
-            logger.info("Saved beverage cart metrics to: %s", bev_md_path)
+            if not minimal:
+                # Markdown report
+                bev_report = format_bev_metrics_report(bev_cart_metrics)
+                bev_md_path.write_text(bev_report, encoding="utf-8")
+                logger.info("Saved beverage cart metrics to: %s", bev_md_path)
         except Exception as e:
             logger.warning("Failed to save beverage cart metrics: %s", e)
     
     # Save delivery runner metrics
     if delivery_runner_metrics:
         try:
-            # Markdown report
-            delivery_report = format_delivery_runner_metrics_report(delivery_runner_metrics)
             delivery_md_path = output_dir / f"delivery_runner_metrics{run_suffix}.md"
-            delivery_md_path.write_text(delivery_report, encoding="utf-8")
+            delivery_json_path = output_dir / f"delivery_runner_metrics{run_suffix}.json"
+
+            # Markdown report
+            if not minimal:
+                delivery_report = format_delivery_runner_metrics_report(delivery_runner_metrics)
+                delivery_md_path.write_text(delivery_report, encoding="utf-8")
             
             # Also save as JSON for programmatic access
             delivery_json = {
@@ -277,10 +283,12 @@ def save_metrics_to_directory(
                 'total_rounds': delivery_runner_metrics.total_rounds,
                 'active_runner_hours': delivery_runner_metrics.active_runner_hours,
             }
-            delivery_json_path = output_dir / f"delivery_runner_metrics{run_suffix}.json"
             delivery_json_path.write_text(json.dumps(delivery_json, indent=2), encoding="utf-8")
             
-            logger.info("Saved delivery runner metrics to: %s and %s", delivery_md_path, delivery_json_path)
+            if not minimal:
+                logger.info("Saved delivery runner metrics to: %s and %s", delivery_md_path, delivery_json_path)
+            else:
+                logger.info("Saved delivery runner metrics JSON to: %s", delivery_json_path)
         except Exception as e:
             logger.warning("Failed to save delivery runner metrics: %s", e)
 
@@ -380,6 +388,7 @@ def generate_and_save_metrics(
         bev_cart_metrics=bev_cart_metrics,
         delivery_runner_metrics=delivery_runner_metrics,
         run_suffix=run_suffix,
+        minimal=bool(metrics_kwargs.get("minimal_outputs", False)),
     )
     
     return bev_cart_metrics, delivery_runner_metrics

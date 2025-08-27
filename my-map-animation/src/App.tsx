@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { Route, Routes, NavLink, useLocation } from 'react-router-dom';
-import { Theme, Card, Flex, Text } from '@radix-ui/themes';
+import { Route, Routes, useLocation } from 'react-router-dom';
+import { Theme } from '@radix-ui/themes';
 import AnimationView from './views/AnimationView';
 import AnimationViewDebug from './views/AnimationViewDebug';
 import HeatmapView from './views/HeatmapView';
-import ShortcutsView from './views/ShortcutsView';
+
 import { SimulationProvider } from './context/SimulationContext';
 import TopBarControls from './components/TopBarControls';
 import SimulationTable from './components/SimulationTable';
@@ -39,23 +39,21 @@ function SimulationTimePanel() {
 export default function App() {
   const location = useLocation();
   const isHeatmap = (location.pathname || '').toLowerCase().includes('/heatmap');
-  const isShortcuts = (location.pathname || '').toLowerCase().includes('/shortcuts');
   return (
     <Theme accentColor="blue" grayColor="slate" radius="medium" scaling="100%">
       <SimulationProvider>
         <div style={{ width: '100vw', height: '100vh' }}>
           <ViewSwitcher />
-          {!isHeatmap && !isShortcuts && <SimulationTimePanel />}
-          {!isShortcuts && <TopBarControls />}
+          {!isHeatmap && <SimulationTimePanel />}
+          <TopBarControls />
           {/* Hide summary tables (bottom-left and bottom-right) per request */}
-          {!isShortcuts && <SimulationMatrix />}
-          {!isShortcuts && <BlockedHolesMatrix />}
+          <SimulationMatrix />
+          <BlockedHolesMatrix />
           <Routes>
             <Route path="/" element={<AnimationView />} />
             <Route path="/animation" element={<AnimationView />} />
             <Route path="/debug" element={<AnimationViewDebug />} />
             <Route path="/heatmap" element={<HeatmapView />} />
-            <Route path="/shortcuts" element={<ShortcutsView />} />
             <Route path="/table" element={
               <div style={{ padding: '80px 20px 20px', height: '100vh', overflow: 'auto' }}>
                 <SimulationTable />
