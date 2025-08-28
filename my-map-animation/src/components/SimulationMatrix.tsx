@@ -21,10 +21,16 @@ const HEADER_MAP: Record<string, string> = {
 };
 
 export default function SimulationMatrix() {
-  const { manifest, filters, setFilters } = useSimulation();
+  const { manifest, filters, setFilters, selectedCourseId } = useSimulation();
   const [metricsById, setMetricsById] = useState<Record<string, LoadedMetrics>>({});
 
-  const sims = manifest?.simulations || [];
+  // Filter simulations by selected course
+  const sims = useMemo(() => {
+    if (!manifest?.simulations) return [];
+    return selectedCourseId
+      ? manifest.simulations.filter(s => (s.courseId || '') === selectedCourseId)
+      : manifest.simulations;
+  }, [manifest?.simulations, selectedCourseId]);
 
   const runnerCounts: number[] = useMemo(() => {
     const s = new Set<number>();

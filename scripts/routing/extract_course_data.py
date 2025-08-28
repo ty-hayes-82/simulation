@@ -443,6 +443,21 @@ def save_simulation_config(args: argparse.Namespace, output_dir: str) -> None:
     config_dir = os.path.join(output_dir, "config")
     os.makedirs(config_dir, exist_ok=True)
     config_path = os.path.join(config_dir, "simulation_config.json")
+    
+    # Copy tee times config template if it doesn't exist
+    tee_times_config_path = os.path.join(config_dir, "tee_times_config.json")
+    if not os.path.exists(tee_times_config_path):
+        # Look for template in docs/course_setup/
+        project_root = Path(__file__).parent.parent.parent
+        template_path = project_root / "docs" / "course_setup" / "tee_times_config.json"
+        if template_path.exists():
+            import shutil
+            shutil.copy2(template_path, tee_times_config_path)
+            logger.info(f"Copied tee times config template to {tee_times_config_path}")
+        else:
+            logger.warning(f"Tee times config template not found at {template_path}")
+    else:
+        logger.info(f"Tee times config already exists at {tee_times_config_path}")
 
     # Template with sensible defaults (matches documented structure)
     default_config = {
@@ -468,12 +483,30 @@ def save_simulation_config(args: argparse.Namespace, output_dir: str) -> None:
         },
         # Simulation timing and economics defaults (preserved if file exists)
         "golfer_18_holes_hours": 4.25,
-        # Deprecated keys removed: bev_cart_18_holes_hours, delivery_runner_speed_mph
+        "golfer_18_holes_minutes": 255,
+        "speeds": {
+            "runner_mps": 2.8,
+            "time_quantum_s": 60,
+            "golfer_total_minutes": 255
+        },
+        "delivery_runner_speed_mps": 2.8,
         "delivery_prep_time_sec": 600,
         "bev_cart_avg_order_usd": 12.50,
         "delivery_avg_order_usd": 30.00,
         "bev_cart_order_probability": 0.4,
+        "bev_cart_order_probability_per_9_holes": 0.35,
         "delivery_order_probability_per_9_holes": 0.2,
+        "delivery_total_orders": 30,
+        "delivery_hourly_distribution": {
+            "11:00": 0.14,
+            "12:00": 0.24,
+            "13:00": 0.19,
+            "14:00": 0.1,
+            "15:00": 0.12,
+            "16:00": 0.13,
+            "17:00": 0.06,
+            "18:00": 0.02
+        },
         # Orders not dispatched within this many minutes are failed and removed from the queue
         "minutes_for_delivery_order_failure": 60,
         "delivery_service_hours": {

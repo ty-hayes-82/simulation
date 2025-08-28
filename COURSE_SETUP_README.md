@@ -12,7 +12,11 @@ python scripts/routing/extract_course_data.py --course "Course Name" --clubhouse
 - `geojson/sports_pitches.geojson` (if --include-sports-pitch), `geojson/pools_water.geojson` (if --include-water)
 - `geojson/generated/holes_geofenced.geojson`, `geojson/generated/holes_connected.geojson`
 - `pkl/cart_graph.pkl`, `pkl/golf_route.pkl`, `pkl/street_graph.pkl` (if --include-streets)
+- `config/simulation_config.json` (course configuration with delivery settings)
+- `config/tee_times_config.json` (copied from template with real_tee_sheet scenario)
 - `route_summary.json`
+
+**Note**: The script automatically copies the tee times configuration template and creates a complete simulation config with all necessary delivery runner settings (delivery_total_orders, delivery_hourly_distribution, etc.) to ensure simulations work out of the box.
 
 ## Step 1 (Alternative) — Refresh existing course data
 For existing courses, use the refresh script to update GeoJSON files:
