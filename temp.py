@@ -22,19 +22,18 @@ def hour_rounder(t):
 report_date = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 report_date_time = hour_rounder(datetime.now()).strftime("%m-%d-%Y %H%M")
 email_date = (date.today() - timedelta(days=1)).strftime('%m-%d-%Y')
-dir_path = '//swift.com/shared_data/Reports/Tableau Reports/'
-python_script_path = '/Users/Public/Documents/Python_Scripts/Capacity_Forecast/'
-path = dir_path + report_date
+dir_path = r'\\swift.com\shared_data\Reports\Tableau Reports'
+python_script_path = r'C:\Users\Public\Documents\Python_Scripts\Capacity_Forecast'
+path = os.path.join(dir_path, report_date)
 
 #Initialize Report Specific Variables
-#recipients = ['tableauotrnetbal@swifttrans.com','linehaulplanningleaders@SwiftTrans.onmicrosoft.com','ty_hayes@swifttrans.com', 'ruthie_young@swifttrans.com','christopher.makaila@knighttrans.com']
 recipients = ['ty_hayes@swifttrans.com']
 
 if datetime.now().hour == 5:
     recipients.append("andrew_hess@swifttrans.com")
 #recipients = ['ty_hayes@swifttrans.com','ruthie_young@swifttran.com']
 from_email = 'reports@swifttrans.com'
-temp_folder_path = '//swift.com/shared_data/Reports/Tableau Reports/tempCapacityForecast'
+temp_folder_path = r'\\swift.com\shared_data\Reports\Tableau Reports\tempCapacityForecast'
 file_type_list = ['png','pdf']
 tb_report_name = 'Capacity Forecast'
 
@@ -52,15 +51,13 @@ knx_view_name = 'SwiftForecastKMASubscription'
 
 #create temp_folder_path folder where daily lob reports are stored (delete current contents first)
 import shutil
-os.chdir(dir_path)
-if not os.path.exists(temp_folder_path):
-    os.makedirs(temp_folder_path)
+# Ensure required directories exist
+os.makedirs(temp_folder_path, exist_ok=True)
+os.makedirs(path, exist_ok=True)
 
-#Create folder with report_date's date if they don't already exist
-if not os.path.exists(path):
-    os.makedirs(path)
-
-outF = open(r"C:" + python_script_path + tb_report_name + ".bat","w")
+os.makedirs(python_script_path, exist_ok=True)
+bat_file_path = os.path.join(python_script_path, f"{tb_report_name}.bat")
+outF = open(bat_file_path, "w")
 
 # Login to Swift site
 outF.write(r"""tabcmd login -s ndctableaup11 -u svc_tableau_prod -p 65GC(HcQ!nM3 --no-certcheck""")
@@ -94,7 +91,7 @@ outF.write("echo All downloads completed.\n")
 outF.close()
 
 #Start tabcmd
-subprocess.call(r"C:" + python_script_path + tb_report_name + ".bat")
+subprocess.call(bat_file_path)
 
 #Merge PDFs into One File
 from PyPDF2 import PdfFileMerger, PdfFileReader
@@ -113,11 +110,10 @@ for f in os.listdir():
         if f.endswith(knx_view_name + ".pdf"):
             merger.append(PdfFileReader(f), knx_view_name)
 
-#Create folder with report_date's date if they don't already exist
-if not os.path.exists(path):
-    os.makedirs(path)
+# Ensure the report output directory exists
+os.makedirs(path, exist_ok=True)
 
-merger.write(path + '/' + tb_report_name + ' - ' + report_date_time + '.pdf')
+merger.write(os.path.join(path, f"{tb_report_name} - {report_date_time}.pdf"))
 
 #Get username and password from Email_Credentials.txt file
 f = open(r"C:\Users\Public\Documents\Python_Scripts\Email_Credentials.txt","r")
