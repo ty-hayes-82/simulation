@@ -3,6 +3,37 @@ import { Card, Flex, Table, Text, HoverCard } from '@radix-ui/themes';
 import { useSimulation } from '../context/SimulationContext';
 import { SimulationEntry } from '../lib/manifest';
 
+const StaticBlockedHolesTable = () => {
+  const headers = ['None', '1-3', '4-6', '10-12', '1-6', '1-3 & 10-12', '4-6 & 10-12', '1-6 & 10-12'];
+  const rowData = ['35%', '32%', '54%', '33%', '41%', '38%', '50%', '63%'];
+
+  return (
+    <Flex direction="column" gap="2" mt="1">
+      <Text size="2" weight="bold" style={{ alignSelf: 'center' }}>On-Time % by Blocked Holes (Orders: 20)</Text>
+      <Table.Root size="1" variant="surface" layout="auto">
+        <Table.Header>
+          <Table.Row>
+            <Table.ColumnHeaderCell />
+            {headers.map(header => (
+              <Table.ColumnHeaderCell key={header} justify="center" style={{ borderLeft: '1px solid var(--gray-a6)' }}>{header}</Table.ColumnHeaderCell>
+            ))}
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          <Table.Row>
+            <Table.RowHeaderCell>1 Runner</Table.RowHeaderCell>
+            {rowData.map((data, index) => (
+              <Table.Cell key={index} justify="center" style={{ borderLeft: '1px solid var(--gray-a6)' }}>
+                {data}
+              </Table.Cell>
+            ))}
+          </Table.Row>
+        </Table.Body>
+      </Table.Root>
+    </Flex>
+  );
+};
+
 type LoadedMetrics = {
   deliveryMetrics?: {
     onTimePercentage?: number;
@@ -137,7 +168,7 @@ export default function BlockedHolesMatrix() {
   if (runnerCounts.length === 0) return null;
 
   return (
-    <Card style={{ position: 'absolute', bottom: 280, right: 20, zIndex: 20, background: 'rgba(255,255,255,0.95)' }}>
+    <Card style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 20, background: 'rgba(255,255,255,0.95)' }}>
       <Flex direction="column" gap="2" p="3">
         <Text size="2" weight="bold" style={{ alignSelf: 'center' }}>On-Time % by Blocked Holes (Orders: {selectedOrders})</Text>
         <Table.Root size="1" variant="surface" layout="auto">
@@ -185,6 +216,7 @@ export default function BlockedHolesMatrix() {
             ))}
           </Table.Body>
         </Table.Root>
+        <StaticBlockedHolesTable />
       </Flex>
     </Card>
   );

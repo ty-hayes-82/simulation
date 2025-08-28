@@ -176,7 +176,7 @@ def main() -> None:
     p.add_argument("--runner-speed", type=float, default=None)
     p.add_argument("--prep-time", type=int, default=None)
     p.add_argument("--variants", nargs="+", default=[v.key for v in BLOCKING_VARIANTS], help="Subset of variant keys to test")
-    p.add_argument("--output-root", default="outputs/policy_opt")
+    p.add_argument("--output-root", default=None, help="Base for outputs, defaults to <course_dir>/policy_opt")
     p.add_argument("--summarize-only", action="store_true", help="Skip running sims; summarize an existing output root")
     p.add_argument("--existing-root", type=str, default=None, help="Path to existing optimization output root to summarize")
     # Targets for recommendation
@@ -212,10 +212,13 @@ def main() -> None:
             sys.exit(2)
     else:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        root = Path(args.output_root)
-        if not root.is_absolute():
-            root = (project_root / args.output_root)
-        root = (root / f"{stamp}_{args.tee_scenario}")
+        if args.output_root:
+            out_base = Path(args.output_root)
+            if not out_base.is_absolute():
+                out_base = project_root / out_base
+        else:
+            out_base = course_dir / "policy_opt"
+        root = out_base / f"{stamp}_{args.tee_scenario}"
 
     # Identify orders levels
     if args.summarize_only:

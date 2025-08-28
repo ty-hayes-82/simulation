@@ -555,12 +555,19 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
             )
         )
         if should_write_coords:
-            if not bool(getattr(config, "coordinates_only_for_first_run", False)) or run_idx == 1:
+            # If not in minimal outputs mode, we want full outputs for every run.
+            # The coordinates_only_for_first_run flag should only apply in minimal_outputs mode.
+            is_minimal = bool(getattr(config, "minimal_outputs", False))
+            generate_for_this_run = not is_minimal or (is_minimal and run_idx == 1)
+
+            if generate_for_this_run:
                 try:
+                    logger.debug(f"Run {run_idx}: Starting coordinate generation.")
                     events: list[dict[str, Any]] = []
                     # Unify event sources
                     try:
                         events = events_from_activity_log(sim_result.get("activity_log", []), sim_result.get("orders_all", []))
+                        logger.debug(f"Run {run_idx}: Found {len(events)} events from activity log.")
                         if not bool(getattr(config, "minimal_outputs", False)):
                             write_event_log_csv(events, run_path / "events.csv")
                     except Exception as e:
@@ -584,6 +591,7 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                     golfer_points_csv: dict[str, list[dict[str, Any]]] = {}
                     if groups:
                         gp = generate_golfer_points_for_groups(config.course_dir, groups)
+                        logger.debug(f"Run {run_idx}: Generated {len(gp)} total golfer points.")
                         by_gid: dict[int, list[dict[str, Any]]] = {}
                         for p in gp:
                             gid = int(p.get("group_id", 0) or 0)
@@ -592,6 +600,7 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                             golfer_points_csv[f"golfer_group_{gid}"] = pts
 
                     # Generate runner coordinates using post-processing approach
+                    runner_points = []
                     if cart_graph is not None and events:
                         try:
                             import pandas as pd
@@ -648,6 +657,8 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                         streams.update(by_rid)
                     if golfer_points_csv:
                         streams.update(golfer_points_csv)
+                    
+                    logger.debug(f"Run {run_idx}: Total coordinate streams to write: {len(streams)}.")
 
                     # Annotate golfer colors from order/delivery events
                     try:
@@ -686,7 +697,7 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                         write_unified_coordinates_csv(streams, run_path / "coordinates.csv")
                         logger.info("Wrote coordinates CSV with %d streams", len(streams))
                     else:
-                        logger.warning("No coordinate streams generated")
+                        logger.warning(f"Run {run_idx}: No coordinate streams generated, skipping CSV write.")
                         
                 except Exception as e:
                     logger.warning("Failed to write animation coordinates CSV: %s", e)
