@@ -48,6 +48,52 @@ def generate_runner_coordinates_from_events(
         List of runner coordinate dictionaries
     """
     runner_coords = []
+
+    # Helper: normalize node IDs to match the cart_graph's node key type
+    def _coerce_node_id(value: Any, target_type: type) -> Any:
+        try:
+            if target_type is int:
+                if isinstance(value, str):
+                    s = value.strip()
+                    if s.lstrip("-").isdigit():
+                        return int(s)
+                    return value
+                return int(value)
+            if target_type is str:
+                return str(value)
+        except Exception:
+            pass
+        return value
+
+    def _normalize_nodes(nodes: List[Any], graph: nx.Graph) -> List[Any]:
+        if not nodes:
+            return []
+        # Determine desired key type from existing graph nodes (default to int)
+        try:
+            sample_key = next(iter(graph.nodes))
+            target_type = type(sample_key)
+        except Exception:
+            target_type = int
+        normalized: List[Any] = []
+        for n in nodes:
+            nn = _coerce_node_id(n, target_type)
+            # If still not present, try the opposite common coercion
+            if nn not in graph.nodes:
+                try:
+                    if isinstance(nn, int):
+                        alt = str(nn)
+                        if alt in graph.nodes:
+                            nn = alt
+                    elif isinstance(nn, str):
+                        s = nn.strip()
+                        if s.lstrip("-").isdigit():
+                            alt_i = int(s)
+                            if alt_i in graph.nodes:
+                                nn = alt_i
+                except Exception:
+                    pass
+            normalized.append(nn)
+        return normalized
     
     # Add a point for each runner at the clubhouse when service opens
     service_open_events = events_df[events_df["action"] == "service_opened"]
@@ -108,6 +154,8 @@ def generate_runner_coordinates_from_events(
             return []
 
         # Build coordinate list for nodes
+        # Normalize node IDs to match graph keys before lookup
+        nodes = _normalize_nodes(list(nodes), cart_graph)
         try:
             coords: List[Tuple[float, float]] = [
                 (float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y'])) for n in nodes
@@ -241,6 +289,10 @@ def generate_runner_coordinates_from_events(
                     back_nodes = list(tb.get('nodes') or [])
             except Exception:
                 back_nodes = []
+
+            # Normalize extracted node IDs for both paths
+            to_nodes = _normalize_nodes(to_nodes, cart_graph)
+            back_nodes = _normalize_nodes(back_nodes, cart_graph)
 
             # Outbound path via captured nodes
             if to_nodes and depart_ts is not None and delivered_ts is not None and delivered_ts > depart_ts:
