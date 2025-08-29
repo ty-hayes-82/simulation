@@ -13,13 +13,11 @@ Notes:
 - This substitutes the staged 4/8/8 logic with a simpler 10 + 10 confirmation.
 - Outputs are organized under `<output_root>/<stamp>_<scenario>/{first_pass|second_pass}/orders_XXX/...`.
 
-Example:
-  python scripts/optimization/optimize_staffing_policy_two_pass.py \
-    --course-dir courses/pinetree_country_club \
-    --tee-scenario real_tee_sheet \
-    --orders-levels 20 30 40 50 \
-    --runner-range 1-3 \
-    --concurrency 3
+Example (single course):
+  python scripts/optimization/optimize_staffing_policy_two_pass.py --course-dir courses/pinetree_country_club --tee-scenario real_tee_sheet --orders-levels 20 30 40 50 --runner-range 1-3 --concurrency 3
+
+Example (all courses):
+  python scripts/optimization/optimize_staffing_policy_two_pass.py --run-all-courses --tee-scenario real_tee_sheet --orders-levels 10 20 30 40 50 --runner-range 1-3 --concurrency 10
 """
 
 from __future__ import annotations
@@ -28,6 +26,8 @@ import argparse
 import json
 import math
 import os
+import re
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -163,9 +163,904 @@ def meets_targets(agg: Dict[str, Any], args: argparse.Namespace) -> bool:
     )
 
 
+def _publish_map_assets(*, optimization_root: Path, project_root: Path) -> None:
+    """Finds and copies simulation artifacts to the map app's public directories."""
+
+    # --- BEGIN MAP ASSETS PUBLISHING LOGIC ---
+    # This code is moved and adapted from my-map-animation/run_map_app.py
+
+    # Path Configuration
+    map_animation_dir = project_root / "my-map-animation"
+    public_dirs = [str(map_animation_dir / "public")]
+    setup_public_dir = project_root / "my-map-setup" / "public"
+    coordinates_dir_name = "coordinates"
+    local_csv_file = str(map_animation_dir / "public" / "coordinates.csv")
+    sim_base_dir = str(optimization_root)
+
+    def _humanize(name: str) -> str:
+        name = name.replace("-", " ").replace("_", " ").strip()
+        parts = [p for p in name.split(" ") if p]
+        return " ".join(w.capitalize() for w in parts) if parts else name
+
+    def _parse_simulation_folder_name(folder_name: str) -> Dict[str, str]:
+        result = {
+            "date": "",
+            "time": "",
+            "bev_carts": "0",
+            "runners": "0",
+            "golfers": "0",
+            "scenario": "",
+            "original": folder_name,
+        }
+        if "_" in folder_name:
+            parts = folder_name.split("_")
+            if len(parts) > 0 and len(parts[0]) == 8 and parts[0].isdigit():
+                result["date"] = parts[0]
+                if len(parts) > 1 and len(parts[1]) == 6 and parts[1].isdigit():
+                    result["time"] = parts[1]
+                    config_parts = parts[2:]
+                    config_str = "_".join(config_parts)
+                    bev_match = re.search(r"(\d+)bev_?carts?", config_str, re.IGNORECASE)
+                    if bev_match:
+                        result["bev_carts"] = bev_match.group(1)
+                    runner_match = re.search(r"(\d+)_?runners?", config_str, re.IGNORECASE)
+                    if runner_match:
+                        result["runners"] = runner_match.group(1)
+                    golfer_match = re.search(r"(\d+)golfers?", config_str, re.IGNORECASE)
+                    if golfer_match:
+                        result["golfers"] = golfer_match.group(1)
+                    scenario_parts = []
+                    for part in config_parts:
+                        if not (
+                            re.match(r"^\d+[a-zA-Z]+$", part) or re.match(r"^(sim|run)_\d+$", part, re.IGNORECASE)
+                        ):
+                            scenario_parts.append(part)
+                    if scenario_parts:
+                        result["scenario"] = "_".join(scenario_parts)
+        return result
+
+    def _format_simple_simulation_name(parsed: Dict[str, str]) -> str:
+        components = []
+        config_parts = []
+        if parsed["bev_carts"] != "0":
+            config_parts.append(f"{parsed['bev_carts']} Cart{'s' if parsed['bev_carts'] != '1' else ''}")
+        if parsed["runners"] != "0":
+            config_parts.append(f"{parsed['runners']} Runner{'s' if parsed['runners'] != '1' else ''}")
+        if parsed["golfers"] != "0":
+            config_parts.append(f"{parsed['golfers']} Golfer{'s' if parsed['golfers'] != '1' else ''}")
+        if config_parts:
+            components.append(" + ".join(config_parts))
+        if parsed["scenario"]:
+            scenario_name = _humanize(parsed["scenario"])
+            components.append(scenario_name)
+        if "variant_key" in parsed and parsed["variant_key"] != "none":
+            components.append(f"({_humanize(parsed['variant_key'])})")
+        return " | ".join(components) if components else parsed["original"]
+
+    def _create_group_name(parsed: Dict[str, str]) -> str:
+        if parsed["scenario"]:
+            return _humanize(parsed["scenario"])
+        if parsed["bev_carts"] != "0" and parsed["runners"] != "0":
+            return "Mixed Operations"
+        elif parsed["bev_carts"] != "0":
+            return "Beverage Cart Only"
+        elif parsed["runners"] != "0":
+            return "Delivery Runners Only"
+        else:
+            return "Other Simulations"
+
+    def _get_course_id_from_run_dir(run_dir: Path) -> Optional[str]:
+        try:
+            results_path = run_dir / "results.json"
+            if not results_path.exists():
+                return None
+            with results_path.open("r", encoding="utf-8") as f:
+                results = json.load(f)
+            course_dir_str = results.get("metadata", {}).get("course_dir")
+            if isinstance(course_dir_str, str) and course_dir_str:
+                return os.path.basename(course_dir_str.replace("\\", "/").rstrip("/"))
+        except Exception:
+            pass
+        return None
+
+    def _sanitize_and_copy_coordinates_csv(source_path: str, target_path: str) -> None:
+        import csv as _csv
+
+        with open(source_path, "r", newline="", encoding="utf-8") as fsrc:
+            reader = _csv.DictReader(fsrc)
+            fieldnames = reader.fieldnames or []
+            rows = list(reader)
+        first_move_ts_by_id: Dict[str, Optional[int]] = {}
+        for r in rows:
+            rid = str(r.get("id", "") or "")
+            rtype = (r.get("type") or "").strip().lower()
+            if rtype != "runner" and not rid.startswith("runner"):
+                continue
+            hole = (r.get("hole") or "").strip().lower()
+            try:
+                ts = int(float(r.get("timestamp") or 0))
+            except Exception:
+                continue
+            if hole != "clubhouse":
+                prev = first_move_ts_by_id.get(rid)
+                if prev is None or ts < prev:
+                    first_move_ts_by_id[rid] = ts
+        filtered: List[Dict[str, str]] = []
+        for r in rows:
+            rid = str(r.get("id", "") or "")
+            rtype = (r.get("type") or "").strip().lower()
+            hole = (r.get("hole") or "").strip().lower()
+            try:
+                ts = int(float(r.get("timestamp") or 0))
+            except Exception:
+                filtered.append(r)
+                continue
+            first_move_ts = first_move_ts_by_id.get(rid)
+            if (
+                (rtype == "runner" or rid.startswith("runner"))
+                and hole == "clubhouse"
+                and first_move_ts is not None
+                and ts < int(first_move_ts)
+            ):
+                continue
+            filtered.append(r)
+        chosen: Dict[Tuple[str, int], Dict[str, str]] = {}
+        for r in filtered:
+            rid = str(r.get("id", "") or "")
+            try:
+                ts = int(float(r.get("timestamp") or 0))
+            except Exception:
+                filtered.append(r)
+                continue
+            key = (rid, ts)
+            hole = (r.get("hole") or "").strip().lower()
+            if key not in chosen:
+                chosen[key] = r
+            else:
+                prev_hole = (chosen[key].get("hole") or "").strip().lower()
+                if prev_hole == "clubhouse" and hole != "clubhouse":
+                    chosen[key] = r
+        deduped = list(chosen.values())
+        try:
+            deduped.sort(key=lambda d: (str(d.get("id", "")), int(float(d.get("timestamp") or 0))))
+        except Exception:
+            pass
+        with open(target_path, "w", newline="", encoding="utf-8") as fdst:
+            writer = _csv.DictWriter(fdst, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            for r in deduped:
+                writer.writerow(r)
+
+    def find_all_simulations() -> Dict[str, List[Tuple[str, str, str]]]:
+        simulations: Dict[str, List[Tuple[str, str, str]]] = {}
+        if os.path.exists(local_csv_file):
+            any_outputs = (
+                any(True for _ in Path(sim_base_dir).rglob("coordinates.csv"))
+                if os.path.exists(sim_base_dir)
+                else False
+            )
+            if not any_outputs:
+                simulations.setdefault("Local", []).append(("coordinates", "GPS Coordinates", local_csv_file))
+        if not os.path.exists(sim_base_dir):
+            return simulations
+        valid_filenames = {"coordinates.csv", "bev_cart_coordinates.csv"}
+        for root, dirs, files in os.walk(sim_base_dir):
+            csv_files = [f for f in files if f in valid_filenames]
+            if not csv_files:
+                continue
+            for file_name in csv_files:
+                full_path = os.path.join(root, file_name)
+                rel_path = os.path.relpath(full_path, sim_base_dir)
+                parts = rel_path.split(os.sep)
+                if len(parts) >= 3:
+                    sim_folder_name = parts[-3]
+                    run_folder = parts[-2]
+                    parsed = _parse_simulation_folder_name(sim_folder_name)
+                    group_name = _create_group_name(parsed)
+                    base_sim_name = _format_simple_simulation_name(parsed)
+                    run_id = run_folder.upper() if run_folder.startswith(("sim_", "run_")) else ""
+                    if file_name == "coordinates.csv":
+                        friendly_type = "GPS Coordinates"
+                    elif file_name == "bev_cart_coordinates.csv":
+                        friendly_type = "Beverage Cart GPS"
+                    else:
+                        friendly_type = os.path.splitext(file_name)[0].replace("_", " ").title()
+                    display_components = [base_sim_name]
+                    if run_id:
+                        display_components.append(run_id)
+                    display_components.append(friendly_type)
+                    display_name = " | ".join(display_components)
+                elif len(parts) >= 2:
+                    sim_folder_name = parts[-2]
+                    parsed = _parse_simulation_folder_name(sim_folder_name)
+                    group_name = _create_group_name(parsed)
+                    base_sim_name = _format_simple_simulation_name(parsed)
+                    if file_name == "coordinates.csv":
+                        friendly_type = "GPS Coordinates"
+                    elif file_name == "bev_cart_coordinates.csv":
+                        friendly_type = "Beverage Cart GPS"
+                    else:
+                        friendly_type = os.path.splitext(file_name)[0].replace("_", " ").title()
+                    display_name = f"{base_sim_name} | {friendly_type}"
+                else:
+                    group_name = "Simulations"
+                    display_name = f"Coordinates ({os.path.splitext(file_name)[0]})"
+                sim_id = rel_path.replace(os.sep, "_").replace(".csv", "")
+                simulations.setdefault(group_name, []).append((sim_id, display_name, full_path))
+        sorted_simulations: Dict[str, List[Tuple[str, str, str]]] = {}
+        for group in sorted(simulations.keys()):
+            sorted_simulations[group] = sorted(simulations[group], key=lambda x: x[0])
+        return sorted_simulations
+
+    def _derive_combo_key_from_path(csv_path: str) -> Optional[str]:
+        try:
+            p = Path(csv_path)
+            run_dir = p.parent
+            variant_dir = run_dir.parent if run_dir.name.startswith("run_") else p.parent
+            runners_dir = variant_dir.parent
+            orders_dir = runners_dir.parent
+            scenario_dir = orders_dir.parent
+            if runners_dir.name.startswith("runners_") and orders_dir.name.startswith("orders_"):
+                try:
+                    n_runners = int(runners_dir.name.split("_")[1])
+                except Exception:
+                    n_runners = None
+                try:
+                    orders_val = int(orders_dir.name.split("_")[1])
+                except Exception:
+                    orders_val = None
+                scenario = scenario_dir.name
+                variant_key = variant_dir.name
+                if n_runners is not None and orders_val is not None:
+                    return f"{scenario}|orders_{orders_val:03d}|runners_{n_runners}|{variant_key}"
+            for ancestor in p.parents:
+                name = ancestor.name
+                if ("runners" in name) and ("delivery_runner" in name or "runners_" in name):
+                    scenario = None
+                    orders_val = None
+                    m_orders = re.search(r"orders[_-]?([0-9]{2,3})", name, re.IGNORECASE)
+                    if m_orders:
+                        try:
+                            orders_val = int(m_orders.group(1))
+                        except Exception:
+                            orders_val = None
+                    m_runners = re.search(r"runners[_-]?([0-9]+)", name, re.IGNORECASE)
+                    n_runners = int(m_runners.group(1)) if m_runners else None
+                    if n_runners and orders_val:
+                        scenario = ancestor.parent.name
+                        return f"{scenario}|orders_{orders_val:03d}|runners_{n_runners}"
+            return None
+        except Exception:
+            return None
+
+    def _select_representative_runs(all_items: List[Tuple[str, str, str]]) -> Dict[str, str]:
+        selection_mode = os.environ.get("RUN_MAP_SELECT_RUNS", "").strip().lower()
+        prefer_first_run = selection_mode in {"run_01", "first", "first_run"}
+        groups: Dict[str, List[Tuple[str, str, str]]] = {}
+        for sim_id, display_name, csv_path in all_items:
+            key = _derive_combo_key_from_path(csv_path)
+            if key:
+                groups.setdefault(key, []).append((sim_id, display_name, csv_path))
+        selected: Dict[str, str] = {}
+
+        def load_metrics_for_run(run_dir: Path) -> Dict[str, float]:
+            metrics: Dict[str, float] = {}
+            try:
+                candidates = [
+                    *[
+                        f
+                        for f in os.listdir(run_dir)
+                        if f.startswith("delivery_runner_metrics_run_") and f.endswith(".json")
+                    ],
+                ]
+                chosen = None
+                if candidates:
+                    run_name = run_dir.name.lower()
+                    chosen = None
+                    for c in candidates:
+                        if run_name in c.lower():
+                            chosen = c
+                            break
+                    if not chosen:
+                        chosen = sorted(candidates)[0]
+                elif (run_dir / "simulation_metrics.json").exists():
+                    chosen = "simulation_metrics.json"
+                if not chosen:
+                    return metrics
+                with open(run_dir / chosen, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                return metrics
+            try:
+                on_time = data.get("on_time_rate")
+                failed = data.get("failed_rate")
+                p90 = data.get("delivery_cycle_time_p90")
+                oph = data.get("orders_per_runner_hour")
+                if on_time is None or p90 is None or oph is None:
+                    dm = data.get("deliveryMetrics") or {}
+                    on_time = dm.get("onTimeRate") if dm is not None else None
+                    if isinstance(on_time, (int, float)) and on_time > 1.5:
+                        on_time = float(on_time) / 100.0
+                    p90 = dm.get("deliveryCycleTimeP90") if dm is not None else None
+                    oph = dm.get("ordersPerRunnerHour") if dm is not None else None
+                    failed = dm.get("failedRate") if isinstance(dm, dict) else data.get("failed_rate")
+                    if isinstance(failed, (int, float)) and failed > 1.5:
+                        failed = float(failed) / 100.0
+                for k, v in {
+                    "on_time": on_time,
+                    "failed": failed,
+                    "p90": p90,
+                    "oph": oph,
+                }.items():
+                    if isinstance(v, (int, float)) and float("inf") != v and float("-inf") != v:
+                        metrics[k] = float(v)
+            except Exception:
+                pass
+            return metrics
+
+        for key, items in groups.items():
+            per_run: List[Tuple[str, Path]] = []
+            for _, __, csv_path in items:
+                run_dir = Path(csv_path).parent
+                per_run.append((csv_path, run_dir))
+            if len(per_run) <= 1:
+                selected[per_run[0][0]] = per_run[0][0]
+                continue
+            if prefer_first_run:
+                try:
+                    for csv_path, run_dir in per_run:
+                        if run_dir.name.lower() == "run_01":
+                            selected[csv_path] = csv_path
+                            break
+                    else:
+                        per_run_sorted = sorted(per_run, key=lambda t: t[1].name)
+                        selected[per_run_sorted[0][0]] = per_run_sorted[0][0]
+                    continue
+                except Exception:
+                    pass
+            run_metrics: List[Tuple[str, Dict[str, float]]] = []
+            for csv_path, run_dir in per_run:
+                m = load_metrics_for_run(run_dir)
+                run_metrics.append((csv_path, m))
+            keys = ["on_time", "failed", "p90", "oph"]
+            means: Dict[str, float] = {}
+            stds: Dict[str, float] = {}
+            for k in keys:
+                vals = [m.get(k) for _, m in run_metrics if isinstance(m.get(k), (int, float))]
+                if vals:
+                    mu = sum(vals) / len(vals)
+                    means[k] = mu
+                    if len(vals) >= 2:
+                        var = sum((x - mu) ** 2 for x in vals) / (len(vals) - 1)
+                        stds[k] = (var**0.5) if var > 0 else 1.0
+                    else:
+                        stds[k] = 1.0
+                else:
+                    means[k] = 0.0
+                    stds[k] = 1.0
+            best_csv = per_run[0][0]
+            best_dist = float("inf")
+            for csv_path, m in run_metrics:
+                dist = 0.0
+                for k in keys:
+                    v = m.get(k)
+                    if isinstance(v, (int, float)):
+                        z = (v - means[k]) / (stds.get(k) or 1.0)
+                        dist += z * z
+                if dist < best_dist:
+                    best_dist = dist
+                    best_csv = csv_path
+            selected[best_csv] = best_csv
+        return selected
+
+    def get_file_info(file_path: str) -> str:
+        try:
+            with open(file_path, "r") as f:
+                lines = f.readlines()
+                if len(lines) > 1:
+                    data_rows = len(lines) - 1
+                    return f"{data_rows:,} coordinate points"
+                else:
+                    return "Empty file"
+        except Exception as e:
+            return f"Error reading file: {e}"
+
+    def _generate_per_run_hole_geojson(run_dir: Path) -> Optional[Path]:
+        try:
+            results_path = run_dir / "results.json"
+            if not results_path.exists():
+                return None
+            with results_path.open("r", encoding="utf-8") as f:
+                results = json.load(f)
+            course_dir = None
+            try:
+                course_dir = results.get("metadata", {}).get("course_dir")
+            except Exception:
+                course_dir = None
+            if not course_dir:
+                course_dir = str(project_root / "courses" / "pinetree_country_club")
+            from golfsim.viz.heatmap_viz import (
+                load_geofenced_holes,
+                extract_order_data,
+                calculate_delivery_time_stats,
+            )
+
+            hole_polygons = load_geofenced_holes(course_dir)
+            order_data = extract_order_data(results)
+            hole_stats = calculate_delivery_time_stats(order_data)
+            import json as _json
+            import geopandas as gpd
+
+            features = []
+            for hole_num, geom in hole_polygons.items():
+                props = {"hole": int(hole_num)}
+                stats = hole_stats.get(hole_num)
+                if stats:
+                    props.update(
+                        {
+                            "has_data": True,
+                            "avg_time": float(stats.get("avg_time", 0.0)),
+                            "min_time": float(stats.get("min_time", 0.0)),
+                            "max_time": float(stats.get("max_time", 0.0)),
+                            "count": int(stats.get("count", 0)),
+                        }
+                    )
+                else:
+                    props.update({"has_data": False})
+                gdf = gpd.GeoDataFrame({"geometry": [geom]}, crs="EPSG:4326")
+                feature_geom = _json.loads(gdf.to_json())["features"][0]["geometry"]
+                features.append({"type": "Feature", "properties": props, "geometry": feature_geom})
+            fc = {"type": "FeatureCollection", "features": features}
+            out_path = run_dir / "hole_delivery_times.geojson"
+            with out_path.open("w", encoding="utf-8") as f:
+                _json.dump(fc, f)
+            return out_path
+        except Exception as e:
+            return None
+
+    def copy_hole_delivery_geojson(coordinates_dirs: List[str]) -> None:
+        source_file = map_animation_dir / "public" / "hole_delivery_times.geojson"
+        if os.path.exists(source_file):
+            for public_dir in public_dirs:
+                target_file = os.path.join(public_dir, "hole_delivery_times.geojson")
+                try:
+                    temp_target = target_file + ".tmp"
+                    shutil.copy2(source_file, temp_target)
+                    os.replace(temp_target, target_file)
+                except Exception:
+                    pass
+
+    def copy_all_coordinate_files(
+        all_simulations: Dict[str, List[Tuple[str, str, str]]], preferred_default_id: Optional[str] = None
+    ) -> Tuple[bool, List[str]]:
+        courses_being_updated = set()
+        for _, file_options in all_simulations.items():
+            for _, _, source_path in file_options:
+                run_dir = Path(source_path).parent
+                course_id = _get_course_id_from_run_dir(run_dir)
+                if course_id:
+                    courses_being_updated.add(course_id)
+        if courses_being_updated:
+            print(f"ℹ️  This run contains simulations for course(s): {', '.join(courses_being_updated)}")
+        try:
+            coordinates_dirs = []
+            for public_dir in public_dirs:
+                try:
+                    stale_files = [
+                        os.path.join(public_dir, "coordinates.csv"),
+                        os.path.join(public_dir, "hole_delivery_times.geojson"),
+                        os.path.join(public_dir, "hole_delivery_times_debug.geojson"),
+                        os.path.join(public_dir, "simulation_metrics.json"),
+                    ]
+                    for f in stale_files:
+                        if os.path.exists(f):
+                            try:
+                                os.remove(f)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+                coordinates_dir = os.path.join(public_dir, coordinates_dir_name)
+                coordinates_dirs.append(coordinates_dir)
+                os.makedirs(coordinates_dir, exist_ok=True)
+            simulations_to_keep = []
+            manifest_processed = False
+            if courses_being_updated:
+                for coordinates_dir in coordinates_dirs:
+                    manifest_path = os.path.join(coordinates_dir, "manifest.json")
+                    if not os.path.exists(manifest_path):
+                        continue
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        try:
+                            old_manifest = json.load(f)
+                        except json.JSONDecodeError:
+                            old_manifest = {}
+                    current_dir_sims_to_keep = []
+                    for sim_entry in old_manifest.get("simulations", []):
+                        if sim_entry.get("courseId") in courses_being_updated:
+                            for key in ["filename", "heatmapFilename", "metricsFilename", "holeDeliveryGeojson"]:
+                                if filename := sim_entry.get(key):
+                                    file_to_delete = os.path.join(coordinates_dir, filename)
+                                    if os.path.exists(file_to_delete):
+                                        try:
+                                            os.remove(file_to_delete)
+                                        except OSError:
+                                            pass
+                        else:
+                            current_dir_sims_to_keep.append(sim_entry)
+                    if not manifest_processed:
+                        simulations_to_keep = current_dir_sims_to_keep
+                        manifest_processed = True
+            manifest = {"simulations": simulations_to_keep, "defaultSimulation": None, "courses": []}
+            discovered_courses: Dict[str, str] = {}
+            copied_count = 0
+            total_size = 0
+            id_to_mtime: Dict[str, float] = {}
+
+            def _extract_orders_from_metrics(metrics_path: str) -> int | None:
+                try:
+                    with open(metrics_path, "r", encoding="utf-8") as f:
+                        import json as _json
+
+                        data = _json.load(f)
+                    dm = data.get("deliveryMetrics") or {}
+                    if isinstance(dm, dict):
+                        orders = dm.get("totalOrders") or dm.get("orderCount")
+                        if isinstance(orders, (int, float)):
+                            return int(orders)
+                    for key in ("totalOrders", "orderCount"):
+                        if key in data and isinstance(data[key], (int, float)):
+                            return int(data[key])
+                except Exception:
+                    return None
+                return None
+
+            def _extract_variant_info_from_metrics(
+                metrics_path: str,
+            ) -> Tuple[Optional[str], Optional[List[int]]]:
+                try:
+                    with open(metrics_path, "r", encoding="utf-8") as f:
+                        import json as _json
+
+                        data = _json.load(f)
+                    variant_key = data.get("variantKey")
+                    blocked_holes = data.get("blockedHoles")
+                    return variant_key, blocked_holes
+                except Exception:
+                    return None, None
+
+            flat_items: List[Tuple[str, str, str]] = []
+            for gname, items in all_simulations.items():
+                for sim_id, disp, src in items:
+                    flat_items.append((sim_id, disp, src))
+            selected_csvs = _select_representative_runs(flat_items)
+            selected_mode_active = len(selected_csvs) > 0
+            for group_name, file_options in all_simulations.items():
+                for scenario_id, display_name, source_path in file_options:
+                    if selected_mode_active:
+                        key = _derive_combo_key_from_path(source_path)
+                        if key and source_path not in selected_csvs:
+                            continue
+                    try:
+                        p = Path(source_path)
+                        parents = list(p.parents)
+                        has_orders = any(parent.name.lower().startswith("orders_") for parent in parents)
+                        has_delivery_runners = False
+                        for parent in parents:
+                            name = parent.name.lower()
+                            if name.startswith("runners_"):
+                                try:
+                                    runner_count = int(name.split("_")[1])
+                                    if runner_count > 0:
+                                        has_delivery_runners = True
+                                        break
+                                except (ValueError, IndexError):
+                                    continue
+                        if not has_delivery_runners:
+                            for parent in parents:
+                                name = parent.name.lower()
+                                if "delivery_runner_" in name and "_runners_" in name:
+                                    match = re.search(r"_(\d+)_runners_", name)
+                                    if match:
+                                        try:
+                                            runner_count = int(match.group(1))
+                                            if runner_count > 0:
+                                                has_delivery_runners = True
+                                                break
+                                        except ValueError:
+                                            continue
+                        if not (has_orders and has_delivery_runners):
+                            continue
+                    except Exception:
+                        continue
+                    if not os.path.exists(source_path):
+                        continue
+                    target_filename = f"{scenario_id}.csv"
+                    all_copies_successful = True
+                    sanitized_mode = os.path.basename(source_path) == "coordinates.csv"
+                    for coordinates_dir in coordinates_dirs:
+                        target_path = os.path.join(coordinates_dir, target_filename)
+                        try:
+                            if os.path.basename(source_path) == "coordinates.csv":
+                                _sanitize_and_copy_coordinates_csv(source_path, target_path)
+                            else:
+                                shutil.copy2(source_path, target_path)
+                        except Exception:
+                            all_copies_successful = False
+                            break
+                        if os.path.exists(target_path):
+                            source_size = os.path.getsize(source_path)
+                            target_size = os.path.getsize(target_path)
+                            if sanitized_mode:
+                                if target_size <= 0:
+                                    all_copies_successful = False
+                                    break
+                            else:
+                                if source_size != target_size:
+                                    all_copies_successful = False
+                                    break
+                        else:
+                            all_copies_successful = False
+                            break
+                    if all_copies_successful:
+                        copied_count += 1
+                        total_size += source_size
+                        csv_dir = os.path.dirname(source_path)
+                        found_heatmap_filename: str | None = None
+                        found_metrics_filename: str | None = None
+                        found_hole_geojson_filename: str | None = None
+                        orders_value: int | None = None
+                        variant_key: str | None = "none"
+                        blocked_holes: list[int] | None = []
+                        for fname in os.listdir(csv_dir):
+                            if fname in {"delivery_heatmap.png", "heatmap.png"}:
+                                heatmap_source = os.path.join(csv_dir, fname)
+                                for coordinates_dir in coordinates_dirs:
+                                    heatmap_filename = f"{scenario_id}_{fname}"
+                                    heatmap_target = os.path.join(coordinates_dir, heatmap_filename)
+                                    try:
+                                        shutil.copy2(heatmap_source, heatmap_target)
+                                        found_heatmap_filename = heatmap_filename
+                                    except Exception:
+                                        pass
+                                break
+                        metrics_candidates = []
+                        for fname in os.listdir(csv_dir):
+                            if fname == "simulation_metrics.json":
+                                metrics_candidates = [fname]
+                                break
+                            if fname.startswith("delivery_runner_metrics_run_") and fname.endswith(".json"):
+                                metrics_candidates.append(fname)
+                        if metrics_candidates:
+                            metrics_source = os.path.join(csv_dir, metrics_candidates[0])
+                            for coordinates_dir in coordinates_dirs:
+                                metrics_filename = f"{scenario_id}_metrics.json"
+                                metrics_target = os.path.join(coordinates_dir, metrics_filename)
+                                try:
+                                    shutil.copy2(metrics_source, metrics_target)
+                                    found_metrics_filename = metrics_filename
+                                except Exception:
+                                    pass
+                            try:
+                                orders_value = _extract_orders_from_metrics(metrics_source)
+                                variant_key, blocked_holes = _extract_variant_info_from_metrics(metrics_source)
+                            except Exception:
+                                orders_value = None
+                                variant_key = None
+                                blocked_holes = None
+                        course_id: Optional[str] = None
+                        course_name: Optional[str] = None
+                        try:
+                            results_path = os.path.join(csv_dir, "results.json")
+                            if os.path.exists(results_path):
+                                with open(results_path, "r", encoding="utf-8") as f:
+                                    _results = json.load(f)
+                                course_dir_str = None
+                                try:
+                                    course_dir_str = _results.get("metadata", {}).get("course_dir")
+                                except Exception:
+                                    course_dir_str = None
+                                if isinstance(course_dir_str, str) and course_dir_str:
+                                    course_id = os.path.basename(course_dir_str.replace("\\", "/").rstrip("/"))
+                                    course_name = _humanize(course_id)
+                        except Exception:
+                            course_id = None
+                            course_name = None
+                        if course_id and course_name:
+                            discovered_courses[course_id] = course_name
+                        try:
+                            existing_geo = None
+                            for fname in os.listdir(csv_dir):
+                                if fname.startswith("hole_delivery_times") and fname.endswith(".geojson"):
+                                    existing_geo = os.path.join(csv_dir, fname)
+                                    break
+                            if not existing_geo:
+                                maybe = _generate_per_run_hole_geojson(Path(csv_dir))
+                                if maybe and os.path.exists(maybe):
+                                    existing_geo = str(maybe)
+                            if existing_geo:
+                                for coordinates_dir in coordinates_dirs:
+                                    hole_geojson_filename = f"hole_delivery_times_{scenario_id}.geojson"
+                                    hole_geojson_target = os.path.join(coordinates_dir, hole_geojson_filename)
+                                    try:
+                                        shutil.copy2(existing_geo, hole_geojson_target)
+                                        found_hole_geojson_filename = hole_geojson_filename
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                        file_info = get_file_info(source_path)
+                        try:
+                            mtime = os.path.getmtime(source_path)
+                            id_to_mtime[scenario_id] = mtime
+                            last_modified_iso = datetime.fromtimestamp(mtime).isoformat()
+                        except Exception:
+                            last_modified_iso = None
+                        path_parts = Path(source_path).parts
+                        sim_folder_name = None
+                        for i, part in enumerate(path_parts):
+                            if "delivery_runner" in part and "runners" in part:
+                                sim_folder_name = part
+                                break
+                        parsed = _parse_simulation_folder_name(sim_folder_name) if sim_folder_name else {}
+                        extracted_runners: Optional[int] = None
+                        extracted_orders: Optional[int] = None
+                        for part in path_parts:
+                            m_r = re.match(r"runners[_-]?([0-9]+)", part, re.IGNORECASE)
+                            if m_r:
+                                try:
+                                    extracted_runners = int(m_r.group(1))
+                                except Exception:
+                                    pass
+                            m_o = re.match(r"orders[_-]?([0-g]{2,3})", part, re.IGNORECASE)
+                            if m_o:
+                                try:
+                                    extracted_orders = int(m_o.group(1))
+                                except Exception:
+                                    pass
+                        meta = {
+                            "runners": (int(parsed.get("runners", "0") or 0) if isinstance(parsed, dict) else None)
+                            or extracted_runners,
+                            "bevCarts": int(parsed.get("bev_carts", "0") or 0) if isinstance(parsed, dict) else None,
+                            "golfers": int(parsed.get("golfers", "0") or 0) if isinstance(parsed, dict) else None,
+                            "scenario": parsed.get("scenario") if isinstance(parsed, dict) else None,
+                            "orders": (int(orders_value) if isinstance(orders_value, (int, float)) else None)
+                            or extracted_orders,
+                            "lastModified": last_modified_iso,
+                            "blockedHoles": blocked_holes,
+                        }
+                        entry = {
+                            "id": scenario_id,
+                            "name": f"{group_name}: {display_name}",
+                            "filename": target_filename,
+                            "description": file_info,
+                            "variantKey": variant_key or "none",
+                            "meta": {k: v for k, v in meta.items() if v is not None},
+                        }
+                        if course_id:
+                            entry["courseId"] = course_id
+                        if course_name:
+                            entry["courseName"] = course_name
+                        if found_heatmap_filename:
+                            entry["heatmapFilename"] = found_heatmap_filename
+                        if found_metrics_filename:
+                            entry["metricsFilename"] = found_metrics_filename
+                        if found_hole_geojson_filename:
+                            entry["holeDeliveryGeojson"] = found_hole_geojson_filename
+                        manifest["simulations"].append(entry)
+                    else:
+                        return False, []
+            if manifest["simulations"]:
+                env_default_id = os.environ.get("DEFAULT_SIMULATION_ID", "").strip()
+                chosen_id = (preferred_default_id or env_default_id or "").strip()
+                selected_default = None
+                if chosen_id:
+                    for sim in manifest["simulations"]:
+                        if sim["id"] == chosen_id:
+                            selected_default = sim
+                            break
+                if not selected_default:
+                    if id_to_mtime:
+                        try:
+                            newest_id = max(id_to_mtime.items(), key=lambda kv: kv[1])[0]
+                            selected_default = next(
+                                (sim for sim in manifest["simulations"] if sim["id"] == newest_id), None
+                            )
+                        except Exception:
+                            selected_default = None
+                if not selected_default:
+                    selected_default = next(
+                        (sim for sim in manifest["simulations"] if not sim["name"].startswith("Local:")),
+                        manifest["simulations"][0],
+                    )
+                manifest["defaultSimulation"] = selected_default["id"]
+            if discovered_courses:
+                items = list(discovered_courses.items())
+                items.sort(key=lambda kv: (0 if kv[0] == "pinetree_country_club" else 1, kv[1].lower()))
+                manifest["courses"] = [{"id": cid, "name": cname} for cid, cname in items]
+            for coordinates_dir in coordinates_dirs:
+                manifest_path = os.path.join(coordinates_dir, "manifest.json")
+                with open(manifest_path, "w") as f:
+                    json.dump(manifest, f, indent=2)
+            metrics_source = map_animation_dir / "public" / "simulation_metrics.json"
+            if os.path.exists(metrics_source):
+                for coordinates_dir in coordinates_dirs:
+                    metrics_target = os.path.join(coordinates_dir, "simulation_metrics.json")
+                    try:
+                        shutil.copy2(metrics_source, metrics_target)
+                    except Exception:
+                        pass
+            copy_hole_delivery_geojson(coordinates_dirs)
+            return True, list(discovered_courses.keys())
+        except Exception:
+            return False, []
+
+    def ensure_setup_required_assets(course_ids: list[str]) -> None:
+        try:
+            courses_base_dir = project_root / "courses"
+            target_dirs = [setup_public_dir, map_animation_dir / "public"]
+            for course_id in course_ids:
+                course_src_dir = courses_base_dir / course_id
+                for base in target_dirs:
+                    course_target_dir = base / course_id
+                    course_target_dir.mkdir(exist_ok=True)
+                assets_to_copy = {
+                    "holes_connected.geojson": f"geojson{os.sep}holes_connected.geojson",
+                    "cart_paths.geojson": f"geojson{os.sep}cart_paths.geojson",
+                    "course_polygon.geojson": f"geojson{os.sep}course_polygon.geojson",
+                    "holes.geojson": f"geojson{os.sep}holes.geojson",
+                    "greens.geojson": f"geojson{os.sep}greens.geojson",
+                    "tees.geojson": f"geojson{os.sep}tees.geojson",
+                    "holes_geofenced.geojson": f"geojson{os.sep}generated{os.sep}holes_geofenced.geojson",
+                }
+                for target_name, source_subpath in assets_to_copy.items():
+                    source_path = course_src_dir / source_subpath
+                    if not source_path.exists():
+                        if target_name == "holes_connected.geojson":
+                            fallback_dir = map_animation_dir / "public" / course_id
+                            if fallback_dir.exists():
+                                source_path = fallback_dir / target_name
+                        if not source_path.exists():
+                            continue
+                    for base in target_dirs:
+                        course_target_dir = base / course_id
+                        target_path = course_target_dir / target_name
+                        try:
+                            if (
+                                not target_path.exists()
+                                or source_path.stat().st_mtime > target_path.stat().st_mtime
+                            ):
+                                shutil.copy2(str(source_path), str(target_path))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    # Main publishing logic starts here
+    try:
+        all_simulations = find_all_simulations()
+        if not all_simulations:
+            print("No new simulation results found to publish.")
+            return
+
+        ok, courses = copy_all_coordinate_files(all_simulations, preferred_default_id=None)
+        if not ok:
+            print("⚠️  Failed to copy coordinate files for map display.")
+            return
+
+        ensure_setup_required_assets(courses)
+        print("✅ Map assets updated successfully.")
+
+    except Exception as e:
+        print(f"⚠️  Skipped map asset update due to error: {e}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Two-pass optimization: 10 minimal for all; 10 full for winners")
     p.add_argument("--course-dir", default="courses/pinetree_country_club")
+    p.add_argument(
+        "--run-all-courses", action="store_true", help="Run optimization for all courses in the 'courses' directory."
+    )
     p.add_argument("--tee-scenario", default="real_tee_sheet")
     p.add_argument("--orders-levels", nargs="+", type=int, default=None, help="Orders totals to simulate (required unless --summarize-only)")
     p.add_argument("--runner-range", type=str, default="1-3")
@@ -188,6 +1083,40 @@ def main() -> None:
 
     project_root = Path(__file__).resolve().parents[2]
 
+    if args.run_all_courses:
+        courses_root = project_root / "courses"
+        # A course is valid if it's a directory and has a tee times config.
+        # This helps filter out temporary directories or copies.
+        course_dirs = [
+            d for d in courses_root.iterdir() if d.is_dir() and (d / "config" / "tee_times_config.json").exists()
+        ]
+
+        # Reconstruct the command line, removing --run-all-courses and any existing --course-dir
+        cmd_args = [sys.argv[0]]  # script name
+        i = 1
+        while i < len(sys.argv):
+            arg = sys.argv[i]
+            if arg == "--run-all-courses":
+                i += 1
+                continue
+            if arg == "--course-dir":
+                i += 2  # skip value
+                continue
+            if arg.startswith("--course-dir="):
+                i += 1
+                continue
+            cmd_args.append(arg)
+            i += 1
+
+        base_cmd = [sys.executable] + cmd_args
+
+        print(f"Found {len(course_dirs)} valid courses to process.")
+        for course_d in course_dirs:
+            print(f"\n{'=' * 20}\nRunning for course: {course_d.name}\n{'=' * 20}\n")
+            cmd = base_cmd + ["--course-dir", str(course_d.resolve())]
+            subprocess.run(cmd, check=False)
+        return
+    
     course_dir = Path(args.course_dir)
     if not course_dir.is_absolute():
         course_dir = (project_root / args.course_dir).resolve()
@@ -482,20 +1411,8 @@ def main() -> None:
         pass
 
     # Post-run: copy coordinates and related artifacts for this optimization root
-    # into the map app's public directories by invoking run_map_app.py.
-    try:
-        env = os.environ.copy()
-        env["SIM_BASE_DIR"] = str(root)
-        # Instruct the map app to prefer run_01 when selecting representative runs
-        env["RUN_MAP_SELECT_RUNS"] = "run_01"
-        run_map_script = (project_root / "my-map-animation" / "run_map_app.py")
-        if run_map_script.exists():
-            print("\n🔁 Updating map assets (coordinates, manifests, heatmaps)...")
-            subprocess.run([args.python_bin, str(run_map_script)], check=False, env=env)
-        else:
-            print(f"⚠️  Map app script not found at {run_map_script}; skipping asset update")
-    except Exception as e:
-        print(f"⚠️  Skipped map asset update due to error: {e}")
+    # into the map app's public directories.
+    _publish_map_assets(optimization_root=root, project_root=project_root)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,15 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+# Flag to prevent redundant metrics generation in a single run
+_METRICS_GENERATED = False
+
+
+def reset_metrics_flag():
+    """Reset the global flag to allow metrics generation again."""
+    global _METRICS_GENERATED
+    _METRICS_GENERATED = False
+
 from .bev_cart_metrics import (
     calculate_bev_cart_metrics,
     format_metrics_report as format_bev_metrics_report,
@@ -319,6 +328,10 @@ def generate_and_save_metrics(
     Returns:
         Tuple of (bev_cart_metrics, delivery_runner_metrics) - either may be None
     """
+    global _METRICS_GENERATED
+    if _METRICS_GENERATED:
+        return None, None  # Avoid re-generating metrics
+        
     has_bev_cart, has_delivery_runner = detect_simulation_services(
         simulation_result, bev_cart_coordinates, bev_cart_service
     )
@@ -391,4 +404,5 @@ def generate_and_save_metrics(
         minimal=bool(metrics_kwargs.get("minimal_outputs", False)),
     )
     
+    _METRICS_GENERATED = True  # Set flag to prevent re-generation
     return bev_cart_metrics, delivery_runner_metrics

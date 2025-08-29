@@ -103,6 +103,7 @@ class RunMetrics:
     orders_per_runner_hour: float
     successful_orders: int
     total_orders: int
+    delivery_stats: List[Dict[str, Any]]
 
 
 def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
@@ -112,6 +113,17 @@ def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
+        
+        # Load delivery_stats from results.json for heatmap data
+        delivery_stats: List[Dict[str, Any]] = []
+        try:
+            results_path = run_dir / "results.json"
+            if results_path.exists():
+                results_data = json.loads(results_path.read_text(encoding="utf-8"))
+                delivery_stats = results_data.get("delivery_stats") or []
+        except Exception:
+            pass # Non-fatal if results.json is missing or malformed
+
         return RunMetrics(
             on_time_rate=float(data.get("on_time_rate", 0.0) or 0.0),
             failed_rate=float(data.get("failed_rate", 0.0) or 0.0),
@@ -120,6 +132,7 @@ def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
             orders_per_runner_hour=float(data.get("orders_per_runner_hour", 0.0) or 0.0),
             successful_orders=int(data.get("successful_orders", data.get("successfulDeliveries", 0)) or 0),
             total_orders=int(data.get("total_orders", data.get("totalOrders", 0)) or 0),
+            delivery_stats=delivery_stats,
         )
 
     # Fallback simulation_metrics.json
@@ -136,6 +149,17 @@ def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
             # Try to extract p90 from fallback JSON if available
             p90_val = float(dm.get("deliveryCycleTimeP90", float("nan")) or float("nan"))
             avg_val = float(dm.get("avgOrderTime", 0.0) or 0.0)
+            
+            # Try to load delivery_stats from results.json in fallback path too
+            delivery_stats_fallback: List[Dict[str, Any]] = []
+            try:
+                results_path = run_dir / "results.json"
+                if results_path.exists():
+                    results_data = json.loads(results_path.read_text(encoding="utf-8"))
+                    delivery_stats_fallback = results_data.get("delivery_stats") or []
+            except Exception:
+                pass
+
             return RunMetrics(
                 on_time_rate=on_time_pct,
                 failed_rate=failed_rate,
@@ -144,6 +168,7 @@ def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
                 orders_per_runner_hour=float(dm.get("ordersPerRunnerHour", 0.0) or 0.0),
                 successful_orders=successful,
                 total_orders=total,
+                delivery_stats=delivery_stats_fallback,
             )
         except Exception:
             return None
@@ -165,6 +190,22 @@ def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
     avg_vals = [m.avg for m in items if not math.isnan(m.avg)]
     oph_vals = [m.orders_per_runner_hour for m in items if not math.isnan(m.orders_per_runner_hour)]
 
+    # Aggregate drive time per hole from all delivery_stats
+    drive_times_by_hole: Dict[int, List[float]] = {}
+    for m in items:
+        for stat in m.delivery_stats:
+            try:
+                hole = int(stat.get("hole", 0))
+                drive_time = float(stat.get("drive_time_to_golfer", 0.0))
+                if hole > 0 and not math.isnan(drive_time):
+                    drive_times_by_hole.setdefault(hole, []).append(drive_time)
+            except (ValueError, TypeError):
+                continue
+    
+    avg_drive_time_per_hole: Dict[int, float] = {
+        hole: mean(times) for hole, times in drive_times_by_hole.items()
+    }
+
     total_successes = sum(m.successful_orders for m in items)
     total_orders = sum(m.total_orders for m in items)
     ot_lo, ot_hi = wilson_ci(total_successes, total_orders, confidence=0.95)
@@ -176,6 +217,7 @@ def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
         "p90_mean": mean(p90_vals) if p90_vals else float("nan"),
         "avg_delivery_time_mean": mean(avg_vals) if avg_vals else float("nan"),
         "oph_mean": mean(oph_vals),
+        "avg_drive_time_per_hole": avg_drive_time_per_hole,
         "on_time_wilson_lo": ot_lo,
         "on_time_wilson_hi": ot_hi,
         "total_successful_orders": total_successes,
@@ -306,6 +348,7 @@ def _csv_headers() -> List[str]:
         "p90_mean",
         "avg_delivery_time_mean",
         "oph_mean",
+        "avg_drive_time_per_hole",
         "total_successful_orders",
         "total_orders",
         "group_dir",
@@ -323,6 +366,7 @@ def _row_from_context_and_agg(context: Dict[str, Any], agg: Dict[str, Any], grou
         "p90_mean": agg.get("p90_mean"),
         "avg_delivery_time_mean": agg.get("avg_delivery_time_mean"),
         "oph_mean": agg.get("oph_mean"),
+        "avg_drive_time_per_hole": json.dumps(agg.get("avg_drive_time_per_hole")),
         "total_successful_orders": agg.get("total_successful_orders"),
         "total_orders": agg.get("total_orders"),
         "group_dir": str(group_dir),

@@ -46,4 +46,8 @@ python scripts/routing/build_cart_network_from_holes_connected.py courses/[cours
 **Outputs**: `pkl/cart_graph.pkl` (NetworkX graph built from holes_connected data, replaces the initial cart_graph.pkl)
 
 ## Step 4 — Compute travel times
+```powershell
+python scripts/routing/generate_node_travel_times.py --course-dir courses/[course_name]
 ```
+
+**Outputs**: `node_travel_times.json` (Pre-computed travel times from the clubhouse to all course nodes, used for accurate delivery time simulation.)
