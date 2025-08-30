@@ -74,8 +74,15 @@ def generate_runner_coordinates_from_events(
             target_type = type(sample_key)
         except Exception:
             target_type = int
+
         normalized: List[Any] = []
         for n in nodes:
+            # First, attempt to convert string numbers to int
+            if isinstance(n, str):
+                s = n.strip()
+                if s.lstrip("-").isdigit():
+                    n = int(s)
+            
             nn = _coerce_node_id(n, target_type)
             # If still not present, try the opposite common coercion
             if nn not in graph.nodes:

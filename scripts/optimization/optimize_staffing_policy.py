@@ -37,10 +37,14 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+import geopandas as gpd
 
 # Heatmap aggregation
 from golfsim.viz.heatmap_viz import create_course_heatmap
+
+# GEOJSON EXPORT
+from golfsim.viz.heatmap_viz import load_geofenced_holes
 
 # Optional .env loader (for GEMINI_API_KEY/GOOGLE_API_KEY)
 try:
@@ -191,19 +195,22 @@ def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
     oph_vals = [m.orders_per_runner_hour for m in items if not math.isnan(m.orders_per_runner_hour)]
 
     # Aggregate drive time per hole from all delivery_stats
-    drive_times_by_hole: Dict[int, List[float]] = {}
+    total_drive_time_per_hole: Dict[int, float] = {}
+    orders_per_hole: Dict[int, int] = {}
     for m in items:
         for stat in m.delivery_stats:
             try:
-                hole = int(stat.get("hole", 0))
-                drive_time = float(stat.get("drive_time_to_golfer", 0.0))
+                hole = int(stat.get("hole_num", 0))
+                drive_time = float(stat.get("total_drive_time_s", 0.0))
                 if hole > 0 and not math.isnan(drive_time):
-                    drive_times_by_hole.setdefault(hole, []).append(drive_time)
+                    total_drive_time_per_hole[hole] = total_drive_time_per_hole.get(hole, 0.0) + drive_time
+                    orders_per_hole[hole] = orders_per_hole.get(hole, 0) + 1
             except (ValueError, TypeError):
                 continue
-    
+
     avg_drive_time_per_hole: Dict[int, float] = {
-        hole: mean(times) for hole, times in drive_times_by_hole.items()
+        hole: total_drive_time_per_hole.get(hole, 0.0) / orders_per_hole.get(hole, 1)
+        for hole in orders_per_hole.keys()
     }
 
     total_successes = sum(m.successful_orders for m in items)
@@ -218,6 +225,8 @@ def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
         "avg_delivery_time_mean": mean(avg_vals) if avg_vals else float("nan"),
         "oph_mean": mean(oph_vals),
         "avg_drive_time_per_hole": avg_drive_time_per_hole,
+        "total_drive_time_per_hole": total_drive_time_per_hole,
+        "orders_per_hole": orders_per_hole,
         "on_time_wilson_lo": ot_lo,
         "on_time_wilson_hi": ot_hi,
         "total_successful_orders": total_successes,
@@ -349,6 +358,8 @@ def _csv_headers() -> List[str]:
         "avg_delivery_time_mean",
         "oph_mean",
         "avg_drive_time_per_hole",
+        "total_drive_time_per_hole",
+        "orders_per_hole",
         "total_successful_orders",
         "total_orders",
         "group_dir",
@@ -367,6 +378,8 @@ def _row_from_context_and_agg(context: Dict[str, Any], agg: Dict[str, Any], grou
         "avg_delivery_time_mean": agg.get("avg_delivery_time_mean"),
         "oph_mean": agg.get("oph_mean"),
         "avg_drive_time_per_hole": json.dumps(agg.get("avg_drive_time_per_hole")),
+        "total_drive_time_per_hole": json.dumps(agg.get("total_drive_time_per_hole")),
+        "orders_per_hole": json.dumps(agg.get("orders_per_hole")),
         "total_successful_orders": agg.get("total_successful_orders"),
         "total_orders": agg.get("total_orders"),
         "group_dir": str(group_dir),
@@ -925,6 +938,99 @@ def _write_gm_staffing_policy_report(
     except Exception:
         return None
 
+
+def _write_group_delivery_geojson(
+    group_dir: Path,
+    *,
+    course_dir: Path,
+    tee_scenario: str,
+    variant_key: str,
+    runners: int,
+) -> Optional[Path]:
+    """Create a `hole_delivery_times.geojson` for this group using its aggregate data."""
+    try:
+        agg_path = group_dir / "@aggregate.json"
+        if not agg_path.exists():
+            return None
+
+        with agg_path.open("r", encoding="utf-8") as f:
+            agg_data = json.load(f)
+
+        # Reformat aggregate data into the hole_stats structure
+        hole_stats: Dict[int, Dict[str, Union[float, int]]] = {}
+        avg_times = agg_data.get("avg_drive_time_per_hole", {})
+        orders_counts = agg_data.get("orders_per_hole", {})
+
+        for hole_str, avg_time_sec in avg_times.items():
+            try:
+                hole_num = int(hole_str)
+                count = int(orders_counts.get(hole_str, 0))
+                if count > 0:
+                    hole_stats[hole_num] = {
+                        "avg_time": float(avg_time_sec) / 60.0,  # Convert to minutes
+                        "count": count,
+                        "min_time": 0.0,
+                        "max_time": 0.0,
+                    }
+            except (ValueError, TypeError):
+                continue
+        
+        hole_polygons = load_geofenced_holes(course_dir)
+        feature_collection = build_feature_collection(hole_polygons, hole_stats)
+
+        save_path = group_dir / "hole_delivery_times.geojson"
+        with save_path.open("w", encoding="utf-8") as f:
+            json.dump(feature_collection, f)
+        
+        return save_path
+    except Exception:
+        return None
+
+
+def build_feature_collection(
+    hole_polygons: Dict[int, Any],
+    hole_stats: Dict[int, Dict[str, Union[float, int]]],
+) -> Dict[str, Any]:
+    """Build a GeoJSON FeatureCollection of hole polygons with delivery stats.
+
+    Each feature contains properties:
+      - hole: int
+      - has_data: bool
+      - avg_time, min_time, max_time, count (when available)
+    """
+    features: list[Dict[str, Any]] = []
+
+    for hole_num, geom in hole_polygons.items():
+        props: Dict[str, Any] = {"hole": int(hole_num)}
+        stats = hole_stats.get(hole_num)
+        if stats:
+            props.update(
+                {
+                    "has_data": True,
+                    "avg_time": float(stats.get("avg_time", 0.0)),
+                    "min_time": float(stats.get("min_time", 0.0)),
+                    "max_time": float(stats.get("max_time", 0.0)),
+                    "count": int(stats.get("count", 0)),
+                }
+            )
+        else:
+            props.update({"has_data": False})
+
+        # Convert shapely geometry to GeoJSON-like mapping
+        gdf = gpd.GeoDataFrame({"geometry": [geom]}, crs="EPSG:4326")
+        feature_geom = json.loads(gdf.to_json())["features"][0]["geometry"]
+
+        features.append(
+            {
+                "type": "Feature",
+                "properties": props,
+                "geometry": feature_geom,
+            }
+        )
+
+    return {"type": "FeatureCollection", "features": features}
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Optimize runners and blocking policy across orders levels")
     p.add_argument("--course-dir", default="courses/pinetree_country_club")
@@ -1073,6 +1179,14 @@ def main() -> None:
                         runners=n,
                         run_dirs=run_dirs,
                     )
+                    # Write aggregated GeoJSON for this group
+                    _write_group_delivery_geojson(
+                        runner_dir,
+                        course_dir=course_dir,
+                        tee_scenario=args.tee_scenario,
+                        variant_key=v_key,
+                        runners=n,
+                    )
                     _upsert_row(csv_rows, _row_from_context_and_agg(context, agg, runner_dir))
         else:
             for variant in selected_variants:
@@ -1097,6 +1211,14 @@ def main() -> None:
                         variant_key=variant.key,
                         runners=n,
                         run_dirs=run_dirs,
+                    )
+                    # Write aggregated GeoJSON for this group
+                    _write_group_delivery_geojson(
+                        out_dir,
+                        course_dir=course_dir,
+                        tee_scenario=args.tee_scenario,
+                        variant_key=variant.key,
+                        runners=n,
                     )
                     _upsert_row(csv_rows, _row_from_context_and_agg(context, agg, out_dir))
 
@@ -1176,6 +1298,14 @@ def main() -> None:
                         runners=n,
                         run_dirs=run_dirs,
                     )
+                    # Write aggregated GeoJSON for this group after stage 2
+                    _write_group_delivery_geojson(
+                        out_dir,
+                        course_dir=course_dir,
+                        tee_scenario=args.tee_scenario,
+                        variant_key=variant.key,
+                        runners=n,
+                    )
                     _upsert_row(csv_rows, _row_from_context_and_agg(context, agg2, out_dir))
 
                 # Rank all kept combos by utility score (no hard filter on minimal runners)
@@ -1240,6 +1370,14 @@ def main() -> None:
                         variant_key=variant.key,
                         runners=n,
                         run_dirs=run_dirs,
+                    )
+                    # Write aggregated GeoJSON for this group after stage 3
+                    _write_group_delivery_geojson(
+                        out_dir,
+                        course_dir=course_dir,
+                        tee_scenario=args.tee_scenario,
+                        variant_key=variant.key,
+                        runners=n,
                     )
                     _upsert_row(csv_rows, _row_from_context_and_agg(context, agg3, out_dir))
             elif not args.no_auto_confirm:

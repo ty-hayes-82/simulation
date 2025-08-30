@@ -58,15 +58,37 @@ export default function BlockedHolesMatrix() {
     let cancelled = false;
     const loadAll = async () => {
       const next: Record<string, LoadedMetrics> = {};
+      // Group simulations by their parent directory, which corresponds to a variant group
+      const groups = new Map<string, SimulationEntry[]>();
       for (const sim of relevantSims) {
-        if (!sim.metricsFilename) continue;
+        // Parse simulation ID to construct output directory path
+        // Format: {course_id}__{pass_name}__orders_{orders:03d}__runners_{runners}__{variant}
+        const parts = sim.id.split('__');
+        if (parts.length >= 5) {
+          const [courseId, passName, ordersPart, runnersPart] = parts;
+          const key = `${courseId}/${passName}/${ordersPart}/${runnersPart}`;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key)!.push(sim);
+        }
+      }
+
+      for (const [groupKey, groupSims] of Array.from(groups.entries())) {
+        if (groupSims.length === 0) continue;
+        const aggregatePath = `${groupKey}/@aggregate.json`;
+
         try {
-          const resp = await fetch(`/coordinates/${sim.metricsFilename}?t=${Date.now()}`);
+          const resp = await fetch(`/coordinates/${aggregatePath}?t=${Date.now()}`);
           if (!resp.ok) continue;
           const data = (await resp.json()) as LoadedMetrics;
-          next[sim.id] = data;
-        } catch {}
+          // Store the aggregated data for each sim in the group
+          for (const sim of groupSims) {
+            next[sim.id] = data;
+          }
+        } catch (e) {
+          console.error(`Failed to load aggregate metrics from ${aggregatePath}:`, e);
+        }
       }
+
       if (!cancelled) setMetricsById(next);
     };
     if (relevantSims.length > 0) loadAll();
@@ -78,43 +100,63 @@ export default function BlockedHolesMatrix() {
   }
 
   const formatOnTime = (metrics?: LoadedMetrics): string => {
-    if (!metrics || !metrics.deliveryMetrics) return '—';
-    const dm = metrics.deliveryMetrics || {};
-    const pct = Number((dm.onTimePercentage ?? dm.onTimeRate ?? 0));
-    return Number.isFinite(pct) ? `${pct.toFixed(0)}%` : '—';
+    if (!metrics) return '—';
+    // Support both single run and aggregate formats
+    const deliveryMetrics = metrics.deliveryMetrics || metrics;
+    const pct = Number((deliveryMetrics.on_time_mean ?? deliveryMetrics.onTimePercentage ?? deliveryMetrics.onTimeRate ?? 0));
+    // on_time_mean is a fraction, so multiply by 100
+    const displayPct = deliveryMetrics.on_time_mean ? pct * 100 : pct;
+    return Number.isFinite(displayPct) ? `${displayPct.toFixed(0)}%` : '—';
   };
 
   const buildTooltipData = (metrics?: LoadedMetrics): { label: string, value: string }[] => {
-    if (!metrics || !metrics.deliveryMetrics) return [];
-    const dm: any = metrics.deliveryMetrics || {};
-    const onTime = Number(dm.onTimePercentage ?? dm.onTimeRate ?? 0);
+    if (!metrics) return [];
+    const dm: any = metrics.deliveryMetrics || metrics;
+    const onTime = Number(dm.on_time_mean ?? dm.onTimePercentage ?? dm.onTimeRate ?? 0);
+    const displayOnTime = dm.on_time_mean ? onTime * 100 : onTime;
+
     return [
-      { label: 'Orders', value: `${Number(dm.totalOrders ?? dm.orderCount ?? 0)}` },
-      { label: 'Revenue', value: `$${Number(dm.revenue ?? 0).toFixed(0)}` },
-      { label: 'Avg Order Time', value: `${Number(dm.avgOrderTime ?? 0).toFixed(1)}m` },
-      { label: 'On-Time %', value: `${Number.isFinite(onTime) ? onTime.toFixed(0) : '—'}%` },
-      { label: 'Failed', value: `${Number(dm.failedDeliveries ?? dm.failedOrderCount ?? 0)}` },
-      { label: 'Queue Wait', value: `${Number(dm.queueWaitAvg ?? 0).toFixed(1)}m` },
-      { label: 'P90 Cycle', value: `${Number(dm.deliveryCycleTimeP90 ?? 0).toFixed(1)}m` },
-      { label: 'Orders / Runner-Hr', value: `${Number(dm.ordersPerRunnerHour ?? 0).toFixed(1)}` },
-      { label: 'Revenue / Runner-Hr', value: `$${Number(dm.revenuePerRunnerHour ?? 0).toFixed(0)}` },
+      { label: 'Orders', value: `${Number(dm.orders ?? dm.totalOrders ?? dm.orderCount ?? 0)}` },
+      { label: 'Runs', value: `${Number(dm.runs ?? 1)}` },
+      { label: 'Avg On-Time %', value: `${Number.isFinite(displayOnTime) ? displayOnTime.toFixed(0) : '—'}%` },
+      { label: 'Avg Failed', value: `${(Number(dm.failed_mean ?? dm.failedDeliveries ?? dm.failedOrderCount ?? 0) * 100).toFixed(1)}%` },
+      { label: 'Avg Order Time', value: `${Number(dm.avg_delivery_time_mean ?? dm.avgOrderTime ?? 0).toFixed(1)}m` },
+      { label: 'Avg P90 Cycle', value: `${Number(dm.p90_mean ?? dm.deliveryCycleTimeP90 ?? 0).toFixed(1)}m` },
+      { label: 'Avg OPH', value: `${Number(dm.oph_mean ?? dm.ordersPerRunnerHour ?? 0).toFixed(1)}` },
     ];
   };
 
   const TooltipContent = ({ metrics }: { metrics?: LoadedMetrics }) => {
     const data = buildTooltipData(metrics);
+    const driveTimes = (metrics as any)?.avg_drive_time_per_hole;
+
     if (data.length === 0) {
       return <Text as="div" size="2">No metrics available</Text>;
     }
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '4px 12px', alignItems: 'center' }}>
-        {data.map(({ label, value }) => (
-          <React.Fragment key={label}>
-            <Text size="2" style={{ justifySelf: 'start' }}>{label}:</Text>
-            <Text size="2" weight="bold" style={{ justifySelf: 'end' }}>{value}</Text>
-          </React.Fragment>
-        ))}
-      </div>
+      <Flex direction="column" gap="2">
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '4px 12px', alignItems: 'center' }}>
+          {data.map(({ label, value }) => (
+            <React.Fragment key={label}>
+              <Text size="2" style={{ justifySelf: 'start' }}>{label}:</Text>
+              <Text size="2" weight="bold" style={{ justifySelf: 'end' }}>{value}</Text>
+            </React.Fragment>
+          ))}
+        </div>
+        {driveTimes && Object.keys(driveTimes).length > 0 && (
+          <Flex direction="column" gap="1" mt="2">
+            <Text size="2" weight="bold">Avg Drive Time by Hole (min)</Text>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(60px, 1fr))', gap: '4px 8px' }}>
+              {Object.entries(driveTimes).map(([hole, time]) => (
+                <Flex key={hole} gap="1" justify="between">
+                  <Text size="1">H{hole}:</Text>
+                  <Text size="1" weight="bold">{(Number(time) / 60).toFixed(1)}</Text>
+                </Flex>
+              ))}
+            </div>
+          </Flex>
+        )}
+      </Flex>
     );
   };
 

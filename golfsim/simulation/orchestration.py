@@ -314,11 +314,6 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
         effective_runner_speed = config.delivery_runner_speed_mps
 
         env = simpy.Environment()
-        # Create an empty order log file with headers
-        order_log_path = Path(config.output_dir) / f"run_{run_idx:02d}" / "order_logs.csv"
-        order_log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(order_log_path, "w") as f:
-            f.write("order_id,placed_ts,placed_hole,queue,mins_to_set,drive_out_min,drive_total_min,delivery_hole,golfer_node_idx,predicted_node_idx,actual_node_idx\n")
 
         # Use the simulation config to create the service
         delivery_service = MultiRunnerDeliveryService(
@@ -412,6 +407,8 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
         run_until = max(delivery_service.service_close_s + 1, max((o.order_time_s for o in orders), default=0) + 4 * 3600)
         env.run(until=run_until)
 
+        delivery_stats_map = {s["order_id"]: s for s in delivery_service.delivery_stats}
+
         sim_result: dict[str, Any] = {
             "success": True,
             "simulation_type": "multi_golfer_multi_runner" if int(config.num_runners) > 1 else "multi_golfer_single_runner",
@@ -420,8 +417,11 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                     "order_id": getattr(o, "order_id", None),
                     "golfer_group_id": getattr(o, "golfer_group_id", None),
                     "golfer_id": getattr(o, "golfer_id", None),
-                    "hole_num": getattr(o, "hole_num", None),
+                    "placed_hole": getattr(o, "hole_num", None),
+                    "delivered_hole": delivery_stats_map.get(o.order_id, {}).get("hole_num"),
                     "order_time_s": getattr(o, "order_time_s", None),
+                    "queue_time_s": delivery_stats_map.get(o.order_id, {}).get("queue_delay_s"),
+                    "drive_time_s": delivery_stats_map.get(o.order_id, {}).get("total_drive_time_s"),
                     "status": getattr(o, "status", "pending"),
                     "total_completion_time_s": getattr(o, "total_completion_time_s", 0.0),
                 }
@@ -432,8 +432,11 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                     "order_id": getattr(o, "order_id", None),
                     "golfer_group_id": getattr(o, "golfer_group_id", None),
                     "golfer_id": getattr(o, "golfer_id", None),
-                    "hole_num": getattr(o, "hole_num", None),
+                    "placed_hole": getattr(o, "hole_num", None),
+                    "delivered_hole": delivery_stats_map.get(o.order_id, {}).get("hole_num"),
                     "order_time_s": getattr(o, "order_time_s", None),
+                    "queue_time_s": delivery_stats_map.get(o.order_id, {}).get("queue_delay_s"),
+                    "drive_time_s": delivery_stats_map.get(o.order_id, {}).get("total_drive_time_s"),
                     "status": getattr(o, "status", "pending"),
                     "total_completion_time_s": getattr(o, "total_completion_time_s", 0.0),
                 }
@@ -566,7 +569,13 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                     events: list[dict[str, Any]] = []
                     # Unify event sources
                     try:
-                        events = events_from_activity_log(sim_result.get("activity_log", []), sim_result.get("orders_all", []))
+                        simulation_id = build_simulation_id(config.output_dir, run_idx)
+                        events = events_from_activity_log(
+                            activity_log=sim_result.get("activity_log", []),
+                            simulation_id=simulation_id,
+                            default_entity_type="delivery_runner",
+                            default_entity_id="runner_1"
+                        )
                         logger.debug(f"Run {run_idx}: Found {len(events)} events from activity log.")
                         if not bool(getattr(config, "minimal_outputs", False)):
                             write_event_log_csv(events, run_path / "events.csv")
@@ -581,10 +590,15 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                     try:
                         import pickle
                         cart_graph_path = Path(config.course_dir) / "pkl" / "cart_graph.pkl"
+                        logger.info(f"Attempting to load cart graph from: {cart_graph_path}")
                         if cart_graph_path.exists():
                             with cart_graph_path.open("rb") as f:
                                 cart_graph = pickle.load(f)
-                    except Exception:
+                            logger.info("Cart graph loaded successfully.")
+                        else:
+                            logger.warning("Cart graph file does not exist.")
+                    except Exception as e:
+                        logger.error(f"Failed to load cart graph: {e}")
                         cart_graph = None
 
                     # Generate golfer coordinates first
@@ -602,6 +616,7 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                     # Generate runner coordinates using post-processing approach
                     runner_points = []
                     if cart_graph is not None and events:
+                        logger.info("Cart graph and events are available, proceeding with runner coordinate generation.")
                         try:
                             import pandas as pd
                             
@@ -645,7 +660,11 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                             logger.warning("Post-processing coordinate generation failed: %s", e)
                             runner_points = []
                     else:
-                        logger.warning("Cart graph not available or no events - skipping runner coordinate generation")
+                        logger.warning(
+                            "Skipping runner coordinate generation. Cart graph available: %s. Events available: %s",
+                            cart_graph is not None,
+                            bool(events)
+                        )
                     
                     # Combine all coordinate streams
                     streams: dict[str, list[dict[str, Any]]] = {}
@@ -659,6 +678,7 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                         streams.update(golfer_points_csv)
                     
                     logger.debug(f"Run {run_idx}: Total coordinate streams to write: {len(streams)}.")
+                    logger.debug(f"Run {run_idx}: Stream keys: {list(streams.keys())}")
 
                     # Annotate golfer colors from order/delivery events
                     try:

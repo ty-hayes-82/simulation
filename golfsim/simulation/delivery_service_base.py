@@ -66,9 +66,9 @@ class BaseDeliveryService:
         sim_cfg = load_simulation_config(self.course_dir)
         self.clubhouse_coords = sim_cfg.clubhouse
         try:
-            self.queue_timeout_s = max(60, int(getattr(sim_cfg, "minutes_for_delivery_order_failure", 60)) * 60)
+            self.queue_timeout_s = max(60, int(getattr(sim_cfg, "minutes_for_delivery_order_failure", 120)) * 60)
         except Exception:
-            self.queue_timeout_s = 3600
+            self.queue_timeout_s = 7200
         if getattr(sim_cfg, "service_hours", None) is not None:
             open_time = f"{int(sim_cfg.service_hours.start_hour):02d}:00"
             close_time = f"{int(sim_cfg.service_hours.end_hour):02d}:00"

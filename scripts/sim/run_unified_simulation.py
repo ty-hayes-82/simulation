@@ -2170,21 +2170,31 @@ def _load_holes_connected_points(course_dir: str) -> List[Tuple[float, float]]:
         if geom.get("type") != "Point":
             continue
         props = (feat or {}).get("properties") or {}
-        if "idx" not in props:
+        
+        # Support both old format (idx) and new format (node_id)
+        node_id = None
+        if "node_id" in props:
+            try:
+                node_id = int(props["node_id"])
+            except Exception:
+                continue
+        elif "idx" in props:
+            try:
+                node_id = int(props["idx"])
+            except Exception:
+                continue
+        else:
             continue
-        try:
-            idx = int(props["idx"])  # enforce sortable
-        except Exception:
-            continue
+            
         coords = geom.get("coordinates") or []
         if not coords or len(coords) < 2:
             continue
         lon = float(coords[0])
         lat = float(coords[1])
-        pts[idx] = (lon, lat)
+        pts[node_id] = (lon, lat)
 
     if not pts:
-        raise SystemExit("holes_connected.geojson contains no Point features with integer 'idx'")
+        raise SystemExit("holes_connected.geojson contains no Point features with integer 'node_id' or 'idx'")
 
     ordered = [pts[i] for i in sorted(pts.keys())]
     return ordered
@@ -4165,7 +4175,7 @@ def main() -> None:
         parser.add_argument(
             "--tee-scenario",
             type=str,
-            default="typical_weekday",
+            default="real_tee_sheet",
             help=(
                 "Tee-times scenario key from course tee_times_config.json. "
                 "Use 'none' to disable and rely on manual --groups-* options."

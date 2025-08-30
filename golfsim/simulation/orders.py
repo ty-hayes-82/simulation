@@ -217,7 +217,7 @@ def generate_delivery_orders_by_hour_distribution(
             continue
         
         for _ in range(cnt):
-            for attempt in range(5):  # Try up to 5 times to place an order on an allowed hole
+            for attempt in range(50):  # Try up to 5 times to place an order on an allowed hole
                 order_time_s = random.randint(start_s, end_s - 1)
                 if service_open_s is not None:
                     order_time_s = max(order_time_s, service_open_s)

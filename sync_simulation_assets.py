@@ -60,6 +60,13 @@ def get_best_run_dir(variant_dir: Path) -> Optional[Path]:
     
     return None
 
+def get_group_geojson(variant_dir: Path) -> Optional[Path]:
+    """Find the aggregated hole_delivery_times.geojson in the group directory."""
+    agg_geojson = variant_dir / 'hole_delivery_times.geojson'
+    if agg_geojson.exists():
+        return agg_geojson
+    return None
+
 def aggregate_metrics(metrics_list: List[Dict]) -> Dict:
     """
     Aggregate metrics from multiple runs into a single metrics object.
@@ -221,7 +228,12 @@ def scan_course(course_id: str, course_name: str) -> List[Dict]:
                                 
                             # Use first valid run as representative for file copying
                             if representative_run is None:
-                                representative_run = run_dir
+                                # Prefer run_01 for deterministic animation coordinates
+                                run_01_dir = variant_dir / 'run_01'
+                                if run_01_dir.exists() and (run_01_dir / 'coordinates.csv').exists():
+                                    representative_run = run_01_dir
+                                else:
+                                    representative_run = run_dir
                                 
                         except Exception as e:
                             logger.warning(f"Error loading metrics from {metrics_src}: {e}")
@@ -250,11 +262,11 @@ def scan_course(course_id: str, course_name: str) -> List[Dict]:
                         with open(metrics_dst, 'w') as f:
                             json.dump(aggregated_metrics, f, indent=2)
                         
-                        # Copy geojson if available
+                        # Check for aggregated geojson at the group level
                         has_geojson = False
-                        geojson_src = representative_run / 'hole_delivery_times.geojson'
-                        if geojson_src.exists():
-                            shutil.copy2(geojson_src, geojson_dst)
+                        agg_geojson_src = get_group_geojson(variant_dir)
+                        if agg_geojson_src:
+                            shutil.copy2(agg_geojson_src, geojson_dst)
                             has_geojson = True
                         
                         # Create simulation entry

@@ -218,18 +218,21 @@ def generate_simulation_metrics_json(
         metrics["hasRunners"] = True
         completion_times = [float(d.get("total_completion_time_s", 0)) for d in delivery_stats]
         avg_order_time_min = (sum(completion_times) / len(completion_times) / 60.0) if completion_times else 0.0
-        on_time_rate = (sum(1 for t in completion_times if t <= sla_minutes * 60) / len(completion_times) * 100.0) if completion_times else 0.0
+        
+        total_orders = len(orders)
+        on_time_count = sum(1 for t in completion_times if t <= sla_minutes * 60)
+        
+        on_time_rate = (on_time_count / total_orders * 100.0) if total_orders > 0 else 0.0
+
         # Compute simple revenue model and productivity for UI
         successful = len(delivery_stats)
         # Business rule: Orders placed before service close contribute to revenue unless failed.
-        total_orders = len(orders)
         failed_count = len(failed_orders)
         realized_orders = max(0, total_orders - failed_count)
         total_revenue = float(realized_orders) * float(revenue_per_order)
         orders_per_runner_hour = (float(successful) / float(service_hours)) if float(service_hours) > 0 else 0.0
         
         # Calculate late orders
-        on_time_count = sum(1 for t in completion_times if t <= sla_minutes * 60) if completion_times else 0
         late_orders = max(0, successful - on_time_count)
         
         # Calculate runner utilization and time metrics (supports multi-runner)
