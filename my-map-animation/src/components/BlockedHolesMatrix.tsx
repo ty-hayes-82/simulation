@@ -72,20 +72,39 @@ export default function BlockedHolesMatrix() {
         }
       }
 
+      // Try to load aggregate metrics first; if unavailable, fall back to per-sim metrics files
       for (const [groupKey, groupSims] of Array.from(groups.entries())) {
         if (groupSims.length === 0) continue;
         const aggregatePath = `${groupKey}/@aggregate.json`;
-
+        let aggregate: LoadedMetrics | null = null;
         try {
           const resp = await fetch(`/coordinates/${aggregatePath}?t=${Date.now()}`);
-          if (!resp.ok) continue;
-          const data = (await resp.json()) as LoadedMetrics;
-          // Store the aggregated data for each sim in the group
-          for (const sim of groupSims) {
-            next[sim.id] = data;
+          if (resp.ok) {
+            aggregate = (await resp.json()) as LoadedMetrics;
           }
         } catch (e) {
-          console.error(`Failed to load aggregate metrics from ${aggregatePath}:`, e);
+          // ignore; will fallback per-sim
+        }
+
+        if (aggregate) {
+          for (const sim of groupSims) {
+            next[sim.id] = aggregate;
+          }
+          continue;
+        }
+
+        // Fallback: load each simulation's metrics JSON individually
+        for (const sim of groupSims) {
+          const metricsFile = sim.metricsFilename || '';
+          if (!metricsFile) continue;
+          try {
+            const resp = await fetch(`/coordinates/${metricsFile}?t=${Date.now()}`);
+            if (!resp.ok) continue;
+            const data = (await resp.json()) as LoadedMetrics;
+            next[sim.id] = data;
+          } catch (e) {
+            // ignore failures; cell will show dash
+          }
         }
       }
 
