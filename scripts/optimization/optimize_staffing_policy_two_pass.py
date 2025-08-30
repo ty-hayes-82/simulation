@@ -40,6 +40,7 @@ from scripts.optimization.optimize_staffing_policy import (
     BLOCKING_VARIANTS,
     BlockingVariant,
     aggregate_runs,
+    build_feature_collection,
     choose_best_variant,
     parse_range,
     utility_score,
@@ -47,6 +48,7 @@ from scripts.optimization.optimize_staffing_policy import (
     _row_from_context_and_agg,
     _write_group_aggregate_file,
     _write_group_aggregate_heatmap,
+    _write_group_delivery_geojson,
     _write_final_csv,
 )
 
@@ -1248,6 +1250,13 @@ def main() -> None:
                     runners=n,
                     run_dirs=run_dirs,
                 )
+                _write_group_delivery_geojson(
+                    group_dir,
+                    course_dir=course_dir,
+                    tee_scenario=args.tee_scenario,
+                    variant_key=variant.key,
+                    runners=n,
+                )
                 _row = _row_from_context_and_agg(context, agg, group_dir)
                 _write = _row  # clarity
                 # Upsert into CSV rows
@@ -1336,6 +1345,13 @@ def main() -> None:
                     runners=v_runners,
                     run_dirs=win_run_dirs,
                 )
+                _write_group_delivery_geojson(
+                    group_dir,
+                    course_dir=course_dir,
+                    tee_scenario=args.tee_scenario,
+                    variant_key=v_key,
+                    runners=v_runners,
+                )
                 from scripts.optimization.optimize_staffing_policy import _upsert_row
 
                 _upsert_row(csv_rows, _row_from_context_and_agg(win_context, win_agg, group_dir))
@@ -1410,9 +1426,17 @@ def main() -> None:
     except Exception:
         pass
 
-    # Post-run: copy coordinates and related artifacts for this optimization root
-    # into the map app's public directories.
-    _publish_map_assets(optimization_root=root, project_root=project_root)
+    # Post-run: sync assets for this specific course only
+    try:
+        print(f"Syncing assets for course: {course_dir.name}")
+        sync_cmd = [
+            sys.executable, 
+            "sync_simulation_assets.py"
+        ]
+        subprocess.run(sync_cmd, check=False, cwd=project_root)
+        print("✅ Assets synced successfully.")
+    except Exception as e:
+        print(f"⚠️  Asset sync failed: {e}")
 
 
 if __name__ == "__main__":

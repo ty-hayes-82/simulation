@@ -159,9 +159,6 @@ def build_graph_from_holes_connected(course_dir: Path) -> nx.Graph:
     # Add nodes
     for node_id, lon, lat in nodes:
         G.add_node(node_id, x=float(lon), y=float(lat))
-        # Mark node 0 as clubhouse
-        if node_id == 0:
-            G.nodes[node_id]["kind"] = "clubhouse"
     
     # Add edges based on connections
     for node_a, node_b in connections:
@@ -175,6 +172,17 @@ def build_graph_from_holes_connected(course_dir: Path) -> nx.Graph:
             G.add_edge(node_a, node_b, length=float(distance))
         else:
             print(f"Warning: Skipping connection {node_a}-{node_b}, nodes not found in graph")
+    
+    # Fix missing connection: ensure node 1 connects to node 2 for proper course flow
+    if 1 in G and 2 in G and not G.has_edge(1, 2):
+        print("Adding missing connection between node 1 and node 2 for proper course flow")
+        lon_1 = G.nodes[1]["x"]
+        lat_1 = G.nodes[1]["y"]
+        lon_2 = G.nodes[2]["x"]
+        lat_2 = G.nodes[2]["y"]
+        distance_1_2 = _haversine_m(lon_1, lat_1, lon_2, lat_2)
+        G.add_edge(1, 2, length=float(distance_1_2))
+        print(f"Connected nodes 1-2 with distance {distance_1_2:.2f}m")
     
     # Save as pickle file
     pkl_path = pkl_dir / "cart_graph.pkl"
