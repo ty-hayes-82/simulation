@@ -201,7 +201,7 @@ def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
         for stat in m.delivery_stats:
             try:
                 hole = int(stat.get("hole_num", 0))
-                drive_time = float(stat.get("total_drive_time_s", 0.0))
+                drive_time = float(stat.get("delivery_time_s", 0.0))  # Use one-way delivery time, not total_drive_time_s
                 if hole > 0 and not math.isnan(drive_time):
                     total_drive_time_per_hole[hole] = total_drive_time_per_hole.get(hole, 0.0) + drive_time
                     orders_per_hole[hole] = orders_per_hole.get(hole, 0) + 1

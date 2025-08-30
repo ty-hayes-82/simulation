@@ -247,7 +247,7 @@ def scan_course(course_id: str, course_name: str) -> List[Dict]:
                     base = f"{course_id}__{pass_name}__orders_{orders:03d}__runners_{runners}__{variant}"
                     
                     # Define destination files
-                    csv_dst = DEST_DIR / f"{base}.csv"
+                    csv_dst = DEST_DIR / f"{base}__run_01.csv"
                     metrics_dst = DEST_DIR / f"{base}.metrics.json"
                     geojson_dst = DEST_DIR / f"{base}.hole_delivery.geojson"
                     

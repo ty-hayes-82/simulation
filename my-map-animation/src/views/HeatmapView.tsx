@@ -398,7 +398,12 @@ export default function HeatmapView() {
             type="symbol"
             filter={['>', ['get', 'count'], 0] as any}
             layout={{
-              'text-field': ['to-string', ['get', 'count']] as any,
+              'text-field': [
+                'case',
+                ['>', ['get', 'count'], 0],
+                ['to-string', ['round', ['get', 'avg_time']]],
+                ''
+              ] as any,
               'text-size': 11,
               'text-allow-overlap': true,
               'text-justify': 'center',
