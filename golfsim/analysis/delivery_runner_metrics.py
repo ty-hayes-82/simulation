@@ -53,6 +53,7 @@ class DeliveryRunnerMetrics:
     total_orders: int
     successful_orders: int
     failed_orders: int
+    pending_orders: int
     total_rounds: int
     active_runner_hours: float
     simulation_id: str
@@ -64,7 +65,7 @@ def calculate_delivery_runner_metrics(
     activity_log: List[Dict[str, Any]],
     orders: List[Dict[str, Any]],
     failed_orders: List[Dict[str, Any]],
-    revenue_per_order: float = 25.0,
+    revenue_per_order: float = 30.0,
     sla_minutes: int = 30,
     simulation_id: str = "unknown",
     runner_id: str = "runner_1",
@@ -77,6 +78,7 @@ def calculate_delivery_runner_metrics(
     total_orders = len(orders)
     successful_orders = len(delivery_stats)
     failed_orders_count = len(failed_orders)
+    pending_orders_count = total_orders - successful_orders - failed_orders_count
     total_ordering_groups = _extract_total_ordering_groups(orders, activity_log)
     
     # Calculate actual active hours
@@ -142,6 +144,7 @@ def calculate_delivery_runner_metrics(
         total_orders=total_orders,
         successful_orders=successful_orders,
         failed_orders=failed_orders_count,
+        pending_orders=pending_orders_count,
         total_rounds=total_ordering_groups,
         active_runner_hours=actual_active_hours,
         simulation_id=simulation_id,
@@ -449,6 +452,7 @@ def summarize_delivery_runner_metrics(metrics_list: List[DeliveryRunnerMetrics])
     summaries["total_orders"] = sum(m.total_orders for m in metrics_list)
     summaries["successful_orders"] = sum(m.successful_orders for m in metrics_list)
     summaries["failed_orders"] = sum(m.failed_orders for m in metrics_list)
+    summaries["pending_orders"] = sum(m.pending_orders for m in metrics_list)
     summaries["total_rounds"] = sum(m.total_rounds for m in metrics_list)
 
     return summaries
@@ -485,6 +489,7 @@ def format_delivery_runner_metrics_report(metrics: DeliveryRunnerMetrics) -> str
 - Total Orders: {metrics.total_orders}
 - Successful Orders: {metrics.successful_orders}
 - Failed Orders: {metrics.failed_orders}
+- Pending Orders: {metrics.pending_orders}
 - Total Ordering Groups: {metrics.total_rounds}
 - Active Runner Hours: {metrics.active_runner_hours:.1f}
 
@@ -511,6 +516,7 @@ def format_delivery_runner_summary_report(summaries: Dict[str, Any], num_runs: i
 - Total Orders: {summaries.get('total_orders', 0)}
 - Successful Orders: {summaries.get('successful_orders', 0)}
 - Failed Orders: {summaries.get('failed_orders', 0)}
+- Pending Orders: {summaries.get('pending_orders', 0)}
 - Total Ordering Groups: {summaries.get('total_rounds', 0)}
 """
     return report
@@ -552,6 +558,7 @@ def format_delivery_runner_executive_summary_across_runs(metrics_list: List[Deli
     total_orders = sum(m.total_orders for m in metrics_list)
     successful_orders = sum(m.successful_orders for m in metrics_list)
     failed_orders = sum(m.failed_orders for m in metrics_list)
+    pending_orders = sum(m.pending_orders for m in metrics_list)
     total_rounds = sum(m.total_rounds for m in metrics_list)
     service_hours = metrics_list[0].active_runner_hours if metrics_list else 10.0
 
@@ -574,6 +581,7 @@ def format_delivery_runner_executive_summary_across_runs(metrics_list: List[Deli
 - Total Orders: {total_orders}
 - Successful Orders: {successful_orders}
 - Failed Orders: {failed_orders}
+- Pending Orders: {pending_orders}
 - Total Ordering Groups: {total_rounds}
 """
 

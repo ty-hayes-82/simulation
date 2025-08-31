@@ -108,6 +108,13 @@ class RunMetrics:
     successful_orders: int
     total_orders: int
     delivery_stats: List[Dict[str, Any]]
+    # New fields for detailed delivery metrics
+    queue_wait_avg: Optional[float] = None
+    runner_utilization_pct: Optional[float] = None
+    runner_utilization_driving_pct: Optional[float] = None
+    total_revenue: Optional[float] = None
+    failed_orders: Optional[int] = None
+    active_runner_hours: Optional[float] = None
 
 
 def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
@@ -128,6 +135,18 @@ def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
         except Exception:
             pass # Non-fatal if results.json is missing or malformed
 
+        # Extract new detailed metrics
+        queue_wait_avg = data.get("queue_wait_avg")
+        runner_utilization_driving_pct = data.get("runner_utilization_driving_pct")
+        runner_utilization_prep_pct = data.get("runner_utilization_prep_pct")
+        runner_utilization_pct = None
+        if runner_utilization_driving_pct is not None:
+            runner_utilization_pct = float(runner_utilization_driving_pct) + float(runner_utilization_prep_pct or 0.0)
+        
+        total_revenue = data.get("total_revenue")
+        failed_orders = data.get("failed_orders")
+        active_runner_hours = data.get("active_runner_hours")
+
         return RunMetrics(
             on_time_rate=float(data.get("on_time_rate", 0.0) or 0.0),
             failed_rate=float(data.get("failed_rate", 0.0) or 0.0),
@@ -137,6 +156,12 @@ def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
             successful_orders=int(data.get("successful_orders", data.get("successfulDeliveries", 0)) or 0),
             total_orders=int(data.get("total_orders", data.get("totalOrders", 0)) or 0),
             delivery_stats=delivery_stats,
+            queue_wait_avg=float(queue_wait_avg) if queue_wait_avg is not None else None,
+            runner_utilization_pct=runner_utilization_pct,
+            runner_utilization_driving_pct=float(runner_utilization_driving_pct) if runner_utilization_driving_pct is not None else None,
+            total_revenue=float(total_revenue) if total_revenue is not None else None,
+            failed_orders=int(failed_orders) if failed_orders is not None else None,
+            active_runner_hours=float(active_runner_hours) if active_runner_hours is not None else None,
         )
 
     # Fallback simulation_metrics.json
@@ -173,6 +198,12 @@ def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
                 successful_orders=successful,
                 total_orders=total,
                 delivery_stats=delivery_stats_fallback,
+                queue_wait_avg=float(queue_wait_avg) if queue_wait_avg is not None else None,
+                runner_utilization_pct=runner_utilization_pct,
+                runner_utilization_driving_pct=float(runner_utilization_driving_pct) if runner_utilization_driving_pct is not None else None,
+                total_revenue=float(total_revenue) if total_revenue is not None else None,
+                failed_orders=int(failed_orders) if failed_orders is not None else None,
+                active_runner_hours=float(active_runner_hours) if active_runner_hours is not None else None,
             )
         except Exception:
             return None
@@ -202,7 +233,7 @@ def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
             try:
                 hole = int(stat.get("hole_num", 0))
                 drive_time = float(stat.get("delivery_time_s", 0.0))  # Use one-way delivery time, not total_drive_time_s
-                if hole > 0 and not math.isnan(drive_time):
+                if not math.isnan(drive_time):
                     total_drive_time_per_hole[hole] = total_drive_time_per_hole.get(hole, 0.0) + drive_time
                     orders_per_hole[hole] = orders_per_hole.get(hole, 0) + 1
             except (ValueError, TypeError):
@@ -231,6 +262,7 @@ def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
         "on_time_wilson_hi": ot_hi,
         "total_successful_orders": total_successes,
         "total_orders": total_orders,
+        "raw_metrics": items,  # Pass raw metrics for detailed summary
     }
 
 
@@ -241,9 +273,14 @@ def _write_group_aggregate_file(group_dir: Path, context: Dict[str, Any], agg: D
     (e.g., .../orders_030/none/runners_2/@aggregate.json).
     """
     try:
+        # Avoid serializing raw_metrics which can be large and contains objects
+        serializable_agg = agg.copy()
+        if "raw_metrics" in serializable_agg:
+            del serializable_agg["raw_metrics"]
+
         payload: Dict[str, Any] = {
             **context,
-            **agg,
+            **serializable_agg,
             "group_dir": str(group_dir),
         }
         (group_dir / "@aggregate.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")

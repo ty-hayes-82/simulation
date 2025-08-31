@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Card, Flex, Table, Text, HoverCard } from '@radix-ui/themes';
 import { useSimulation } from '../context/SimulationContext';
 import { SimulationEntry } from '../lib/manifest';
+import DeliveryMetricsDisplay from './DeliveryMetricsDisplay';
 
 
 
@@ -128,40 +129,29 @@ export default function BlockedHolesMatrix() {
     return Number.isFinite(displayPct) ? `${displayPct.toFixed(0)}%` : '—';
   };
 
-  const buildTooltipData = (metrics?: LoadedMetrics): { label: string, value: string }[] => {
-    if (!metrics) return [];
-    const dm: any = metrics.deliveryMetrics || metrics;
-    const onTime = Number(dm.on_time_mean ?? dm.onTimePercentage ?? dm.onTimeRate ?? 0);
-    const displayOnTime = dm.on_time_mean ? onTime * 100 : onTime;
 
-    return [
-      { label: 'Orders', value: `${Number(dm.orders ?? dm.totalOrders ?? dm.orderCount ?? 0)}` },
-      { label: 'Runs', value: `${Number(dm.runs ?? 1)}` },
-      { label: 'Avg On-Time %', value: `${Number.isFinite(displayOnTime) ? displayOnTime.toFixed(0) : '—'}%` },
-      { label: 'Avg Failed', value: `${(Number(dm.failed_mean ?? dm.failedDeliveries ?? dm.failedOrderCount ?? 0) * 100).toFixed(1)}%` },
-      { label: 'Avg Order Time', value: `${Number(dm.avg_delivery_time_mean ?? dm.avgOrderTime ?? 0).toFixed(1)}m` },
-      { label: 'Avg P90 Cycle', value: `${Number(dm.p90_mean ?? dm.deliveryCycleTimeP90 ?? 0).toFixed(1)}m` },
-      { label: 'Avg OPH', value: `${Number(dm.oph_mean ?? dm.ordersPerRunnerHour ?? 0).toFixed(1)}` },
-    ];
-  };
 
   const TooltipContent = ({ metrics }: { metrics?: LoadedMetrics }) => {
-    const data = buildTooltipData(metrics);
     const driveTimes = (metrics as any)?.avg_drive_time_per_hole;
+    
+    // Transform the metrics to match the expected format for DeliveryMetricsDisplay
+    const deliveryMetrics = metrics ? {
+      totalOrders: Number(metrics.deliveryMetrics?.orders ?? metrics.deliveryMetrics?.totalOrders ?? metrics.deliveryMetrics?.orderCount ?? 0),
+      avgOrderTime: Number(metrics.deliveryMetrics?.avg_delivery_time_mean ?? metrics.deliveryMetrics?.avgOrderTime ?? 0),
+      onTimePercentage: metrics.deliveryMetrics?.on_time_mean ? Number(metrics.deliveryMetrics.on_time_mean) * 100 : Number(metrics.deliveryMetrics?.onTimePercentage ?? metrics.deliveryMetrics?.onTimeRate ?? 0),
+      failedDeliveries: Number(metrics.deliveryMetrics?.failed_mean ?? metrics.deliveryMetrics?.failedDeliveries ?? metrics.deliveryMetrics?.failedOrderCount ?? 0),
+      deliveryCycleTimeP90: Number(metrics.deliveryMetrics?.p90_mean ?? metrics.deliveryMetrics?.deliveryCycleTimeP90 ?? 0),
+      ordersPerRunnerHour: Number(metrics.deliveryMetrics?.oph_mean ?? metrics.deliveryMetrics?.ordersPerRunnerHour ?? 0),
+      ...metrics.deliveryMetrics
+    } : null;
 
-    if (data.length === 0) {
-      return <Text as="div" size="2">No metrics available</Text>;
-    }
     return (
       <Flex direction="column" gap="2">
-        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '4px 12px', alignItems: 'center' }}>
-          {data.map(({ label, value }) => (
-            <React.Fragment key={label}>
-              <Text size="2" style={{ justifySelf: 'start' }}>{label}:</Text>
-              <Text size="2" weight="bold" style={{ justifySelf: 'end' }}>{value}</Text>
-            </React.Fragment>
-          ))}
-        </div>
+        <DeliveryMetricsDisplay 
+          deliveryMetrics={deliveryMetrics} 
+          variant="tooltip" 
+          showTitle={true} 
+        />
         {driveTimes && Object.keys(driveTimes).length > 0 && (
           <Flex direction="column" gap="1" mt="2">
             <Text size="2" weight="bold">Avg Drive Time by Hole (min)</Text>

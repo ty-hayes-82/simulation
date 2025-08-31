@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, Flex, Table, Text, HoverCard } from '@radix-ui/themes';
 import { useSimulation } from '../context/SimulationContext';
+import DeliveryMetricsDisplay from './DeliveryMetricsDisplay';
 
 type LoadedMetrics = {
   hasRunners?: boolean;
@@ -89,57 +90,7 @@ export default function SimulationMatrix() {
     return `${pct.toFixed(0)}%`;
   };
 
-  const buildTooltipData = (metrics?: LoadedMetrics): { label: string, value: string }[] => {
-    if (!metrics || !metrics.deliveryMetrics) return [];
-    const dm: any = metrics.deliveryMetrics || {};
-    const onTime = Number(dm.onTimePercentage ?? dm.onTimeRate ?? 0);
-    return [
-      { label: 'Orders', value: `${Number(dm.totalOrders ?? dm.orderCount ?? 0)}` },
-      { label: 'Revenue', value: `$${Number(dm.revenue ?? 0).toFixed(0)}` },
-      { label: 'Avg Order Time', value: `${Number(dm.avgOrderTime ?? 0).toFixed(1)}m` },
-      { label: 'On-Time %', value: `${Number.isFinite(onTime) ? onTime.toFixed(0) : '—'}%` },
-      { label: 'Failed', value: `${Number(dm.failedDeliveries ?? dm.failedOrderCount ?? 0)}` },
-      { label: 'Queue Wait', value: `${Number(dm.queueWaitAvg ?? 0).toFixed(1)}m` },
-      { label: 'P90 Cycle', value: `${Number(dm.deliveryCycleTimeP90 ?? 0).toFixed(1)}m` },
-      { label: 'Orders / Runner-Hr', value: `${Number(dm.ordersPerRunnerHour ?? 0).toFixed(1)}` },
-      { label: 'Revenue / Runner-Hr', value: `$${Number(dm.revenuePerRunnerHour ?? 0).toFixed(0)}` },
-    ];
-  };
 
-  const TooltipContent = ({ metrics }: { metrics?: LoadedMetrics }) => {
-    const data = buildTooltipData(metrics);
-    if (data.length === 0) {
-      return <Text as="div" size="2">No metrics available</Text>;
-    }
-    return (
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '4px 12px', alignItems: 'center' }}>
-        {data.map(({ label, value }) => (
-          <React.Fragment key={label}>
-            <Text size="2" style={{ justifySelf: 'start' }}>{label}:</Text>
-            <Text size="2" weight="bold" style={{ justifySelf: 'end' }}>{value}</Text>
-          </React.Fragment>
-        ))}
-      </div>
-    );
-  };
-
-  const buildTooltipText = (metrics?: LoadedMetrics): string => {
-    if (!metrics || !metrics.deliveryMetrics) return 'No metrics available';
-    const dm: any = metrics.deliveryMetrics || {};
-    const onTime = Number(dm.onTimePercentage ?? dm.onTimeRate ?? 0);
-    const lines = [
-      `Orders: ${Number(dm.totalOrders ?? dm.orderCount ?? 0)}`,
-      `Revenue: $${Number(dm.revenue ?? 0).toFixed(0)}`,
-      `Avg Order Time: ${Number(dm.avgOrderTime ?? 0).toFixed(1)}m`,
-      `On-Time %: ${Number.isFinite(onTime) ? onTime.toFixed(0) : '—'}%`,
-      `Failed: ${Number(dm.failedDeliveries ?? dm.failedOrderCount ?? 0)}`,
-      `Queue Wait: ${Number(dm.queueWaitAvg ?? 0).toFixed(1)}m`,
-      `P90 Cycle: ${Number(dm.deliveryCycleTimeP90 ?? 0).toFixed(1)}m`,
-      `Orders / Runner-Hr: ${Number(dm.ordersPerRunnerHour ?? 0).toFixed(1)}`,
-      `Revenue / Runner-Hr: $${Number(dm.revenuePerRunnerHour ?? 0).toFixed(0)}`,
-    ];
-    return lines.join('\n');
-  };
 
   const title = useMemo(() => {
     const header = HEADER_MAP[currentVariantKey] || 'Custom';
@@ -189,7 +140,7 @@ export default function SimulationMatrix() {
                     const sim = getSimFor(r, o);
                     const m = sim ? metricsById[sim.id] : undefined;
                     const label = formatOnTime(m);
-                    const tip = buildTooltipText(m);
+
                     const isActive = (filters.runners === r && filters.orders === o);
                     return (
                       <Table.Cell
@@ -208,7 +159,11 @@ export default function SimulationMatrix() {
                             <Text weight={isActive ? 'bold' : 'regular'}>{label}</Text>
                           </HoverCard.Trigger>
                           <HoverCard.Content size="2" maxWidth="340px">
-                            <TooltipContent metrics={m} />
+                            <DeliveryMetricsDisplay 
+                              deliveryMetrics={m?.deliveryMetrics} 
+                              variant="tooltip" 
+                              showTitle={true} 
+                            />
                           </HoverCard.Content>
                         </HoverCard.Root>
                       </Table.Cell>

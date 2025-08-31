@@ -121,7 +121,7 @@ def aggregate_metrics(metrics_list: List[Dict]) -> Dict:
             })
             
             # Add percentile aggregations if available
-            p90_times = [get_numeric(d, 'deliveryCycleTimeP90') for d in dm_values if get_numeric(d, 'deliveryCycleTimeP90') > 0]
+            p90_times = [get_numeric(d, 'deliveryCycleTimeP90', get_numeric(d, 'p90_mean')) for d in dm_values if get_numeric(d, 'deliveryCycleTimeP90', get_numeric(d, 'p90_mean')) > 0]
             if p90_times:
                 dm['deliveryCycleTimeP90'] = sum(p90_times) / len(p90_times)
             

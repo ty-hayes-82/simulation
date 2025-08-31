@@ -1081,6 +1081,7 @@ def main() -> None:
     p.add_argument("--max-failed-rate", type=float, default=0.05)
     p.add_argument("--max-p90", type=float, default=40.0)
     p.add_argument("--concurrency", type=int, default=max(1, min(4, (os.cpu_count() or 2))), help="max concurrent simulations")
+    p.add_argument("--auto-report", action="store_true", help="Automatically generate GM-friendly reports after simulations complete")
     args = p.parse_args()
 
     project_root = Path(__file__).resolve().parents[2]
@@ -1399,7 +1400,22 @@ def main() -> None:
             },
         }
 
-    # Print machine-readable JSON at the end
+    # Print machine-readable JSON at the end (with serialization fix)
+    def make_serializable(obj):
+        """Convert non-serializable objects to serializable format"""
+        if hasattr(obj, '__dict__'):
+            return {k: make_serializable(v) for k, v in obj.__dict__.items() if not k.startswith('_')}
+        elif isinstance(obj, dict):
+            return {k: make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [make_serializable(item) for item in obj]
+        elif isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+        else:
+            return str(obj)  # fallback to string representation
+    
+    serializable_summary = make_serializable(summary)
+    
     print(
         json.dumps(
             {
@@ -1410,8 +1426,8 @@ def main() -> None:
                     "max_failed": args.max_failed_rate,
                     "max_p90": args.max_p90,
                 },
-                "orders_levels": orders_iter,
-                "summary": summary,
+                "orders_levels": list(orders_iter),
+                "summary": serializable_summary,
                 "output_root": str(root),
             },
             indent=2,
@@ -1425,6 +1441,31 @@ def main() -> None:
             print(f"Aggregated metrics CSV written to {csv_path}")
     except Exception:
         pass
+
+    # Generate reports if requested
+    if args.auto_report and not args.summarize_only:
+        try:
+            print(f"\n📊 Generating GM-friendly reports for {root}")
+            report_cmd = [
+                sys.executable,
+                "scripts/report/auto_report.py",
+                "--scenario-dir", str(root)
+            ]
+            result = subprocess.run(report_cmd, check=False, cwd=project_root)
+            if result.returncode == 0:
+                print("✅ Reports generated successfully.")
+                # Open the scenario index
+                index_path = root / "index.html"
+                if index_path.exists():
+                    print(f"🎯 Scenario index available at: {index_path}")
+                    try:
+                        subprocess.run(["start", str(index_path)], shell=True, check=False)
+                    except Exception:
+                        pass
+            else:
+                print("⚠️  Report generation completed with warnings.")
+        except Exception as e:
+            print(f"⚠️  Report generation failed: {e}")
 
     # Post-run: sync assets for this specific course only
     try:

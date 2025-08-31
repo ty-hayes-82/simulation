@@ -1005,8 +1005,7 @@ def _generate_simulation_metrics_json(
             from typing import List as _List  # to satisfy static analyzers
             for stat in delivery_stats:
                 qd = float(stat.get("queue_delay_s", 0) or 0)
-                if qd > 0:
-                    queue_delays_min.append(qd / 60.0)
+                queue_delays_min.append(qd / 60.0)  # Include all delays, even zeros
         except Exception:
             queue_delays_min = []
         if queue_delays_min:
@@ -1054,6 +1053,21 @@ def _generate_simulation_metrics_json(
         total_revenue = successful_deliveries * revenue_per_order
         revenue_per_runner_hour = total_revenue / active_hours
         
+        # Calculate runner utilization and shift minutes
+        total_drive_time_s = sum(
+            float(d.get("total_drive_time_s", 
+                      float(d.get("delivery_time_s", 0.0)) + float(d.get("return_time_s", 0.0))))
+            for d in delivery_stats
+        )
+        total_drive_minutes = total_drive_time_s / 60.0
+        
+        # Use full service hours for shift minutes (not actual active hours)
+        shift_minutes = float(service_hours) * 60.0
+        runner_utilization_pct = (total_drive_minutes / shift_minutes) * 100.0 if shift_minutes > 0 else 0.0
+        
+        # Calculate late orders
+        late_orders = max(0, successful_deliveries - (int(on_time_rate / 100.0 * successful_deliveries) if successful_deliveries > 0 else 0))
+        
         metrics["deliveryMetrics"] = {
             "orderCount": total_orders,
             "revenue": total_revenue,
@@ -1063,7 +1077,11 @@ def _generate_simulation_metrics_json(
             "queueWaitAvg": round(avg_queue_wait, 1),
             "deliveryCycleTimeP90": round(delivery_cycle_p90, 1),
             "ordersPerRunnerHour": round(orders_per_runner_hour, 2),
-            "revenuePerRunnerHour": round(revenue_per_runner_hour, 2)
+            "revenuePerRunnerHour": round(revenue_per_runner_hour, 2),
+            "lateOrders": late_orders,
+            "runnerUtilizationPct": round(runner_utilization_pct, 1),
+            "totalRunnerDriveMinutes": round(total_drive_minutes, 1),
+            "totalRunnerShiftMinutes": round(shift_minutes, 1)
         }
     
     # Extract bev-cart metrics if present (only for true bev-cart simulations)

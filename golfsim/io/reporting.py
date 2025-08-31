@@ -10,6 +10,32 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from golfsim.utils import seconds_to_clock_str
 
+def _calculate_actual_active_hours(activity_log: List[Dict[str, Any]], max_service_hours: float) -> float:
+    """Calculate actual active hours from service_opened to last activity."""
+    if not activity_log:
+        return max_service_hours
+    
+    service_start = None
+    service_end = None
+    
+    for activity in activity_log:
+        activity_type = activity.get('activity_type', '')
+        timestamp = activity.get('timestamp_s', 0)
+        
+        if activity_type == 'service_opened':
+            service_start = timestamp
+        
+        # Track the last activity timestamp
+        if timestamp > (service_end or 0):
+            service_end = timestamp
+    
+    if service_start is None or service_end is None:
+        return max_service_hours
+    
+    # Calculate actual hours, but cap at max_service_hours
+    actual_hours = (service_end - service_start) / 3600.0
+    return min(actual_hours, max_service_hours)
+
 def build_simulation_id(output_root: Path, run_idx: int) -> str:
     """Create a compact simulation_id for a run directory."""
     try:
@@ -137,7 +163,7 @@ def write_order_logs_csv(sim_result: Dict[str, Any], save_path: Path) -> None:
     save_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "order_id", "placed_ts", "placed_hole", "queue", "mins_to_set",
-        "drive_out_min", "drive_total_min", "delivery_hole",
+        "drive_out_min", "drive_total_min", "delivery_hole", "status",
         "golfer_node_idx", "predicted_node_idx", "actual_node_idx"
     ]
     activity = list(sim_result.get("activity_log", []) or [])
@@ -173,6 +199,13 @@ def write_order_logs_csv(sim_result: Dict[str, Any], save_path: Path) -> None:
             start = start_by_id.get(oid)
             placed_ts_str = seconds_to_clock_str(ots)
             
+            order_status = o.get("status", "unknown")
+            delivery_hole = ""
+            if stat:
+                delivery_hole = stat.get("hole_num", "")
+            elif order_status == 'pending':
+                delivery_hole = "PENDING"
+
             writer.writerow({
                 "order_id": oid,
                 "placed_ts": placed_ts_str,
@@ -181,7 +214,8 @@ def write_order_logs_csv(sim_result: Dict[str, Any], save_path: Path) -> None:
                 "mins_to_set": ((start or {}).get("timestamp_s", ots) - ots) / 60.0 if start else "",
                 "drive_out_min": (stat.get("delivery_time_s", 0) / 60.0) if stat else "",
                 "drive_total_min": ((stat.get("delivery_time_s", 0) + stat.get("return_time_s", 0)) / 60.0) if stat else "",
-                "delivery_hole": stat.get("hole_num", "") if stat else "",
+                "delivery_hole": delivery_hole,
+                "status": order_status,
                 "golfer_node_idx": stat.get("order_node_idx", "") if stat else "",
                 "predicted_node_idx": stat.get("predicted_delivery_node_idx", "") if stat else "",
                 "actual_node_idx": stat.get("actual_delivery_node_idx", "") if stat else ""
@@ -219,18 +253,35 @@ def generate_simulation_metrics_json(
         completion_times = [float(d.get("total_completion_time_s", 0)) for d in delivery_stats]
         avg_order_time_min = (sum(completion_times) / len(completion_times) / 60.0) if completion_times else 0.0
         
+        # Calculate P90 delivery cycle time
+        completion_times_min = [t / 60.0 for t in completion_times]
+        if completion_times_min:
+            completion_times_min.sort()
+            p90_index = int(0.9 * len(completion_times_min))
+            delivery_cycle_time_p90 = completion_times_min[min(p90_index, len(completion_times_min) - 1)]
+        else:
+            delivery_cycle_time_p90 = 0.0
+        
+        # Calculate queue wait average from delivery stats
+        queue_wait_times = [float(d.get("queue_delay_s", 0)) for d in delivery_stats]
+        queue_wait_avg = (sum(queue_wait_times) / len(queue_wait_times) / 60.0) if queue_wait_times else 0.0
+        
+        successful = len(delivery_stats)
         total_orders = len(orders)
+        failed_count = len(failed_orders)
+        pending_deliveries = total_orders - successful - failed_count
+        
         on_time_count = sum(1 for t in completion_times if t <= sla_minutes * 60)
         
-        on_time_rate = (on_time_count / total_orders * 100.0) if total_orders > 0 else 0.0
+        on_time_rate = (on_time_count / successful * 100.0) if successful > 0 else 0.0
 
         # Compute simple revenue model and productivity for UI
-        successful = len(delivery_stats)
-        # Business rule: Orders placed before service close contribute to revenue unless failed.
-        failed_count = len(failed_orders)
-        realized_orders = max(0, total_orders - failed_count)
-        total_revenue = float(realized_orders) * float(revenue_per_order)
-        orders_per_runner_hour = (float(successful) / float(service_hours)) if float(service_hours) > 0 else 0.0
+        # Business rule: Revenue is recognized only on successful deliveries.
+        total_revenue = float(successful) * float(revenue_per_order)
+        
+        # Calculate active hours for productivity metrics
+        actual_active_hours = _calculate_actual_active_hours(activity_log, service_hours)
+        orders_per_runner_hour = (float(successful) / float(actual_active_hours)) if float(actual_active_hours) > 0 else 0.0
         
         # Calculate late orders
         late_orders = max(0, successful - on_time_count)
@@ -257,11 +308,12 @@ def generate_simulation_metrics_json(
 
         total_runner_drive_minutes = total_drive_seconds / 60.0
 
-        # Shift minutes across all runners
-        service_minutes_per_runner = float(service_hours) * 60.0
-        total_runner_shift_minutes = service_minutes_per_runner * float(max(1, num_runners))
+        # Shift minutes across all runners, using full service hours (not actual active hours)
+        # This represents the full scheduled shift time, not just the time until simulation ends
+        full_shift_minutes_per_runner = float(service_hours) * 60.0
+        total_runner_shift_minutes = full_shift_minutes_per_runner * float(max(1, num_runners))
 
-        # Fleet-level utilization: combined drive time divided by combined shift time
+        # Fleet-level utilization: combined drive time divided by combined scheduled shift time
         runner_utilization_pct = (
             (total_runner_drive_minutes / total_runner_shift_minutes) * 100.0
             if total_runner_shift_minutes > 0 else 0.0
@@ -272,17 +324,18 @@ def generate_simulation_metrics_json(
         if by_runner_drive_seconds:
             for rid, drive_s in by_runner_drive_seconds.items():
                 drive_min = drive_s / 60.0
-                util_pct = (drive_min / service_minutes_per_runner * 100.0) if service_minutes_per_runner > 0 else 0.0
+                util_pct = (drive_min / full_shift_minutes_per_runner * 100.0) if full_shift_minutes_per_runner > 0 else 0.0
                 runner_utilization_by_runner[rid] = {
                     "driveMinutes": drive_min,
                     "utilizationPct": util_pct,
-                    "shiftMinutes": service_minutes_per_runner,
+                    "shiftMinutes": full_shift_minutes_per_runner,
                 }
 
         metrics["deliveryMetrics"] = {
-            "totalOrders": len(orders),
-            "successfulDeliveries": len(delivery_stats),
-            "failedDeliveries": len(failed_orders),
+            "totalOrders": total_orders,
+            "successfulDeliveries": successful,
+            "failedDeliveries": failed_count,
+            "pendingDeliveries": pending_deliveries,
             "avgOrderTime": avg_order_time_min,
             "onTimePercentage": on_time_rate,
             # Fields used by the map UI
@@ -293,6 +346,9 @@ def generate_simulation_metrics_json(
             "runnerUtilizationPct": runner_utilization_pct,
             "totalRunnerDriveMinutes": total_runner_drive_minutes,
             "totalRunnerShiftMinutes": total_runner_shift_minutes,
+            # Additional metrics for frontend display
+            "queueWaitAvg": queue_wait_avg,
+            "deliveryCycleTimeP90": delivery_cycle_time_p90,
             # Per-runner breakdown for diagnostics and UI
             "runnerUtilizationByRunner": runner_utilization_by_runner,
         }

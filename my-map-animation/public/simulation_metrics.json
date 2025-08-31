@@ -1,32 +1,31 @@
 {
-  "variantKey": "none",
-  "blockedHoles": [],
+  "variantKey": "front",
+  "blockedHoles": [
+    1,
+    2,
+    3
+  ],
   "deliveryMetrics": {
     "totalOrders": 40,
-    "successfulDeliveries": 40,
-    "failedDeliveries": 0,
-    "avgOrderTime": 16.482076549017822,
-    "onTimePercentage": 95.0,
-    "revenue": 1200.0,
-    "ordersPerRunnerHour": 4.0,
-    "lateOrders": 2,
-    "runnerUtilizationPct": 21.643773010483613,
-    "totalRunnerDriveMinutes": 389.58791418870504,
-    "totalRunnerShiftMinutes": 1800.0,
+    "successfulDeliveries": 37,
+    "failedDeliveries": 3,
+    "avgOrderTime": 27.432838316229347,
+    "onTimePercentage": 62.5,
+    "revenue": 1110.0,
+    "ordersPerRunnerHour": 3.7,
+    "lateOrders": 12,
+    "runnerUtilizationPct": 24.23691026271436,
+    "totalRunnerDriveMinutes": 290.8429231525723,
+    "totalRunnerShiftMinutes": 1200.0,
     "runnerUtilizationByRunner": {
       "runner_1": {
-        "driveMinutes": 167.60235755538153,
-        "utilizationPct": 27.93372625923026,
-        "shiftMinutes": 600.0
-      },
-      "runner_3": {
-        "driveMinutes": 97.0628518721484,
-        "utilizationPct": 16.177141978691402,
+        "driveMinutes": 162.77615960252916,
+        "utilizationPct": 27.12935993375486,
         "shiftMinutes": 600.0
       },
       "runner_2": {
-        "driveMinutes": 124.92270476117493,
-        "utilizationPct": 20.820450793529155,
+        "driveMinutes": 128.06676355004313,
+        "utilizationPct": 21.344460591673855,
         "shiftMinutes": 600.0
       }
     }
