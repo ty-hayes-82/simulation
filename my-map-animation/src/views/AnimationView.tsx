@@ -20,6 +20,7 @@ interface Coordinate {
   color?: string;
   fill_color?: string;
   border_color?: string;
+  is_delivery_event?: boolean;
 }
 
 interface EntityData {
@@ -152,7 +153,8 @@ function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easin
   for (let i = 0; i < coordinates.length - 1; i++) {
     const current = coordinates[i];
     const next = coordinates[i + 1];
-    if (elapsedSeconds >= current.timestamp && elapsedSeconds <= next.timestamp) {
+    // Use half-open interval [current.timestamp, next.timestamp) so color switches exactly at the next point's timestamp
+    if (elapsedSeconds >= current.timestamp && elapsedSeconds < next.timestamp) {
       const segmentDuration = next.timestamp - current.timestamp;
       const segmentProgress = segmentDuration > 0 ? (elapsedSeconds - current.timestamp) / segmentDuration : 0;
       
@@ -615,6 +617,7 @@ export default function AnimationView() {
                 const color = (row.color && typeof row.color === 'string') ? String(row.color) : undefined;
                 const fill_color = (row.fill_color && typeof row.fill_color === 'string') ? String(row.fill_color) : undefined;
                 const border_color = (row.border_color && typeof row.border_color === 'string') ? String(row.border_color) : undefined;
+                const is_delivery_event = (String(row.is_delivery_event || '').toLowerCase() === 'true');
 
                 return {
                   golfer_id: row.id || row.golfer_id || normType || `entity_${Math.random().toString(36).slice(2)}`,
@@ -626,6 +629,7 @@ export default function AnimationView() {
                   color,
                   fill_color,
                   border_color,
+                  is_delivery_event,
                 } as Coordinate;
               })
               .filter((coord: Coordinate | null) => !!coord)
@@ -655,7 +659,9 @@ export default function AnimationView() {
                   const teeOffIndex = sortedCoords.findIndex(coord => coord.current_hole !== undefined && coord.current_hole >= 1);
                   const finishIndex = sortedCoords.length - 1 - [...sortedCoords].reverse().findIndex((coord: Coordinate) => coord.current_hole !== undefined && coord.current_hole >= 1);
                   if (teeOffIndex !== -1 && finishIndex !== -1 && teeOffIndex <= finishIndex) {
-                    filteredCoords = sortedCoords.slice(teeOffIndex, finishIndex + 1).filter((_, index) => index % 3 === 0);
+                    const sliced = sortedCoords.slice(teeOffIndex, finishIndex + 1);
+                    // Downsample golfers, but always keep delivery meeting points
+                    filteredCoords = sliced.filter((coord, index) => coord.is_delivery_event || (index % 3 === 0));
                   } else {
                     filteredCoords = [];
                   }
