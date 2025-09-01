@@ -3670,7 +3670,111 @@ def _run_mode_delivery_runner(args: argparse.Namespace) -> None:
                     baseline_s = 0
                 streams_clipped = _clip_streams_at_baseline(streams, baseline_s)
                 if not getattr(args, "no_coordinates", False):
+                    # Annotate delivery meeting flags and SNAP runner/golfer at minute-aligned meeting timestamp
+                    try:
+                        # Build order placement index and SLA
+                        orders_list = sim_result.get("orders", []) or []
+                        placed_ts_by_order: Dict[str, int] = {}
+                        group_by_order: Dict[str, int] = {}
+                        for o in orders_list:
+                            try:
+                                oid = str(o.get("order_id"))
+                                placed_ts_by_order[oid] = int(o.get("order_time_s", 0) or 0)
+                                group_by_order[oid] = int(o.get("golfer_group_id")) if o.get("golfer_group_id") is not None else group_by_order.get(oid, None)  # type: ignore[arg-type]
+                            except Exception:
+                                pass
+
+                        # Collect delivered timestamps per order from delivery_stats
+                        delivered_ts_by_order: Dict[str, float] = {}
+                        runner_by_order: Dict[str, str] = {}
+                        for st in sim_result.get("delivery_stats", []) or []:
+                            try:
+                                oid = str(st.get("order_id"))
+                                delivered_ts_by_order[oid] = float(st.get("delivered_at_time_s", 0.0) or 0.0)
+                                rid = str(st.get("runner_id", "runner_1"))
+                                runner_by_order[oid] = rid
+                                # Prefer group_id from stats if present
+                                if st.get("golfer_group_id") is not None:
+                                    group_by_order[oid] = int(st.get("golfer_group_id"))  # type: ignore[assignment]
+                            except Exception:
+                                pass
+
+                        # Helper to find nearest point index by timestamp
+                        def _nearest_idx(pts: List[Dict[str, Any]], target_ts: int) -> int:
+                            best_i = -1
+                            best_d = None
+                            for i, p in enumerate(pts or []):
+                                try:
+                                    tsv = int(float(p.get("timestamp", p.get("timestamp_s", 0)) or 0))
+                                except Exception:
+                                    tsv = 0
+                                d = abs(tsv - target_ts)
+                                if best_d is None or d < best_d:
+                                    best_d = d
+                                    best_i = i
+                            return best_i
+
+                        sla_seconds = int(float(getattr(args, "sla_minutes", 30)) * 60.0)
+
+                        # Annotate per order
+                        for oid, delivered_float in delivered_ts_by_order.items():
+                            try:
+                                meeting_ts = int(round(float(delivered_float) / 60.0) * 60)
+                                rid = runner_by_order.get(oid, "runner_1")
+                                gid = group_by_order.get(oid)
+                                # Annotate runner
+                                runner_pts = streams_clipped.get(rid, [])
+                                if runner_pts:
+                                    ri = _nearest_idx(runner_pts, meeting_ts)
+                                    if ri >= 0:
+                                        rp = runner_pts[ri]
+                                        rp["is_delivery_event"] = True
+                                        rp["order_id"] = oid
+                                        # Snap to golfer coordinate when available
+                                        if gid is not None:
+                                            g_key = f"golfer_group_{gid}"
+                                            g_pts = streams_clipped.get(g_key, [])
+                                            gi = _nearest_idx(g_pts, meeting_ts)
+                                            if gi >= 0:
+                                                gp = g_pts[gi]
+                                                try:
+                                                    rp["latitude"] = float(gp.get("latitude", gp.get("lat", rp.get("latitude", 0.0))))
+                                                    rp["longitude"] = float(gp.get("longitude", gp.get("lon", rp.get("longitude", 0.0))))
+                                                except Exception:
+                                                    pass
+                                # Annotate golfer
+                                if gid is not None:
+                                    g_key = f"golfer_group_{gid}"
+                                    g_pts = streams_clipped.get(g_key, [])
+                                    if g_pts:
+                                        gi = _nearest_idx(g_pts, meeting_ts)
+                                        if gi >= 0:
+                                            gp = g_pts[gi]
+                                            gp["is_delivery_event"] = True
+                                            gp["order_id"] = oid
+                                            placed_ts = int(placed_ts_by_order.get(oid, 0) or 0)
+                                            if placed_ts and (meeting_ts - placed_ts) <= sla_seconds:
+                                                gp["fill_color"] = "#00b894"
+                                                gp["border_color"] = "#00b894"
+                            except Exception:
+                                continue
+                    except Exception as e:
+                        logger.warning(f"Failed to annotate delivery flags in CLI pipeline: {e}")
+
+                    # Write main CSV
                     write_unified_coordinates_csv(streams_clipped, run_path / "coordinates.csv")
+
+                    # Write filtered delivery points CSV
+                    try:
+                        delivery_only: Dict[str, List[Dict[str, Any]]] = {}
+                        for sid, pts in (streams_clipped or {}).items():
+                            filtered = [p for p in (pts or []) if bool(p.get("is_delivery_event"))]
+                            if filtered:
+                                delivery_only[sid] = filtered
+                        if delivery_only:
+                            write_unified_coordinates_csv(delivery_only, run_path / "coordinates_delivery_points.csv")
+                    except Exception as e:
+                        logger.warning(f"Failed to write filtered delivery points CSV (CLI): {e}")
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to write animation coordinates CSV: %s", e)
         # Order logs CSV

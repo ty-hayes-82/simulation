@@ -756,8 +756,91 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
 
                     # Write coordinates CSV
                     if streams:
+                        # Annotate golfer meeting flags/colors based on runner delivery points
+                        try:
+                            # Build quick index of runner delivery points by (group_id, meeting_ts)
+                            delivery_points: dict[tuple[int, int], dict[str, any]] = {}
+                            # Build mapping from golfer entity id -> group_id
+                            gid_by_entity: dict[str, int] = {}
+                            for key in list(streams.keys()):
+                                if key.startswith("golfer_group_"):
+                                    try:
+                                        gid_by_entity[key] = int(key.split("golfer_group_")[-1])
+                                    except Exception:
+                                        pass
+                            # Estimate group_id for runner points by nearest golfer stream coords at same timestamp
+                            # If orders list is available, prefer that mapping
+                            orders_list = sim_result.get("orders", []) or []
+                            placed_by_order: dict[str, int] = {}
+                            for o in orders_list:
+                                try:
+                                    placed_by_order[str(o.get("order_id"))] = int(o.get("golfer_group_id"))
+                                except Exception:
+                                    pass
+
+                            # Collect runner flagged delivery points
+                            for sid, pts in streams.items():
+                                if not pts or not sid.lower().startswith("runner"):
+                                    continue
+                                for p in pts:
+                                    if p.get("is_delivery_event") and p.get("order_id"):
+                                        try:
+                                            oid = str(p.get("order_id"))
+                                            gid = placed_by_order.get(oid)
+                                            ts = int(float(p.get("timestamp", p.get("timestamp_s", 0)) or 0))
+                                            if gid is not None:
+                                                delivery_points[(gid, ts)] = {"order_id": oid, "timestamp": ts}
+                                        except Exception:
+                                            continue
+
+                            # Apply flags/colors to matching golfer points
+                            if delivery_points:
+                                sla_seconds = int(float(getattr(config, "sla_minutes", 30)) * 60.0)
+                                # Build index of placed times by order
+                                placed_ts_by_order: dict[str, int] = {}
+                                for o in orders_list:
+                                    try:
+                                        placed_ts_by_order[str(o.get("order_id"))] = int(o.get("order_time_s", 0) or 0)
+                                    except Exception:
+                                        pass
+                                for entity, pts in streams.items():
+                                    gid = gid_by_entity.get(entity)
+                                    if gid is None:
+                                        continue
+                                    for p in pts or []:
+                                        try:
+                                            ts = int(float(p.get("timestamp", p.get("timestamp_s", 0)) or 0))
+                                        except Exception:
+                                            ts = 0
+                                        key = (gid, ts)
+                                        if key in delivery_points:
+                                            oid = delivery_points[key]["order_id"]
+                                            p["is_delivery_event"] = True
+                                            p["order_id"] = oid
+                                            # SLA check
+                                            placed_ts = placed_ts_by_order.get(oid, 0)
+                                            if placed_ts and (ts - placed_ts) <= int(sla_seconds):
+                                                p["fill_color"] = "#00b894"
+                                                p["border_color"] = "#00b894"
+                        except Exception as e:
+                            logger.warning(f"Failed to annotate golfer meeting flags: {e}")
+
+                        # Write main combined CSV
                         write_unified_coordinates_csv(streams, run_path / "coordinates.csv")
                         logger.info("Wrote coordinates CSV with %d streams", len(streams))
+
+                        # Also write filtered delivery points CSV (only rows with is_delivery_event=True)
+                        try:
+                            delivery_only = {}
+                            for sid, pts in streams.items():
+                                filtered = [p for p in (pts or []) if bool(p.get("is_delivery_event"))]
+                                if filtered:
+                                    delivery_only[sid] = filtered
+                            if delivery_only:
+                                write_unified_coordinates_csv(delivery_only, run_path / "coordinates_delivery_points.csv")
+                                logger.info("Wrote filtered delivery points CSV (%d streams)", len(delivery_only))
+                        except Exception as e:
+                            logger.warning(f"Failed to write filtered delivery points CSV: {e}")
                     else:
                         logger.warning(f"Run {run_idx}: No coordinate streams generated, skipping CSV write.")
                         

@@ -225,6 +225,19 @@ def normalize_coordinate_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
         "type": norm_type,
         "hole": hole_val,
     }
+    # Preserve delivery meeting flags when present
+    order_id_val = _get_first("order_id")
+    if order_id_val is not None:
+        try:
+            base_entry["order_id"] = str(order_id_val)
+        except Exception:
+            pass
+    delivery_flag_val = _get_first("is_delivery_event")
+    if delivery_flag_val is not None:
+        try:
+            base_entry["is_delivery_event"] = bool(delivery_flag_val)
+        except Exception:
+            pass
     # Preserve color if provided by upstream annotators
     color_val = _get_first("color")
     if color_val is not None:
@@ -290,13 +303,14 @@ def write_unified_coordinates_csv(points_by_id: Dict[str, List[Dict[str, Any]]],
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Base fieldnames plus visibility tracking fields and running totals
+    # Base fieldnames plus visibility tracking fields, running totals, and delivery flags
     fieldnames = [
         "id", "latitude", "longitude", "timestamp", "type", "hole", "color",
         "fill_color", "border_color",
         "visibility_status", "time_since_last_sighting_min", "pulsing",
         "total_orders", "total_revenue", "avg_per_order", "revenue_per_hour",
         "avg_order_time_min",
+        "order_id", "is_delivery_event",
     ]
     
     # Use csv module to avoid pandas dependency here
