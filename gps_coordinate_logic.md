@@ -9,6 +9,24 @@ This document describes the implementation that ensures delivery runners meet go
 - Persist delivery flags and order IDs to the unified coordinates CSV.
 - Emit a filtered coordinates_delivery_points.csv containing only delivery meeting points.
 
+### Final Strategy: Shortest-Path Runner Pathing
+
+- Runners always travel via the cart graph’s shortest path, not the golfer’s path.
+- The authoritative routing network is `cart_graph.pkl` (loaded NetworkX graph). Never travel off this graph.
+- Edge cost is distance-based: use edge attribute (e.g., `length_m`) when present; otherwise compute from node coordinates (`x`,`y`).
+- Meeting target is the golfer’s nearest-minute GPS point to the delivery-complete time.
+- Meeting node is resolved with `nearest_node(cart_graph, lon, lat)` using the golfer’s meeting coordinate.
+- Outbound path uses `networkx.shortest_path(clubhouse_node, meeting_node, weight=distance)` where `distance` is the edge length (meters).
+- Return path uses `networkx.shortest_path(meeting_node, clubhouse_node, weight=distance)` (reversal is used only if it is also the shortest).
+- Timing is derived from graph edge lengths and `runner_speed_mps`:
+  - `start_ts = meeting_ts - travel_out_s`, `return_end_ts = meeting_ts + travel_back_s`.
+  - No minute rounding for traversal; only the meeting is minute-aligned.
+- Coordinate synthesis uses `_nodes_to_points(nodes, start_ts, end_ts, ...)` to time-scale segments so the last outbound point lands exactly on `meeting_ts`.
+- SNAP: overwrite the final outbound runner point’s lat/lon to the golfer’s meeting coordinate; set `is_delivery_event=True` and `order_id`.
+- Annotate the matching golfer point at `meeting_ts` with the same flags and apply SLA-green (`#00b894`) when within threshold.
+- Persist both streams to the unified CSV, and also write a filtered `coordinates_delivery_points.csv` containing only `is_delivery_event == True` rows.
+- No geometry smoothing or straight-line interpolation that cuts across the map; emitted runner points must lie strictly on nodes/edges of `cart_graph.pkl`.
+
 ### CSV Interface Changes
 - Added new columns to the unified coordinates CSV:
   - `order_id`: string, order identifier for the delivery point.
@@ -29,13 +47,17 @@ Function: `generate_runner_coordinates_from_events()`
 Key behaviors:
 - Build `order_id -> group_id` mapping from events for accurate group alignment.
 - Determine the meeting point by selecting the golfer’s nearest-minute GPS coordinate for the order’s group at/near the delivered timestamp.
-- Compute the shortest path from the clubhouse to the meeting node and back using `nearest_node()` and `networkx.shortest_path()`.
+- Compute the shortest path from the clubhouse to the meeting node and back using `nearest_node()` and weighted `networkx.shortest_path()` over `cart_graph.pkl`.
 - If departure time is unknown, back-calculate it from routed path length and runner speed.
 - Use internal `_nodes_to_points()` to time-scale per-segment traversal so the final outbound point timestamp equals the meeting timestamp.
 - SNAP: Overwrite the last outbound runner point’s `latitude`/`longitude` to match the golfer’s meeting coordinate exactly, and set:
   - `is_delivery_event = True`
   - `order_id = <order_id>`
 - Start the return path at the same meeting timestamp; estimate its end from path length and speed.
+
+- Return route uses a fresh `networkx.shortest_path(meeting_node, clubhouse_node)` computation (do not assume reverse of outbound unless it is also shortest).
+- Do not follow the golfer’s node sequence; always route the runner on the graph’s shortest path between endpoints.
+- Never deviate from the shortest path defined by `cart_graph.pkl`. If no path exists, skip generating runner points for that order (no off-graph fallback).
 
 Fallbacks:
 - If delivery stats or group mapping are missing, fall back to global nearest golfer coordinate.
@@ -64,10 +86,17 @@ File: `golfsim/simulation/orchestration.py`
   - One runner row (type `runner`) at the identical timestamp and identical lat/lon.
 - In the main CSV, grep for `#00b894` confirms SLA-met golfer points are green at the flagged moment.
 
+- Runner route is the shortest path in both directions; optionally verify by recomputing with `networkx.shortest_path` against the same endpoints.
+  - Validate that emitted runner node sequence equals the recomputed shortest path (weighted) between the same endpoints.
+  - Confirm all runner coordinates are graph node coordinates (or lie along graph edges if edge-interpolated).
+
 ### Edge Cases & Notes
 - If the cart graph or meeting node resolution fails, no runner points are added for that order.
 - When group IDs are absent on events, the meeting point falls back to global nearest golfer minute.
 - Time scaling avoids minute rounding—exact time scaling is used so the final outbound point equals the meeting timestamp; return starts at the same timestamp.
+
+- If the shortest return path differs from the outbound reverse, prefer the newly computed shortest return path.
+ - No off-graph fallback: if weighted shortest path cannot be found in `cart_graph.pkl`, do not synthesize runner points for that order.
 
 ### Files and Functions Touched
 - `golfsim/io/results.py`
