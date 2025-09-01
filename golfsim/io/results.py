@@ -232,7 +232,15 @@ def normalize_coordinate_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
             base_entry["color"] = str(color_val)
         except Exception:
             pass
+
+    fill_color_val = _get_first("fill_color")
+    if fill_color_val is not None:
+        base_entry["fill_color"] = str(fill_color_val)
     
+    border_color_val = _get_first("border_color")
+    if border_color_val is not None:
+        base_entry["border_color"] = str(border_color_val)
+
     # Add visibility tracking fields if present (for golfer points)
     visibility_status = _get_first("visibility_status", "visibility_color")
     if visibility_status is not None:
@@ -285,6 +293,7 @@ def write_unified_coordinates_csv(points_by_id: Dict[str, List[Dict[str, Any]]],
     # Base fieldnames plus visibility tracking fields and running totals
     fieldnames = [
         "id", "latitude", "longitude", "timestamp", "type", "hole", "color",
+        "fill_color", "border_color",
         "visibility_status", "time_since_last_sighting_min", "pulsing",
         "total_orders", "total_revenue", "avg_per_order", "revenue_per_hour",
         "avg_order_time_min",

@@ -128,60 +128,67 @@ def load_holes_connected_points(course_dir: str) -> List[Tuple[float, float]]:
     return ordered
 
 
-def interpolate_path_points(
-    path_pts: List[Tuple[float, float]],
-    start_ts: int,
-    duration_s: float,
+def generate_runner_to_golfer_rendezvous_points(
+    runner_path_to_golfer: List[Tuple[float, float]],
+    golfer_track: List[Dict[str, Any]],
+    meet_time_s: int,
     runner_id: str,
     hole_num: int,
-) -> List[Dict[str, Any]]:
-    """Interpolate along a path at fixed 60-second timestamps.
-
-    - Matches the golfer animation cadence (one point every 60 seconds)
-    - Produces points from the first minute boundary at/after start_ts
-      through the last minute boundary at/before (start_ts + duration_s)
+) -> Tuple[List[Dict[str, Any]], int]:
     """
-    sampled: List[Dict[str, Any]] = []
-    if not path_pts or duration_s <= 0:
-        return sampled
+    Generate runner coordinates to meet a golfer at a specific node and time.
 
-    total_time_s = float(duration_s)
-    segments = max(1, len(path_pts) - 1)
+    - Runner travels towards the golfer, who is moving one node per minute.
+    - They meet exactly at `meet_time_s` at a shared node.
+    - Runner's return trip begins from the meeting node.
+    """
+    # Find the golfer's position at the exact meeting time
+    meet_point_geo = None
+    for p in golfer_track:
+        if int(p["timestamp"]) == meet_time_s:
+            meet_point_geo = (p["longitude"], p["latitude"])
+            break
 
-    first_tick = int(((int(start_ts) + 59) // 60) * 60)
-    last_tick = int(((int(start_ts) + int(total_time_s)) // 60) * 60)
-    if last_tick < first_tick:
-        return sampled
+    if meet_point_geo is None:
+        # If no exact match, fallback to the closest point in time (optional)
+        # For now, we assume an exact match is required.
+        return [], -1
 
-    timestamps = list(range(first_tick, last_tick + 1, 60))
-    if int(start_ts + duration_s) not in timestamps:
-        timestamps.append(int(start_ts + duration_s))
+    # Find the node in the runner's path that is closest to the meeting point
+    closest_node_idx = -1
+    min_dist = float("inf")
+    for i, node_geo in enumerate(runner_path_to_golfer):
+        dist = (
+            (node_geo[0] - meet_point_geo[0]) ** 2
+            + (node_geo[1] - meet_point_geo[1]) ** 2
+        )
+        if dist < min_dist:
+            min_dist = dist
+            closest_node_idx = i
+
+    if closest_node_idx == -1:
+        return [], -1
+
+    # Runner's path is truncated to the meeting node
+    runner_path_to_meeting_node = runner_path_to_golfer[: closest_node_idx + 1]
     
-    for t in sorted(timestamps):
-        progress = (float(t) - float(start_ts)) / total_time_s
-        if progress < 0.0:
-            progress = 0.0
-        elif progress > 1.0:
-            progress = 1.0
+    # Calculate runner's travel time to the meeting node (1 minute per node)
+    runner_travel_time_s = len(runner_path_to_meeting_node) * 60
+    
+    # Determine when the runner should start to meet the golfer at meet_time_s
+    runner_start_ts = meet_time_s - runner_travel_time_s
 
-        eased_progress = ease_in_out_cubic(progress)
-
-        pos = eased_progress * float(segments)
-        seg_idx = int(pos) if pos < segments else segments - 1
-        local_frac = pos - float(seg_idx)
-
-        x0, y0 = path_pts[seg_idx]
-        x1, y1 = path_pts[min(seg_idx + 1, len(path_pts) - 1)]
-        lon = x0 + local_frac * (x1 - x0)
-        lat = y0 + local_frac * (y1 - y0)
-
-        sampled.append({
+    # Generate coordinate points for the runner's outbound trip
+    runner_coords = []
+    for i, node_geo in enumerate(runner_path_to_meeting_node):
+        timestamp = runner_start_ts + i * 60
+        runner_coords.append({
             "id": runner_id,
-            "latitude": lat,
-            "longitude": lon,
-            "timestamp": int(t),
+            "latitude": node_geo[1],
+            "longitude": node_geo[0],
+            "timestamp": int(timestamp),
             "type": "delivery_runner",
             "hole": hole_num,
         })
 
-    return sampled
+    return runner_coords, closest_node_idx

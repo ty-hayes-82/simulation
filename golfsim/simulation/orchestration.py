@@ -24,7 +24,7 @@ from ..simulation.services import MultiRunnerDeliveryService, DeliveryOrder
 from ..simulation.tracks import (
     generate_golfer_points_for_groups,
     load_holes_connected_points,
-    interpolate_path_points,
+    generate_runner_to_golfer_rendezvous_points,
 )
 from ..postprocessing.coordinates import generate_runner_coordinates_from_events
 from ..io.reporting import (
@@ -63,6 +63,7 @@ from pathlib import Path
 import pickle
 from typing import Any, Dict, List, Optional
 import logging
+import pandas as pd
 
 logger = get_logger(__name__)
 
@@ -613,57 +614,106 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                         for gid, pts in by_gid.items():
                             golfer_points_csv[f"golfer_group_{gid}"] = pts
 
-                    # Generate runner coordinates using post-processing approach
-                    runner_points = []
-                    if cart_graph is not None and events:
-                        logger.info("Cart graph and events are available, proceeding with runner coordinate generation.")
-                        try:
-                            import pandas as pd
+                    # Annotate golfer colors from order/delivery events
+                    try:
+                        if golfer_points_csv:
+                            from golfsim.postprocessing.golfer_colors import annotate_golfer_colors
+                            # Create events from orders and activity log for color annotation
+                            color_events = []
                             
-                            # Convert events to DataFrame
-                            events_df = pd.DataFrame(events)
+                            # Add order placement events from orders data
+                            for order in sim_result.get("orders", []):
+                                if order.get("order_id") and order.get("golfer_group_id") and order.get("order_time_s"):
+                                    color_events.append({
+                                        "action": "order_placed",
+                                        "timestamp_s": int(order["order_time_s"]),
+                                        "order_id": order["order_id"],
+                                        "group_id": int(order["golfer_group_id"])
+                                    })
                             
-                            # Convert golfer coordinates to DataFrame
-                            all_golfer_coords = []
-                            for group_coords in golfer_points_csv.values():
-                                all_golfer_coords.extend(group_coords)
+                            # Add delivery completion events from activity log
+                            for entry in sim_result.get("activity_log", []):
+                                if entry.get("activity_type") == "delivery_complete" and entry.get("order_id"):
+                                    # Find the corresponding order to get group_id
+                                    order_id = entry["order_id"]
+                                    for order in sim_result.get("orders", []):
+                                        if order.get("order_id") == order_id:
+                                            color_events.append({
+                                                "action": "delivery_complete",
+                                                "timestamp_s": int(entry.get("timestamp_s", 0)),
+                                                "order_id": order_id,
+                                                "group_id": int(order.get("golfer_group_id", 0))
+                                            })
+                                            break
                             
-                            if all_golfer_coords:
-                                golfer_coords_df = pd.DataFrame(all_golfer_coords)
-                                
-                                # Generate runner coordinates from events
-                                # Prepare optional detailed dataframes for precise node-path GPS generation
-                                try:
-                                    delivery_stats_df = pd.DataFrame(sim_result.get("delivery_stats", []) or [])
-                                except Exception:
-                                    delivery_stats_df = None
-                                try:
-                                    order_timing_df = pd.DataFrame(getattr(delivery_service, "order_timing_logs", []) or [])
-                                except Exception:
-                                    order_timing_df = None
+                            golfer_points_csv = annotate_golfer_colors(golfer_points_csv, color_events)
+                            logger.debug(f"Applied color annotation using {len(color_events)} events")
+                    except Exception as e:
+                        logger.warning("Failed to annotate golfer colors: %s", e)
 
-                                runner_points = generate_runner_coordinates_from_events(
-                                    events_df=events_df,
-                                    golfer_coords_df=golfer_coords_df,
-                                    clubhouse_coords=config.clubhouse,
-                                    cart_graph=cart_graph,
-                                    runner_speed_mps=float(config.delivery_runner_speed_mps),
-                                    num_runners=int(config.num_runners),
-                                    delivery_stats_df=delivery_stats_df,
-                                    order_timing_df=order_timing_df,
-                                )
-                                logger.info("Generated %d runner coordinate points using post-processing approach", len(runner_points))
+                    # Generate runner coordinates using events and delivery stats (node paths)
+                    runner_points = []
+                    if cart_graph is not None and delivery_service.delivery_stats:
+                        logger.info("Cart graph and delivery_stats are available, proceeding with runner coordinate generation.")
+
+                        try:
+                            events_df = pd.DataFrame(events or [])
+                        except Exception:
+                            events_df = pd.DataFrame()
+
+                        try:
+                            all_golfer_points: list[dict[str, Any]] = []
+                            for pts in (golfer_points_csv or {}).values():
+                                all_golfer_points.extend(pts or [])
+                            golfer_coords_df = pd.DataFrame(all_golfer_points)
+                        except Exception:
+                            golfer_coords_df = pd.DataFrame()
+
+                        # Determine clubhouse coordinates (lon, lat)
+                        try:
+                            if config.clubhouse and isinstance(config.clubhouse, tuple) and len(config.clubhouse) == 2:
+                                clubhouse_coords = (float(config.clubhouse[0]), float(config.clubhouse[1]))
                             else:
-                                logger.warning("No golfer coordinates available for runner coordinate generation")
-                                
+                                clubhouse_coords = (-84.5928, 34.0379)
+                        except Exception:
+                            clubhouse_coords = (-84.5928, 34.0379)
+
+                        runner_speed_mps = float(config.delivery_runner_speed_mps)
+                        num_runners = int(config.num_runners)
+
+                        try:
+                            delivery_stats_df = pd.DataFrame(list(delivery_service.delivery_stats or []))
+                        except Exception:
+                            delivery_stats_df = pd.DataFrame()
+
+                        # Optional order timing details
+                        try:
+                            timing_logs = getattr(delivery_service, "order_timing_logs", None)
+                            order_timing_df = pd.DataFrame(list(timing_logs or [])) if timing_logs else None
+                        except Exception:
+                            order_timing_df = None
+
+                        try:
+                            runner_points = generate_runner_coordinates_from_events(
+                                events_df=events_df,
+                                golfer_coords_df=golfer_coords_df,
+                                clubhouse_coords=clubhouse_coords,
+                                cart_graph=cart_graph,
+                                runner_speed_mps=runner_speed_mps,
+                                num_runners=num_runners,
+                                delivery_stats_df=delivery_stats_df,
+                                order_timing_df=order_timing_df,
+                            )
                         except Exception as e:
-                            logger.warning("Post-processing coordinate generation failed: %s", e)
+                            logger.warning(f"Failed to generate runner coordinates from events: {e}")
                             runner_points = []
+
+                        logger.info("Generated %d runner coordinate points using events-based logic", len(runner_points))
                     else:
                         logger.warning(
-                            "Skipping runner coordinate generation. Cart graph available: %s. Events available: %s",
+                            "Skipping runner coordinate generation. Cart graph available: %s. Delivery stats available: %s",
                             cart_graph is not None,
-                            bool(events)
+                            bool(delivery_service.delivery_stats)
                         )
                     
                     # Combine all coordinate streams
@@ -679,14 +729,6 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                     
                     logger.debug(f"Run {run_idx}: Total coordinate streams to write: {len(streams)}.")
                     logger.debug(f"Run {run_idx}: Stream keys: {list(streams.keys())}")
-
-                    # Annotate golfer colors from order/delivery events
-                    try:
-                        if streams and events:
-                            from golfsim.postprocessing.golfer_colors import annotate_golfer_colors
-                            streams = annotate_golfer_colors(streams, events)
-                    except Exception as e:
-                        logger.warning("Failed to annotate golfer colors: %s", e)
 
                     # Timeline anchors to control animation start/end
                     # - Start: naturally anchored by earliest golfer tee time

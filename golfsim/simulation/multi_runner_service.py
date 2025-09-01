@@ -360,8 +360,24 @@ class MultiRunnerDeliveryService(BaseDeliveryService):
             return None
 
     def place_order(self, order: DeliveryOrder) -> None:
-        """Place an order in the shared queue for multi-runner processing."""
+        """Place an order and start its preparation process."""
         order.order_placed_time = self.env.now
+        self.log_activity(
+            "order_placed",
+            f"Order {order.order_id} placed for Hole {order.hole_num}",
+            order_id=order.order_id,
+        )
+        self.env.process(self._prepare_order(order))
+
+    def _prepare_order(self, order: DeliveryOrder):
+        """Waits for prep time, then makes order available for dispatch."""
+        yield self.env.timeout(self.prep_time_s)
+        order.prep_completed_time = self.env.now
+        self.log_activity(
+            "order_ready",
+            f"Order {order.order_id} is ready for pickup",
+            order_id=order.order_id,
+        )
         self.order_store.put(order)
 
     def _dispatch_loop(self):  # simpy process
@@ -455,14 +471,19 @@ class MultiRunnerDeliveryService(BaseDeliveryService):
             self.runner_locations[runner_index] = "clubhouse"
             self.log_activity("arrived_clubhouse", f"{runner_label} arrived at clubhouse to prepare Order {order.order_id}", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
 
+        # The order is already prepared when the runner receives it.
+        # The time from when the order was placed until now represents the total queue time,
+        # which includes waiting for preparation and for a runner to become available.
         order.queue_delay_s = self.env.now - (order.order_placed_time or self.env.now)
-        order.prep_started_time = self.env.now
-        self.log_activity("prep_start", f"{runner_label} started prep for Order {order.order_id} (Hole {order.hole_num})", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
-        yield self.env.timeout(self.prep_time_s)
-        order.prep_completed_time = self.env.now
-        self.log_activity("prep_complete", f"{runner_label} completed prep for Order {order.order_id}", runner_id=runner_label, order_id=order.order_id, location="clubhouse")
+        self.log_activity(
+            "pickup_order",
+            f"{runner_label} picked up Order {order.order_id}",
+            runner_id=runner_label,
+            order_id=order.order_id,
+            location="clubhouse",
+        )
 
-        # This is the actual departure time, after any return trips and prep are completed.
+        # This is the actual departure time, after any return trips are completed and the order is picked up.
         actual_departure_time_s = self.env.now
         
         # Predict an intercept hole considering prep time, runner travel time, and golfer progression

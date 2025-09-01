@@ -214,51 +214,91 @@ def haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> floa
     return R * c
 
 
-def export_queue_levels(results: dict, out_csv: Path) -> None:
+def export_queue_levels(orders_events_csv: Path, out_csv: Path) -> None:
     """
-    Reconstruct a coarse queue time series per queue from results. If results lack
-    explicit queue snapshots, synthesize length using order arrivals and a simple service proxy.
+    Reconstruct queue time series from orders_events.csv.
     Output columns: ts,queue,length,max_wait_s,arrivals,assignments,abandons
     """
+    import csv
+
     header = "ts,queue,length,max_wait_s,arrivals,assignments,abandons\n"
-    orders = results.get("orders", []) if isinstance(results, dict) else []
-    # Build minute buckets from earliest to latest order timestamp
-    if not orders:
+    if not orders_events_csv.exists():
         write_text(out_csv, header)
         return
 
-    times = [o.get("order_time_s", 0) for o in orders if o.get("order_time_s") is not None]
-    if not times:
+    events = []
+    with orders_events_csv.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                row['ts'] = int(float(row['ts']))
+                events.append(row)
+            except (ValueError, TypeError):
+                continue
+    
+    if not events:
         write_text(out_csv, header)
         return
-    t0 = int(min(times) // 60 * 60)
-    t1 = int(max(times) // 60 * 60 + 60)
 
-    # Bucket arrivals by queue per minute
-    buckets: Dict[str, Dict[int, int]] = {}
-    for o in orders:
-        ts = o.get("order_time_s")
-        if ts is None:
-            continue
-        q = infer_queue_from_hole(o.get("placed_hole"))
-        m = int(ts // 60 * 60)
-        buckets.setdefault(q, {}).setdefault(m, 0)
-        buckets[q][m] += 1
-
-    lines: List[str] = [header]
-    # Simple proxy for service capacity: use successful deliveries per minute overall divided by queues
-    # Lacking per-minute assignment details, we leave assignments as blank and track length as cumulative arrivals - proxy service.
-    for q, arrivals in buckets.items():
-        length = 0
-        max_wait_s = 0
-        for m in range(t0, t1 + 1, 60):
-            a = arrivals.get(m, 0)
-            # crude service proxy: assume at least 1 processed per minute when length > 0
-            processed = 1 if length > 0 else 0
-            length = max(0, length + a - processed)
-            max_wait_s = max(max_wait_s, length * 60)
-            lines.append(f"{m},{q},{length},{max_wait_s},{a},,\n")
-
+    events.sort(key=lambda x: x['ts'])
+    
+    all_queues = sorted(list(set(e['queue'] for e in events if e.get('queue'))))
+    
+    t_start = int(events[0]['ts'] // 60 * 60)
+    t_end = int(events[-1]['ts'] // 60 * 60)
+    
+    lines = [header]
+    
+    queues_state = {q: {} for q in all_queues}  # {order_id: queued_ts}
+    
+    event_idx = 0
+    
+    for t_bucket in range(t_start, t_end + 61, 60):
+        # Update state up to t_bucket
+        while event_idx < len(events) and events[event_idx]['ts'] < t_bucket:
+            event = events[event_idx]
+            q_name = event.get('queue')
+            oid = event['order_id']
+            if q_name in queues_state:
+                if event['event'] == 'queued':
+                    queues_state[q_name][oid] = event['ts']
+                elif event['event'] == 'assigned':
+                    if oid in queues_state[q_name]:
+                        del queues_state[q_name][oid]
+            event_idx += 1
+        
+        # Record state and bucket events for all queues
+        for q_name in all_queues:
+            q_content = queues_state.get(q_name, {})
+            length = len(q_content)
+            max_wait_s = 0
+            if length > 0:
+                waits = [t_bucket - queued_ts for queued_ts in q_content.values()]
+                if waits:
+                    max_wait_s = max(waits)
+            
+            # Count events in bucket [t_bucket, t_bucket + 60)
+            arrivals = 0
+            assignments = 0
+            abandons = 0
+            
+            temp_idx = event_idx
+            while temp_idx < len(events) and events[temp_idx]['ts'] < t_bucket + 60:
+                event = events[temp_idx]
+                if event.get('queue') == q_name:
+                    if event['event'] == 'queued':
+                        arrivals += 1
+                    elif event['event'] == 'assigned':
+                        assignments += 1
+                    elif event['event'] == 'abandoned':
+                        abandons += 1
+                temp_idx += 1
+            
+            assignments_str = str(assignments) if assignments > 0 else ""
+            abandons_str = str(abandons) if abandons > 0 else ""
+            
+            lines.append(f"{t_bucket},{q_name},{length},{int(max_wait_s)},{arrivals},{assignments_str},{abandons_str}\n")
+    
     write_text(out_csv, "".join(lines))
 
 
@@ -513,9 +553,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     sim_metrics = load_json(paths.simulation_metrics_json)
 
     if args.emit_csv:
-        export_orders_events(results or {}, paths.report_dir / "orders_events.csv")
+        orders_events_csv_path = paths.report_dir / "orders_events.csv"
+        export_orders_events(results or {}, orders_events_csv_path)
         export_runner_states(paths.coordinates_csv, paths.report_dir / "runner_states.csv")
-        export_queue_levels(results or {}, paths.report_dir / "queue_levels.csv")
+        export_queue_levels(orders_events_csv_path, paths.report_dir / "queue_levels.csv")
 
     kpis = build_kpis(results, sim_metrics)
     write_json(paths.report_dir / "kpis.json", kpis)

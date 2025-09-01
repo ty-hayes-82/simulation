@@ -18,6 +18,8 @@ interface Coordinate {
   type: string;
   current_hole?: number;
   color?: string;
+  fill_color?: string;
+  border_color?: string;
 }
 
 interface EntityData {
@@ -25,6 +27,8 @@ interface EntityData {
   color: string;
   name: string;
   type: string;
+  fill_color?: string;
+  border_color?: string;
 }
 
 type SmoothingData = {
@@ -189,7 +193,9 @@ function getPositionOnPath(coordinates: Coordinate[], elapsedTime: number, easin
         longitude: current.longitude + (next.longitude - current.longitude) * easedT,
         timestamp: current.timestamp + (next.timestamp - current.timestamp) * segmentProgress,
         type: current.type,
-        current_hole: current.current_hole
+        current_hole: current.current_hole,
+        fill_color: current.fill_color,
+        border_color: current.border_color
       };
     }
   }
@@ -328,6 +334,8 @@ function getCatmullRomPositionOnPath(coordinates: Coordinate[], elapsedTime: num
     timestamp: elapsedSeconds,
     type: p1.type,
     current_hole: p1.current_hole,
+    fill_color: p1.fill_color,
+    border_color: p1.border_color,
   };
 }
 
@@ -605,6 +613,9 @@ export default function AnimationView() {
                 const holeStr = (row.current_hole ?? row.hole);
                 const parsedHole = typeof holeStr === 'string' ? parseInt(holeStr, 10) : (Number.isFinite(holeStr) ? Number(holeStr) : undefined);
                 const color = (row.color && typeof row.color === 'string') ? String(row.color) : undefined;
+                const fill_color = (row.fill_color && typeof row.fill_color === 'string') ? String(row.fill_color) : undefined;
+                const border_color = (row.border_color && typeof row.border_color === 'string') ? String(row.border_color) : undefined;
+
                 return {
                   golfer_id: row.id || row.golfer_id || normType || `entity_${Math.random().toString(36).slice(2)}`,
                   latitude,
@@ -612,7 +623,9 @@ export default function AnimationView() {
                   timestamp,
                   type: normType || 'golfer',
                   current_hole: Number.isFinite(parsedHole) ? (parsedHole as number) : undefined,
-                  color
+                  color,
+                  fill_color,
+                  border_color,
                 } as Coordinate;
               })
               .filter((coord: Coordinate | null) => !!coord)
@@ -656,7 +669,17 @@ export default function AnimationView() {
                 }
                 const entityType = filteredCoords[0]?.type || sortedCoords[0]?.type || 'golfer';
                 const firstColor = filteredCoords.find(c => !!c.color)?.color;
-                return { name: trackerId, coordinates: filteredCoords, type: entityType, color: firstColor || config.entityTypes[entityType]?.color || config.golferColors[0] };
+                const firstFillColor = filteredCoords.find(c => !!c.fill_color)?.fill_color;
+                const firstBorderColor = filteredCoords.find(c => !!c.border_color)?.border_color;
+                
+                return { 
+                  name: trackerId, 
+                  coordinates: filteredCoords, 
+                  type: entityType, 
+                  color: firstFillColor || config.entityTypes[entityType]?.color || config.golferColors[0],
+                  fill_color: firstFillColor,
+                  border_color: firstBorderColor
+                };
               })
               .filter((e) => e.coordinates.length > 0);
             
@@ -778,7 +801,7 @@ export default function AnimationView() {
       if (!p) return;
       features.push({
         type: 'Feature',
-        properties: { id: tracker.name, color: tracker.color, type: tracker.type },
+        properties: { id: tracker.name, color: tracker.color, type: tracker.type, fill_color: (tracker as any).fill_color, border_color: (tracker as any).border_color },
         geometry: { type: 'Point', coordinates: [p.longitude, p.latitude] }
       });
     });
@@ -828,7 +851,7 @@ export default function AnimationView() {
         if (position) {
           features.push({
             type: 'Feature',
-            properties: { id: tracker.name, color: position.color || tracker.color, type: tracker.type },
+            properties: { id: tracker.name, color: position.color || tracker.color, type: tracker.type, fill_color: position.fill_color || (tracker as any).fill_color, border_color: position.border_color || (tracker as any).border_color },
             geometry: { type: 'Point', coordinates: [position.longitude, position.latitude] }
           });
         }
@@ -959,9 +982,9 @@ export default function AnimationView() {
                   (config?.display.golferMarkers.radius ?? 9) * 0.75,
                   (config?.display.golferMarkers.radius ?? 9)
                 ],
-                'circle-color': ['get', 'color'],
+                'circle-color': ['coalesce', ['get', 'fill_color'], ['get', 'color'], '#007cbf'],
                 'circle-stroke-width': config?.display.golferMarkers.strokeWidth || 1.5,
-                'circle-stroke-color': config?.display.golferMarkers.strokeColor || '#ffffff',
+                'circle-stroke-color': ['coalesce', ['get', 'border_color'], config?.display.golferMarkers.strokeColor || '#ffffff'],
                 'circle-stroke-opacity': config?.display.golferMarkers.strokeOpacity || 0.8,
                 // @ts-ignore - circle-sort-key is a valid Mapbox property for layer ordering but may not be in older type definitions
                 'circle-sort-key': ['case',

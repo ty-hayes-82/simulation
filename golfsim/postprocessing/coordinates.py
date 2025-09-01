@@ -6,7 +6,6 @@ import math
 import pandas as pd
 import networkx as nx
 
-from golfsim.simulation.tracks import interpolate_path_points
 from golfsim.routing.networks import nearest_node
 
 
@@ -340,14 +339,17 @@ def generate_runner_coordinates_from_events(
             if back_nodes and delivered_ts is not None:
                 # If no explicit end, compute by speed
                 if return_end_ts is None:
-                    # estimate using distances
                     try:
                         coords = [(float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y'])) for n in back_nodes]
                         travel_back_s = _path_length_m(coords) / max(0.001, float(runner_speed_mps))
                         return_end_ts = int(delivered_ts + travel_back_s)
                     except Exception:
                         return_end_ts = None
-                return_points = _nodes_to_points(back_nodes, int(delivered_ts), int(return_end_ts) if return_end_ts else None, runner_id, hole_hint)
+                
+                # Ensure the return trip starts exactly at the delivery timestamp
+                return_start_ts = int(delivered_ts)
+                
+                return_points = _nodes_to_points(back_nodes, return_start_ts, int(return_end_ts) if return_end_ts else None, runner_id, hole_hint)
                 runner_coords.extend(return_points)
         # After building from stats, continue to clubhouse fill below
     else:
@@ -385,31 +387,21 @@ def generate_runner_coordinates_from_events(
                     dispatch_ts = int(complete_ts - travel_out_s)
                     # No minute rounding; use exact timing
                     start_ts = int(dispatch_ts)
-                    duration_s = float(complete_ts - start_ts)
-                    # Interpolate at minute boundaries for legacy mode
-                    delivery_coords = interpolate_path_points(
-                        delivery_path_coords,
-                        start_ts,
-                        duration_s,
-                        runner_id,
-                        0
-                    )
+
+                    # Use _nodes_to_points for coordinate generation
+                    delivery_coords = _nodes_to_points(delivery_path_nodes, start_ts, complete_ts, runner_id, 0)
                     runner_coords.extend(delivery_coords)
+
                     # Return path
                     return_path_nodes = nx.shortest_path(cart_graph, delivery_node, clubhouse_node)
-                    return_path_coords = [
+                    return_len_m = _path_length_m([
                         (float(cart_graph.nodes[n]['x']), float(cart_graph.nodes[n]['y']))
                         for n in return_path_nodes
-                    ]
-                    return_len_m = _path_length_m(return_path_coords)
+                    ])
                     travel_back_s = float(return_len_m) / float(max(runner_speed_mps, 0.001))
-                    return_coords = interpolate_path_points(
-                        return_path_coords,
-                        complete_ts,
-                        float(travel_back_s),
-                        runner_id,
-                        0
-                    )
+                    
+                    # Use _nodes_to_points for return path
+                    return_coords = _nodes_to_points(return_path_nodes, complete_ts, int(complete_ts + travel_back_s), runner_id, 0)
                     runner_coords.extend(return_coords)
             except Exception:
                 continue

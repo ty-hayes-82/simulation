@@ -17,20 +17,13 @@ class OrderState:
 
 
 # Color palette
-BLUE_NO_ORDER = "#007cbf"  # default golfer blue
+WHITE_FILL = "#FFFFFF"
 GREEN_DELIVERED_SLA = "#00b894"  # remain green if delivered within 30 minutes
+WHITE_BORDER = "#FFFFFF"
+YELLOW_FILL = "#FFFF00"
+RED_FILL = "#FF0000"
 
-# 6 shades escalating to red for waiting since order placed (last one is red)
-WAITING_SHADES: List[Tuple[int, str]] = [
-    (0, "#ffe6cc"),    # 0-10 min
-    (10, "#ffcc99"),   # 10-20 min
-    (20, "#ffb366"),   # 20-30 min
-    (30, "#ff9933"),   # 30-40 min
-    (40, "#ff6600"),   # 40-50 min
-    (50, "#ff0000"),   # 50-60+ min (approaching red -> red)
-]
 
-SIXTY_MIN_S = 60 * 60
 THIRTY_MIN_S = 30 * 60
 
 
@@ -78,17 +71,30 @@ def _build_orders_index(events: List[Dict[str, Any]]) -> Dict[int, List[OrderSta
             action = str(ev.get("action", "")).lower()
             ts = int(ev.get("timestamp_s", 0))
             order_id = ev.get("order_id")
+            group_id_from_event = ev.get("group_id")
         except Exception:
             continue
+        
         if action == "delivery_complete" and order_id is not None:
-            # We don't have group_id on this event; scan groups that know this order_id
-            for gid, orders in by_group.items():
-                if str(order_id) in orders:
+            # Find the group_id for this order
+            gid_to_update = None
+            if group_id_from_event is not None:
+                gid_to_update = int(group_id_from_event)
+            else:
+                # Fallback: scan groups if group_id is not on the event
+                for gid_scan, orders in by_group.items():
+                    if str(order_id) in orders:
+                        gid_to_update = gid_scan
+                        break
+            
+            if gid_to_update is not None and gid_to_update in by_group:
+                order_state = by_group[gid_to_update].get(str(order_id))
+                if order_state:
                     # First delivered event wins
-                    if orders[str(order_id)].delivered_ts is None:
-                        orders[str(order_id)].delivered_ts = ts
+                    if order_state.delivered_ts is None:
+                        order_state.delivered_ts = ts
                     else:
-                        orders[str(order_id)].delivered_ts = min(orders[str(order_id)].delivered_ts or ts, ts)
+                        order_state.delivered_ts = min(order_state.delivered_ts, ts)
 
     # Convert inner dicts to lists sorted by placed_ts
     finalized: Dict[int, List[OrderState]] = {}
@@ -97,18 +103,13 @@ def _build_orders_index(events: List[Dict[str, Any]]) -> Dict[int, List[OrderSta
     return finalized
 
 
-def _color_for_wait_time(seconds_since_order: int) -> str:
-    # Once at or past 60 minutes, hard red
-    if seconds_since_order >= SIXTY_MIN_S:
-        return "#ff0000"
+def _color_for_wait_time(seconds_since_order: int) -> Dict[str, str]:
     minutes = max(0, seconds_since_order // 60)
-    shade = WAITING_SHADES[0][1]
-    for threshold_min, color in WAITING_SHADES:
-        if minutes >= threshold_min:
-            shade = color
-        else:
-            break
-    return shade
+
+    if minutes >= 30:
+        return {"fill": RED_FILL, "border": RED_FILL}
+
+    return {"fill": YELLOW_FILL, "border": YELLOW_FILL}
 
 
 def annotate_golfer_colors(
@@ -118,13 +119,15 @@ def annotate_golfer_colors(
     """Annotate golfer GPS points with a 'color' property based on order/delivery timing.
 
     Rules:
-    - No order ever: BLUE throughout.
-    - After an order is placed and until delivery:
-      escalate through 6 shades ending in RED at 60 min.
-      Once 60 min is reached without delivery, remain RED for the rest of the round.
-    - If an order is delivered within 30 min, remain GREEN from delivery time
-      until end of round or until next order is placed.
-    - Between orders (no active waiting), revert to BLUE unless red lock is active.
+    - Default (no active order): WHITE circle.
+    - Order placed and waiting for delivery:
+      - YELLOW circle if waiting < 30 minutes.
+      - RED circle if waiting >= 30 minutes.
+    - Order delivered:
+      - GREEN circle if delivered within 30 minutes of order placement.
+        (Remains green until the next order is placed).
+      - WHITE circle if delivered after 30 minutes.
+    - Border color always matches fill color.
     """
     orders_index = _build_orders_index(events)
 
@@ -140,22 +143,20 @@ def annotate_golfer_colors(
 
         if not is_golfer_stream or gid is None:
             # Non-golfer or unrecognized: pass through
-            enhanced[entity_id] = points
+            enhanced[entity_id] = [
+                {**p, "fill_color": WHITE_FILL, "border_color": WHITE_BORDER, "type": p.get("type", "golfer")}
+                for p in points
+            ]
             continue
 
         orders_for_group = orders_index.get(gid, [])
         if not orders_for_group:
             # Never ordered
             enhanced[entity_id] = [
-                {**p, "color": p.get("color") or BLUE_NO_ORDER, "type": p.get("type", "golfer")}
+                {**p, "fill_color": WHITE_FILL, "border_color": WHITE_BORDER, "type": p.get("type", "golfer")}
                 for p in points
             ]
             continue
-
-        # Precompute a timeline of state segments
-        red_locked = False
-        current_green_until_next_order = False
-        next_order_iter_idx = 0
 
         # Build a simple list of (placed_ts, delivered_ts) in time order
         order_pairs: List[Tuple[int, Optional[int]]] = [
@@ -167,7 +168,6 @@ def annotate_golfer_colors(
         for p in sorted(points, key=lambda x: int(x.get("timestamp", 0))):
             ts = int(p.get("timestamp", 0))
 
-            # Advance current order window for this timestamp
             # Determine the latest order placed at or before ts
             active_idx = -1
             for i, (placed_ts, _del_ts) in enumerate(order_pairs):
@@ -175,57 +175,32 @@ def annotate_golfer_colors(
                     active_idx = i
                 else:
                     break
+            
+            colors: Dict[str, str]
 
-            color: str
-
-            if red_locked:
-                color = "#ff0000"
-            elif active_idx == -1:
+            if active_idx == -1:
                 # Before the first order
-                color = BLUE_NO_ORDER
+                colors = {"fill": WHITE_FILL, "border": WHITE_BORDER}
             else:
                 placed_ts, delivered_ts = order_pairs[active_idx]
-
-                # Check if there's a later order coming; if so, and ts is after that next placed,
-                # the active_idx loop would have advanced already, so we are truly within this or later order.
 
                 if delivered_ts is not None and ts >= delivered_ts:
                     # Delivered. Determine SLA and coloring after delivery until next order
                     met_sla = (delivered_ts - placed_ts) <= THIRTY_MIN_S
                     if met_sla:
-                        color = GREEN_DELIVERED_SLA
-                        current_green_until_next_order = True
+                        colors = {"fill": GREEN_DELIVERED_SLA, "border": GREEN_DELIVERED_SLA}
                     else:
-                        # Delivered but missed SLA: between orders resume BLUE
-                        # unless already in green-until-next-order mode (shouldn't be) or red lock
-                        if current_green_until_next_order:
-                            color = GREEN_DELIVERED_SLA
-                        else:
-                            color = BLUE_NO_ORDER
+                        # Delivered but missed SLA: back to default
+                        colors = {"fill": WHITE_FILL, "border": WHITE_BORDER}
                 else:
                     # Waiting for delivery (or before delivery timestamp)
                     secs_since = max(0, ts - placed_ts)
-                    color = _color_for_wait_time(secs_since)
-                    if secs_since >= SIXTY_MIN_S:
-                        red_locked = True
+                    colors = _color_for_wait_time(secs_since)
+            
+            # Remove old color key if it exists
+            p.pop("color", None)
 
-                # Reset green hold when a new order is placed in the future
-                if current_green_until_next_order:
-                    # If a newer order has been placed after this active one and before ts, loop would move active_idx.
-                    # We clear the flag when we detect that ts is before the next order's placed time but a new order exists later.
-                    # More simply: once we move past the placed time of the next order, active_idx changes and green flag can be cleared.
-                    # Implement by checking if there exists an order with placed_ts > placed_ts and ts < that placed_ts.
-                    for j in range(active_idx + 1, len(order_pairs)):
-                        next_placed, _ = order_pairs[j]
-                        if ts < next_placed:
-                            # still before next order; keep green
-                            break
-                        else:
-                            # moved past next order placement, clear hold
-                            current_green_until_next_order = False
-                            break
-
-            annotated_points.append({**p, "color": p.get("color") or color, "type": p.get("type", "golfer")})
+            annotated_points.append({**p, "fill_color": colors["fill"], "border_color": colors["border"], "type": p.get("type", "golfer")})
 
         enhanced[entity_id] = annotated_points
 
