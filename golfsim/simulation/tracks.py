@@ -37,7 +37,9 @@ def generate_golfer_points_for_groups(course_dir: str, groups: List[Dict]) -> Li
         total_nodes = len(load_holes_connected_points(course_dir))
     except (FileNotFoundError, SystemExit):
         total_nodes = 18 * 12  # Fallback if file is missing or invalid
-    nodes_per_hole = max(1.0, float(total_nodes) / 18.0)
+    # Clamp to a maximum of 300 nodes for golfer tracks
+    effective_total_nodes = min(int(total_nodes), 300)
+    nodes_per_hole = max(1.0, float(effective_total_nodes) / 18.0)
 
     for g in groups:
         tee_time_s = int(g["tee_time_s"])

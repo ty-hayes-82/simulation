@@ -136,6 +136,18 @@ def try_backwards_routing(
                 # Combine paths, avoiding duplicate waypoint node
                 combined_path = path1 + path2[1:]
 
+                # DEBUG: Check for routing loops and fail hard if detected
+                if len(combined_path) != len(set(combined_path)):
+                    loop_nodes = [
+                        node
+                        for node in set(combined_path)
+                        if combined_path.count(node) > 1
+                    ]
+                    raise RuntimeError(
+                        f"Routing loop detected in backwards routing (strategy 1). "
+                        f"Loop nodes: {loop_nodes}. Path: {combined_path}"
+                    )
+
                 # Only return if this creates a meaningfully different route
                 if (
                     len(combined_path)
@@ -161,6 +173,18 @@ def try_backwards_routing(
                     path1 = nx.shortest_path(G, src_node, waypoint, weight="length")
                     path2 = nx.shortest_path(G, waypoint, dst_node, weight="length")
                     combined_path = path1 + path2[1:]
+
+                    # DEBUG: Check for routing loops and fail hard if detected
+                    if len(combined_path) != len(set(combined_path)):
+                        loop_nodes = [
+                            node
+                            for node in set(combined_path)
+                            if combined_path.count(node) > 1
+                        ]
+                        raise RuntimeError(
+                            f"Routing loop detected in backwards routing (strategy 2). "
+                            f"Loop nodes: {loop_nodes}. Path: {combined_path}"
+                        )
 
                     if (
                         len(combined_path)

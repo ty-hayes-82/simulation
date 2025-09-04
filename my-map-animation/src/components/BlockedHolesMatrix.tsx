@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Card, Flex, Table, Text, HoverCard } from '@radix-ui/themes';
+import { Card, Flex, Table, Text, HoverCard, Select } from '@radix-ui/themes';
 import { useSimulation } from '../context/SimulationContext';
 import { SimulationEntry } from '../lib/manifest';
 import DeliveryMetricsDisplay from './DeliveryMetricsDisplay';
@@ -15,22 +15,33 @@ type LoadedMetrics = {
   [key: string]: any;
 };
 
-const BLOCKING_VARIANTS = ['none', 'front', 'mid', 'back', 'front_mid', 'front_back', 'mid_back', 'front_mid_back'];
+const BLOCKING_VARIANTS = ['none', 'front', 'back', 'front_mid', 'front_back', 'front_mid_back'];
 
 const HEADER_MAP: Record<string, string> = {
   'none': 'None',
   'front': '1-3',
-  'mid': '4-6',
   'back': '10-12',
   'front_mid': '1-6',
   'front_back': '1-3 & 10-12',
-  'mid_back': '4-6 & 10-12',
   'front_mid_back': '1-6 & 10-12',
 };
+
+type MetricType = 'onTime' | 'avgOrderTime' | 'p90OrderTime' | 'failedOrders' | 'revenue' | 'runnerUtilization';
+
+const METRIC_OPTIONS = [
+  { value: 'onTime', label: 'On-Time %' },
+  { value: 'avgOrderTime', label: 'Avg Order Time' },
+  { value: 'p90OrderTime', label: 'P90 Order Time' },
+  { value: 'failedOrders', label: 'Failed Orders' },
+  { value: 'revenue', label: 'Revenue' },
+  { value: 'runnerUtilization', label: 'Runner Utilization %' },
+] as const;
 
 export default function BlockedHolesMatrix() {
   const { manifest, filters, setFilters, selectedCourseId } = useSimulation();
   const [metricsById, setMetricsById] = useState<Record<string, LoadedMetrics>>({});
+  const [selectedMetric, setSelectedMetric] = useState<MetricType>('onTime');
+  const [selectedMetric2, setSelectedMetric2] = useState<MetricType>('avgOrderTime');
 
   // Filter simulations by selected course first
   const sims = useMemo(() => {
@@ -119,14 +130,41 @@ export default function BlockedHolesMatrix() {
     return relevantSims.find(s => s.meta?.runners === runners && s.variantKey === variantKey);
   }
 
-  const formatOnTime = (metrics?: LoadedMetrics): string => {
+  const formatMetric = (metricType: MetricType, metrics?: LoadedMetrics): string => {
     if (!metrics) return '—';
     // Support both single run and aggregate formats
     const deliveryMetrics = metrics.deliveryMetrics || metrics;
-    const pct = Number((deliveryMetrics.on_time_mean ?? deliveryMetrics.onTimePercentage ?? deliveryMetrics.onTimeRate ?? 0));
-    // on_time_mean is a fraction, so multiply by 100
-    const displayPct = deliveryMetrics.on_time_mean ? pct * 100 : pct;
-    return Number.isFinite(displayPct) ? `${displayPct.toFixed(0)}%` : '—';
+    
+    switch (metricType) {
+      case 'onTime': {
+        const pct = Number((deliveryMetrics.on_time_mean ?? deliveryMetrics.onTimePercentage ?? deliveryMetrics.onTimeRate ?? 0));
+        // on_time_mean is a fraction, so multiply by 100
+        const displayPct = deliveryMetrics.on_time_mean ? pct * 100 : pct;
+        return Number.isFinite(displayPct) ? `${displayPct.toFixed(0)}%` : '—';
+      }
+      case 'avgOrderTime': {
+        const time = Number(deliveryMetrics.avg_delivery_time_mean ?? deliveryMetrics.avgOrderTime ?? 0);
+        return Number.isFinite(time) ? `${Math.round(time)}m` : '—';
+      }
+      case 'p90OrderTime': {
+        const time = Number(deliveryMetrics.p90_mean ?? deliveryMetrics.deliveryCycleTimeP90 ?? 0);
+        return Number.isFinite(time) ? `${Math.round(time)}m` : '—';
+      }
+      case 'failedOrders': {
+        const failed = Number(deliveryMetrics.failed_mean ?? deliveryMetrics.failedDeliveries ?? deliveryMetrics.failedOrderCount ?? 0);
+        return Number.isFinite(failed) ? failed.toString() : '—';
+      }
+      case 'revenue': {
+        const revenue = Number(deliveryMetrics.revenue ?? 0);
+        return Number.isFinite(revenue) ? `$${revenue.toFixed(0)}` : '—';
+      }
+      case 'runnerUtilization': {
+        const util = Number(deliveryMetrics.runnerUtilizationPct ?? 0);
+        return Number.isFinite(util) ? `${util.toFixed(0)}%` : '—';
+      }
+      default:
+        return '—';
+    }
   };
 
 
@@ -194,13 +232,57 @@ export default function BlockedHolesMatrix() {
     });
   };
 
-  if (runnerCounts.length === 0) return null;
+  // Debug: Always show the table to troubleshoot visibility issues
+  // if (runnerCounts.length === 0) return null;
+
+  const selectedMetricLabel = METRIC_OPTIONS.find(option => option.value === selectedMetric)?.label || 'Metric';
+  const selectedMetric2Label = METRIC_OPTIONS.find(option => option.value === selectedMetric2)?.label || 'Metric';
+
+  // Debug info
+  console.log('BlockedHolesMatrix Debug:', {
+    manifestSims: manifest?.simulations?.length || 0,
+    simsAfterCourseFilter: sims.length,
+    selectedOrders,
+    relevantSims: relevantSims.length,
+    runnerCounts: runnerCounts.length,
+    selectedCourseId
+  });
 
   return (
     <Card style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 20, background: 'rgba(255,255,255,0.95)' }}>
-      <Flex direction="column" gap="2" p="3">
-        <Text size="2" weight="bold" style={{ alignSelf: 'center' }}>On-Time % by Blocked Holes (Orders: {selectedOrders})</Text>
-        <Table.Root size="1" variant="surface" layout="auto">
+      <Flex direction="column" gap="1" p="1">
+        <Flex justify="between" align="center" gap="3">
+          <Text size="1" weight="bold" style={{ fontSize: '11px' }}>
+            {selectedMetricLabel} | {selectedMetric2Label} by Blocked Holes (Orders: {selectedOrders})
+          </Text>
+          <Flex align="center" gap="1">
+            <Select.Root value={selectedMetric} onValueChange={(value: MetricType) => setSelectedMetric(value)}>
+              <Select.Trigger variant="soft" style={{ minWidth: '90px', fontSize: '11px', padding: '2px 6px' }}>
+                {selectedMetricLabel}
+              </Select.Trigger>
+              <Select.Content>
+                {METRIC_OPTIONS.map(option => (
+                  <Select.Item key={option.value} value={option.value}>
+                    {option.label}
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Root>
+            <Select.Root value={selectedMetric2} onValueChange={(value: MetricType) => setSelectedMetric2(value)}>
+              <Select.Trigger variant="soft" style={{ minWidth: '90px', fontSize: '11px', padding: '2px 6px' }}>
+                {selectedMetric2Label}
+              </Select.Trigger>
+              <Select.Content>
+                {METRIC_OPTIONS.map(option => (
+                  <Select.Item key={option.value} value={option.value}>
+                    {option.label}
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Root>
+          </Flex>
+        </Flex>
+        <Table.Root size="1" variant="surface" layout="auto" style={{ fontSize: '11px' }}>
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeaderCell />
@@ -210,13 +292,22 @@ export default function BlockedHolesMatrix() {
             </Table.Row>
           </Table.Header>
           <Table.Body>
-            {runnerCounts.map(r => (
+            {runnerCounts.length === 0 ? (
+              <Table.Row>
+                <Table.RowHeaderCell>No Data</Table.RowHeaderCell>
+                {BLOCKING_VARIANTS.map(variant => (
+                  <Table.Cell key={variant} justify="center">—</Table.Cell>
+                ))}
+              </Table.Row>
+            ) : runnerCounts.map(r => (
               <Table.Row key={r}>
                 <Table.RowHeaderCell>{r === 1 ? '1 Runner' : `${r} Runners`}</Table.RowHeaderCell>
                 {BLOCKING_VARIANTS.map(variant => {
                   const sim = getSimFor(r, variant);
                   const metrics = sim ? metricsById[sim.id] : undefined;
-                  const label = formatOnTime(metrics);
+                  const metric1Value = formatMetric(selectedMetric, metrics);
+                  const metric2Value = formatMetric(selectedMetric2, metrics);
+                  const label = `${metric1Value} | ${metric2Value}`;
                   const currentVariant = getCurrentVariant();
                   const isSelected = currentVariant === variant && filters.runners === r;
                   return (

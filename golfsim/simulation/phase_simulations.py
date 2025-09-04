@@ -166,10 +166,11 @@ def load_hole_geometry(course_dir: str) -> Dict[int, LineString]:
 
 def generate_golfer_track(course_dir: str, tee_time_s: int) -> List[Dict]:
     """
-    Generate golfer GPS track using cart_graph.pkl nodes in chronological order.
+    Generate golfer GPS track from holes_connected nodes, clamped to first 300.
 
-    The golfer path is a consistent sequence starting at node 1 and ending at
-    the highest integer node id in the graph. One point per minute.
+    - Uses holes_connected(.json) points ordered by node_id
+    - Emits one point per minute starting at tee_time_s
+    - Only the first 300 nodes [0..299] are used to avoid stray tail nodes
 
     Args:
         course_dir: Path to course directory
@@ -178,53 +179,100 @@ def generate_golfer_track(course_dir: str, tee_time_s: int) -> List[Dict]:
     Returns:
         List of golfer GPS coordinate dicts with fields: latitude, longitude, timestamp, type
     """
-    import pickle
     from pathlib import Path
+    import pickle
     import networkx as nx  # type: ignore
+    import runpy
+    import json
 
-    pkl_path = Path(course_dir) / "pkl" / "cart_graph.pkl"
-    if not pkl_path.exists():
-        # Fallback to previous generator if pkl is missing
+    MAX_NODE_ID_INCLUSIVE = 299  # only use nodes with id in [0, 299]
+    MAX_GOLFER_NODES = 300
+
+    try:
+        # Prefer holes_connected_updated.geojson then holes_connected.geojson
+        holes_updated = Path(course_dir) / "geojson" / "generated" / "holes_connected_updated.geojson"
+        holes_original = Path(course_dir) / "geojson" / "generated" / "holes_connected.geojson"
+        holes_path = holes_updated if holes_updated.exists() else holes_original
+        if not holes_path.exists():
+            raise FileNotFoundError("holes_connected geojson not found")
+
+        with holes_path.open("r", encoding="utf-8") as f:
+            gj = json.load(f)
+
+        # Collect points with node_id in desired range and sort by node_id
+        filtered: List[Tuple[int, float, float]] = []  # (node_id, lon, lat)
+        for feat in (gj.get("features") or []):
+            if (feat.get("geometry", {}) or {}).get("type") != "Point":
+                continue
+            props = (feat.get("properties") or {})
+            node_id = None
+            if "node_id" in props:
+                try:
+                    node_id = int(props["node_id"])
+                except Exception:
+                    continue
+            elif "idx" in props:
+                try:
+                    node_id = int(props["idx"])
+                except Exception:
+                    continue
+            else:
+                continue
+            if node_id is None or node_id < 0 or node_id > MAX_NODE_ID_INCLUSIVE:
+                continue
+            coords = (feat.get("geometry") or {}).get("coordinates") or []
+            if not coords or len(coords) < 2:
+                continue
+            lon = float(coords[0])
+            lat = float(coords[1])
+            filtered.append((node_id, lon, lat))
+
+        filtered.sort(key=lambda t: t[0])
+
+        golfer_points: List[Dict] = []
+        timestamp = int(tee_time_s)
+        for _node_id, lon, lat in filtered:
+            golfer_points.append({
+                "latitude": float(lat),
+                "longitude": float(lon),
+                "timestamp": int(timestamp),
+                "type": "golfer",
+            })
+            timestamp += 60
+        return golfer_points
+    except Exception:
+        # Fallback for robustness: use cart_graph if holes_connected is missing,
+        # still clamping to first 300 integer nodes.
+        pkl_path = Path(course_dir) / "pkl" / "cart_graph.pkl"
+        if pkl_path.exists():
+            with open(pkl_path, "rb") as f:
+                G: nx.Graph = pickle.load(f)
+            int_nodes: List[int] = sorted([n for n in G.nodes if isinstance(n, int)])
+            ordered_nodes = int_nodes[:MAX_GOLFER_NODES]
+            golfer_points: List[Dict] = []
+            timestamp = int(tee_time_s)
+            for n in ordered_nodes:
+                data = G.nodes[n]
+                lon = float(data.get("x"))
+                lat = float(data.get("y"))
+                golfer_points.append({
+                    "latitude": lat,
+                    "longitude": lon,
+                    "timestamp": int(timestamp),
+                    "type": "golfer",
+                })
+                timestamp += 60
+            return golfer_points
+
+        # Legacy simple tracks fallback
         gen_module = runpy.run_path("scripts/sim/generate_simple_tracks.py")
         generate_tracks = gen_module["generate_tracks"]
         tracks = generate_tracks(course_dir)
-        golfer_points: List[Dict] = tracks.get("golfer", [])
+        golfer_points: List[Dict] = tracks.get("golfer", [])[:MAX_GOLFER_NODES]
         for p in golfer_points:
             p["timestamp"] = int(p.get("timestamp", 0)) + int(tee_time_s)
             p["type"] = p.get("type", "golfer")
         return golfer_points
-
-    # Load graph
-    with open(pkl_path, "rb") as f:
-        G: nx.Graph = pickle.load(f)
-
-    # Collect integer node ids (exclude non-int identifiers like clubhouse tuple)
-    int_nodes: List[int] = sorted([n for n in G.nodes if isinstance(n, int)])
-    # Ensure chronological path starts at 1 and ends at highest node id
-    if 1 in int_nodes:
-        # Reorder to start from 1 strictly ascending
-        max_node = max(int_nodes)
-        ordered_nodes = [n for n in int_nodes if n >= 1]
-    else:
-        # If node 1 does not exist, start from the smallest integer node
-        ordered_nodes = int_nodes
-
-    # Build one point per minute along ordered nodes
-    golfer_points: List[Dict] = []
-    timestamp = int(tee_time_s)
-    for n in ordered_nodes:
-        data = G.nodes[n]
-        lon = float(data.get("x"))
-        lat = float(data.get("y"))
-        golfer_points.append({
-            "latitude": lat,
-            "longitude": lon,
-            "timestamp": int(timestamp),
-            "type": "golfer",
-        })
-        timestamp += 60  # one-minute resolution
-
-    return golfer_points
 
 
 def run_phase3_beverage_cart_simulation(

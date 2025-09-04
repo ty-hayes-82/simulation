@@ -25,32 +25,403 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import csv
 import os
 import re
 import shutil
 import subprocess
 import sys
+import statistics
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+import geopandas as gpd
 
-# Reuse helpers from the primary optimizer to avoid duplication
-from scripts.optimization.optimize_staffing_policy import (
-    BLOCKING_VARIANTS,
-    BlockingVariant,
-    aggregate_runs,
-    build_feature_collection,
-    choose_best_variant,
-    parse_range,
-    utility_score,
-    _make_group_context,
-    _row_from_context_and_agg,
-    _write_group_aggregate_file,
-    _write_group_aggregate_heatmap,
-    _write_group_delivery_geojson,
-    _write_final_csv,
-)
+# Heatmap aggregation
+from golfsim.viz.heatmap_viz import create_course_heatmap
+
+# GEOJSON EXPORT
+from golfsim.viz.heatmap_viz import load_geofenced_holes
+
+# Optional .env loader (for GEMINI_API_KEY/GOOGLE_API_KEY)
+try:
+    from dotenv import load_dotenv as _load_dotenv  # type: ignore
+except Exception:
+    _load_dotenv = None
+
+@dataclass
+class BlockingVariant:
+    key: str
+    cli_flags: List[str]
+    description: str
+
+
+BLOCKING_VARIANTS: List[BlockingVariant] = [
+    BlockingVariant(key="none", cli_flags=[], description="no blocked holes"),
+    BlockingVariant(key="front", cli_flags=["--block-holes", "1", "2", "3"], description="block holes 1–3"),
+    BlockingVariant(key="back", cli_flags=["--block-holes", "10", "11", "12"], description="block holes 10–12"),
+    BlockingVariant(key="front_mid", cli_flags=["--block-holes", "1", "2", "3", "4", "5", "6"], description="block holes 1–6"),
+    BlockingVariant(key="front_back", cli_flags=["--block-holes", "1", "2", "3", "10", "11", "12"], description="block holes 1–3 & 10–12"),
+    BlockingVariant(key="front_mid_back", cli_flags=["--block-holes", "1", "2", "3", "4", "5", "6", "10", "11", "12"], description="block holes 1–6 & 10–12"),
+]
+
+
+def parse_range(spec: str) -> List[int]:
+    spec = spec.strip()
+    if "-" in spec:
+        a, b = spec.split("-", 1)
+        return list(range(int(a), int(b) + 1))
+    return [int(spec)]
+
+
+def mean(values: Iterable[float]) -> float:
+    vals = list(values)
+    return (sum(vals) / len(vals)) if vals else 0.0
+
+
+def wilson_ci(successes: int, total: int, confidence: float = 0.95) -> Tuple[float, float]:
+    if total <= 0:
+        return (0.0, 0.0)
+    z = 1.96 if abs(confidence - 0.95) < 1e-6 else 1.96
+    phat = successes / total
+    denom = 1 + z * z / total
+    center = phat + z * z / (2 * total)
+    margin = z * math.sqrt((phat * (1 - phat) + z * z / (4 * total)) / total)
+    lower = (center - margin) / denom
+    upper = (center + margin) / denom
+    return (max(0.0, lower), min(1.0, upper))
+
+
+@dataclass
+class RunMetrics:
+    on_time_rate: float
+    failed_rate: float
+    p90: float
+    avg: float
+    orders_per_runner_hour: float
+    successful_orders: int
+    total_orders: int
+    delivery_stats: List[Dict[str, Any]]
+    # New fields for detailed delivery metrics
+    queue_wait_avg: Optional[float] = None
+    runner_utilization_pct: Optional[float] = None
+    runner_utilization_by_runner: Dict[str, float] = field(default_factory=dict)
+    runner_utilization_driving_pct: Optional[float] = None
+    total_revenue: Optional[float] = None
+    failed_orders: Optional[int] = None
+    active_runner_hours: Optional[float] = None
+
+
+def load_one_run_metrics(run_dir: Path) -> Optional[RunMetrics]:
+    # Prefer detailed metrics JSON
+    for path in run_dir.glob("delivery_runner_metrics_run_*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        
+        # Load delivery_stats from results.json for heatmap data
+        delivery_stats: List[Dict[str, Any]] = []
+        try:
+            results_path = run_dir / "results.json"
+            if results_path.exists():
+                results_data = json.loads(results_path.read_text(encoding="utf-8"))
+                delivery_stats = results_data.get("delivery_stats") or []
+        except Exception:
+            pass # Non-fatal if results.json is missing or malformed
+
+        # Extract new detailed metrics
+        queue_wait_avg = data.get("queue_wait_avg")
+        runner_utilization_driving_pct = data.get("runner_utilization_driving_pct")
+        runner_utilization_prep_pct = data.get("runner_utilization_prep_pct")
+        runner_utilization_pct = None
+        if runner_utilization_driving_pct is not None:
+            runner_utilization_pct = float(runner_utilization_driving_pct) + float(runner_utilization_prep_pct or 0.0)
+        
+        total_revenue = data.get("total_revenue")
+        failed_orders = data.get("failed_orders")
+        active_runner_hours = data.get("active_runner_hours")
+
+        return RunMetrics(
+            on_time_rate=float(data.get("on_time_rate", 0.0) or 0.0),
+            failed_rate=float(data.get("failed_rate", 0.0) or 0.0),
+            p90=float(data.get("delivery_cycle_time_p90", 0.0) or 0.0),
+            avg=float(data.get("delivery_cycle_time_avg", 0.0) or 0.0),
+            orders_per_runner_hour=float(data.get("orders_per_runner_hour", 0.0) or 0.0),
+            successful_orders=int(data.get("successful_orders", data.get("successfulDeliveries", 0)) or 0),
+            total_orders=int(data.get("total_orders", data.get("totalOrders", 0)) or 0),
+            delivery_stats=delivery_stats,
+            queue_wait_avg=float(queue_wait_avg) if queue_wait_avg is not None else None,
+            runner_utilization_pct=runner_utilization_pct,
+            runner_utilization_driving_pct=float(runner_utilization_driving_pct) if runner_utilization_driving_pct is not None else None,
+            total_revenue=float(total_revenue) if total_revenue is not None else None,
+            failed_orders=int(failed_orders) if failed_orders is not None else None,
+            active_runner_hours=float(active_runner_hours) if active_runner_hours is not None else None,
+        )
+
+    # Fallback simulation_metrics.json
+    sm = run_dir / "simulation_metrics.json"
+    if sm.exists():
+        try:
+            data = json.loads(sm.read_text(encoding="utf-8"))
+            dm = data.get("deliveryMetrics") or {}
+            
+            # Extract runner utilization breakdown
+            runner_util_breakdown = {}
+            raw_rubr = (dm.get("runnerUtilizationByRunner") or {})
+            if isinstance(raw_rubr, dict):
+                for runner_id, stats in raw_rubr.items():
+                    if isinstance(stats, dict) and "utilizationPct" in stats:
+                        try:
+                            runner_util_breakdown[runner_id] = float(stats["utilizationPct"])
+                        except (ValueError, TypeError):
+                            continue
+
+            on_time_pct = float(dm.get("onTimePercentage", 0.0) or 0.0) / 100.0
+            successful = int(dm.get("successfulDeliveries", 0) or 0)
+            total = int(dm.get("totalOrders", 0) or 0)
+            failed = int(dm.get("failedDeliveries", 0) or (total - successful))
+            failed_rate = (failed / total) if total > 0 else 0.0
+            # Try to extract p90 from fallback JSON if available
+            p90_val = float(dm.get("deliveryCycleTimeP90", float("nan")) or float("nan"))
+            avg_val = float(dm.get("avgOrderTime", 0.0) or 0.0)
+            
+            # Try to load delivery_stats from results.json in fallback path too
+            delivery_stats_fallback: List[Dict[str, Any]] = []
+            try:
+                results_path = run_dir / "results.json"
+                if results_path.exists():
+                    results_data = json.loads(results_path.read_text(encoding="utf-8"))
+                    delivery_stats_fallback = results_data.get("delivery_stats") or []
+            except Exception:
+                pass
+
+            return RunMetrics(
+                on_time_rate=on_time_pct,
+                failed_rate=failed_rate,
+                p90=p90_val,
+                avg=avg_val,
+                orders_per_runner_hour=float(dm.get("ordersPerRunnerHour", 0.0) or 0.0),
+                successful_orders=successful,
+                total_orders=total,
+                delivery_stats=delivery_stats_fallback,
+                queue_wait_avg=float(dm.get("queueWaitAvg")) if dm.get("queueWaitAvg") is not None else None,
+                runner_utilization_pct=float(dm.get("runnerUtilizationPct")) if dm.get("runnerUtilizationPct") is not None else None,
+                runner_utilization_by_runner=runner_util_breakdown,
+                runner_utilization_driving_pct=None,  # Not available in simulation_metrics.json
+                total_revenue=float(dm.get("revenue")) if dm.get("revenue") is not None else None,
+                failed_orders=failed,
+                active_runner_hours=None,  # Not available in simulation_metrics.json
+            )
+        except Exception:
+            return None
+    return None
+
+
+def aggregate_runs(run_dirs: List[Path]) -> Dict[str, Any]:
+    items: List[RunMetrics] = []
+    for rd in run_dirs:
+        m = load_one_run_metrics(rd)
+        if m is not None:
+            items.append(m)
+    if not items:
+        return {"runs": 0}
+
+    on_time_vals = [m.on_time_rate for m in items if not math.isnan(m.on_time_rate)]
+    failed_vals = [m.failed_rate for m in items if not math.isnan(m.failed_rate)]
+    p90_vals = [m.p90 for m in items if not math.isnan(m.p90)]
+    avg_vals = [m.avg for m in items if not math.isnan(m.avg)]
+    oph_vals = [m.orders_per_runner_hour for m in items if not math.isnan(m.orders_per_runner_hour)]
+
+    # Aggregate drive time per hole from all delivery_stats
+    total_drive_time_per_hole: Dict[int, float] = {}
+    orders_per_hole: Dict[int, int] = {}
+    for m in items:
+        for stat in m.delivery_stats:
+            try:
+                hole = int(stat.get("hole_num", 0))
+                drive_time = float(stat.get("delivery_time_s", 0.0))  # Use one-way delivery time, not total_drive_time_s
+                if not math.isnan(drive_time):
+                    total_drive_time_per_hole[hole] = total_drive_time_per_hole.get(hole, 0.0) + drive_time
+                    orders_per_hole[hole] = orders_per_hole.get(hole, 0) + 1
+            except (ValueError, TypeError):
+                continue
+
+    avg_drive_time_per_hole: Dict[int, float] = {
+        hole: total_drive_time_per_hole.get(hole, 0.0) / orders_per_hole.get(hole, 1)
+        for hole in orders_per_hole.keys()
+    }
+
+    total_successes = sum(m.successful_orders for m in items)
+    total_orders = sum(m.total_orders for m in items)
+    ot_lo, ot_hi = wilson_ci(total_successes, total_orders, confidence=0.95)
+
+    # --- New Detailed Metrics Aggregation ---
+    
+    # 1. Runner utilization imbalance
+    all_runner_utils: List[float] = []
+    for m in items:
+        if m.runner_utilization_by_runner:
+            all_runner_utils.extend(m.runner_utilization_by_runner.values())
+    
+    runner_utilization_imbalance = {}
+    if all_runner_utils:
+        runner_utilization_imbalance = {
+            "min": min(all_runner_utils) if all_runner_utils else 0.0,
+            "max": max(all_runner_utils) if all_runner_utils else 0.0,
+            "std_dev": statistics.stdev(all_runner_utils) if len(all_runner_utils) > 1 else 0.0,
+            "mean": mean(all_runner_utils),
+        }
+
+    # 2. Queue wait time
+    queue_wait_vals = [m.queue_wait_avg for m in items if m.queue_wait_avg is not None and not math.isnan(m.queue_wait_avg)]
+    avg_queue_wait_minutes = mean(queue_wait_vals) if queue_wait_vals else None
+
+    # 3. Delivery time histogram and Peak/Off-peak analysis
+    all_delivery_times_min: List[float] = []
+    peak_delivery_times_min: List[float] = []
+    
+    # Assuming simulation starts at 7 AM for peak hour calculation
+    SIM_START_TIME_HR = 7.0
+    PEAK_START_HR = 11.5  # 11:30 AM
+    PEAK_END_HR = 13.5    # 1:30 PM
+
+    for m in items:
+        for stat in m.delivery_stats:
+            try:
+                # delivery_time_s is one-way, use total_completion_time_s for full cycle
+                cycle_time_s = float(stat.get("total_completion_time_s", 0.0))
+                order_time_s = float(stat.get("order_time_s", -1.0))
+
+                if not math.isnan(cycle_time_s):
+                    all_delivery_times_min.append(cycle_time_s / 60.0)
+                
+                # Peak time analysis
+                if order_time_s >= 0:
+                    order_hour_of_day = SIM_START_TIME_HR + (order_time_s / 3600.0)
+                    if PEAK_START_HR <= order_hour_of_day < PEAK_END_HR:
+                        peak_delivery_times_min.append(cycle_time_s / 60.0)
+
+            except (ValueError, TypeError):
+                continue
+
+    delivery_time_histogram = {}
+    if all_delivery_times_min:
+        bins = {"under_15_min": 0, "15_to_20_min": 0, "20_to_25_min": 0, "over_25_min": 0}
+        for t in all_delivery_times_min:
+            if t < 15:
+                bins["under_15_min"] += 1
+            elif 15 <= t < 20:
+                bins["15_to_20_min"] += 1
+            elif 20 <= t < 25:
+                bins["20_to_25_min"] += 1
+            else:
+                bins["over_25_min"] += 1
+        total_deliveries = len(all_delivery_times_min)
+        delivery_time_histogram = {k: round(v / total_deliveries, 3) for k, v in bins.items()}
+
+    peak_metrics = {}
+    if peak_delivery_times_min:
+        peak_metrics = {
+            "avg_delivery_time": mean(peak_delivery_times_min),
+            "p90": sorted(peak_delivery_times_min)[int(len(peak_delivery_times_min) * 0.9)] if peak_delivery_times_min else 0.0,
+            "order_count": len(peak_delivery_times_min)
+        }
+
+    # --- End of New Metrics ---
+
+    return {
+        "runs": len(items),
+        "on_time_mean": mean(on_time_vals),
+        "failed_mean": mean(failed_vals),
+        "p90_mean": mean(p90_vals) if p90_vals else float("nan"),
+        "avg_delivery_time_mean": mean(avg_vals) if avg_vals else float("nan"),
+        "oph_mean": mean(oph_vals),
+        "avg_drive_time_per_hole": avg_drive_time_per_hole,
+        "total_drive_time_per_hole": total_drive_time_per_hole,
+        "orders_per_hole": orders_per_hole,
+        "on_time_wilson_lo": ot_lo,
+        "on_time_wilson_hi": ot_hi,
+        "total_successful_orders": total_successes,
+        "total_orders": total_orders,
+        "raw_metrics": items,  # Pass raw metrics for detailed summary
+        # --- New Detailed Metrics ---
+        "runner_utilization_imbalance": runner_utilization_imbalance,
+        "avg_queue_wait_minutes": avg_queue_wait_minutes,
+        "delivery_time_histogram": delivery_time_histogram,
+        "peak_hours_metrics": peak_metrics,
+    }
+
+
+def blocking_penalty(variant_key: str) -> float:
+    """Return a penalty score for blocking variants (higher = more disruptive)."""
+    penalties = {
+        "none": 0.0,
+        "front": 1.0,
+        "back": 1.0,
+        "front_mid": 2.0,
+        "front_back": 2.0,
+        "front_mid_back": 3.0,
+    }
+    return penalties.get(variant_key, 0.0)
+
+
+def utility_score(variant_key: str, runners: int, agg: Dict[str, Any]) -> float:
+    """Compute utility score balancing runners, blocking, and performance metrics.
+    Lower is better (minimization problem).
+    """
+    # Weights for different factors
+    alpha_runners = 1.0      # Cost of additional runners
+    beta_blocking = 0.5      # Cost of blocking holes
+    gamma_p90 = 0.02         # Cost per minute of p90 delivery time
+    delta_on_time = -10.0    # Benefit of higher on-time rate (negative = reward)
+    epsilon_failed = 20.0    # Cost of failed deliveries
+    
+    on_time_lo = float(agg.get("on_time_wilson_lo", 0.0) or 0.0)
+    failed_mean = float(agg.get("failed_mean", 1.0) or 1.0)
+    p90_mean = float(agg.get("p90_mean", 60.0) or 60.0)  # Default to 60 min if missing
+    if math.isnan(p90_mean):
+        p90_mean = 60.0  # Penalize missing p90 data
+    
+    score = (
+        alpha_runners * runners +
+        beta_blocking * blocking_penalty(variant_key) +
+        gamma_p90 * p90_mean +
+        delta_on_time * on_time_lo +
+        epsilon_failed * failed_mean
+    )
+    return score
+
+
+def choose_best_variant(results_by_variant: Dict[str, Dict[int, Dict[str, Any]]], *, target_on_time: float, max_failed: float, max_p90: float) -> Optional[Tuple[str, int, Dict[str, Any]]]:
+    # Find all candidates that meet targets (with strict p90 enforcement)
+    candidates: List[Tuple[str, int, Dict[str, Any]]] = []
+    for variant_key, per_runner in results_by_variant.items():
+        for n in sorted(per_runner.keys()):
+            agg = per_runner[n]
+            if not agg or not agg.get("runs"):
+                continue
+            
+            p90_mean = agg.get("p90_mean", float("nan"))
+            # If p90 data is available, enforce the target; if missing (NaN), allow it to pass
+            p90_meets = math.isnan(p90_mean) or p90_mean <= max_p90
+            
+            meets = (
+                agg.get("on_time_wilson_lo", 0.0) >= target_on_time
+                and agg.get("failed_mean", 1.0) <= max_failed
+                and p90_meets
+            )
+            if meets:
+                candidates.append((variant_key, n, agg))
+
+    if not candidates:
+        return None
+
+    # Sort by utility score (lower is better)
+    candidates.sort(key=lambda t: utility_score(t[0], t[1], t[2]))
+    return candidates[0]
 
 
 def choose_top_variants(
@@ -80,6 +451,1002 @@ def choose_top_variants(
 
     candidates.sort(key=lambda t: utility_score(t[0], t[1], t[2]))
     return candidates[:3]
+
+
+def _make_group_context(*, course_dir: Path, tee_scenario: str, orders: int, variant_key: str, runners: int) -> Dict[str, Any]:
+    return {
+        "course": str(course_dir),
+        "tee_scenario": tee_scenario,
+        "orders": int(orders),
+        "variant": variant_key,
+        "runners": int(runners),
+    }
+
+
+def _write_group_aggregate_file(group_dir: Path, context: Dict[str, Any], agg: Dict[str, Any]) -> None:
+    """Persist per-group aggregate so it can be referenced later.
+
+    Writes an '@aggregate.json' file under the provided group directory
+    (e.g., .../orders_030/none/runners_2/@aggregate.json).
+    """
+    try:
+        # Avoid serializing raw_metrics which can be large and contains objects
+        serializable_agg = agg.copy()
+        if "raw_metrics" in serializable_agg:
+            del serializable_agg["raw_metrics"]
+
+        payload: Dict[str, Any] = {
+            **context,
+            **serializable_agg,
+            "group_dir": str(group_dir),
+        }
+        (group_dir / "@aggregate.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        # Non-fatal: continue even if we cannot write
+        pass
+
+
+def _write_group_aggregate_heatmap(
+    group_dir: Path,
+    *,
+    course_dir: Path,
+    tee_scenario: str,
+    variant_key: str,
+    runners: int,
+    run_dirs: List[Path],
+) -> Optional[Path]:
+    """Create a single averaged heatmap.png for a runners group by combining all runs.
+
+    The heatmap uses concatenated orders and delivery_stats from each run's results.json
+    and is written to `<group_dir>/heatmap.png`.
+    """
+    try:
+        combined: Dict[str, Any] = {"orders": [], "delivery_stats": []}
+        for rd in run_dirs:
+            rp = rd / "results.json"
+            if not rp.exists():
+                continue
+            try:
+                data = json.loads(rp.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+
+            # To avoid cross-run collisions where order_ids typically restart at 1
+            # for every run, we rewrite order_id values with a run-specific suffix
+            # for both orders and delivery_stats before concatenation.
+            run_tag = rd.name  # e.g., "run_01"
+
+            raw_orders = data.get("orders") or []
+            raw_stats = data.get("delivery_stats") or []
+
+            if isinstance(raw_orders, list):
+                rewritten_orders: List[Dict[str, Any]] = []
+                for idx, o in enumerate(raw_orders):
+                    try:
+                        oi = o.copy()
+                        base_id = oi.get("order_id", f"order_{idx}")
+                        oi["order_id"] = f"{base_id}@{run_tag}"
+                        rewritten_orders.append(oi)
+                    except Exception:
+                        # Best-effort: skip malformed entry
+                        continue
+                combined["orders"].extend(rewritten_orders)
+
+            if isinstance(raw_stats, list):
+                rewritten_stats: List[Dict[str, Any]] = []
+                for idx, s in enumerate(raw_stats):
+                    try:
+                        si = s.copy()
+                        base_id = si.get("order_id", f"order_{idx}")
+                        si["order_id"] = f"{base_id}@{run_tag}"
+                        rewritten_stats.append(si)
+                    except Exception:
+                        continue
+                combined["delivery_stats"].extend(rewritten_stats)
+
+        # If no orders found across runs, skip
+        if not combined["orders"]:
+            return None
+
+        course_name = Path(str(course_dir)).name.replace("_", " ").title()
+        title = (
+            f"{course_name} - Delivery Runner Heatmap (Avg across {len(run_dirs)} runs)\n"
+            f"Variant: {variant_key} | Runners: {runners} | Scenario: {tee_scenario}"
+        )
+        save_path = group_dir / "heatmap.png"
+        create_course_heatmap(
+            results=combined,
+            course_dir=course_dir,
+            save_path=save_path,
+            title=title,
+            colormap="white_to_red",
+        )
+        return save_path
+    except Exception:
+        return None
+
+
+def _csv_headers() -> List[str]:
+    return [
+        "course",
+        "tee_scenario",
+        "orders",
+        "variant",
+        "runners",
+        "runs",
+        "on_time_mean",
+        "on_time_wilson_lo",
+        "on_time_wilson_hi",
+        "failed_mean",
+        "p90_mean",
+        "avg_delivery_time_mean",
+        "oph_mean",
+        "avg_queue_wait_minutes",
+        "runner_utilization_mean",
+        "runner_utilization_std_dev",
+        "delivery_time_histogram",
+        "peak_hours_avg_delivery_time",
+        "avg_drive_time_per_hole",
+        "total_drive_time_per_hole",
+        "orders_per_hole",
+        "total_successful_orders",
+        "total_orders",
+        "group_dir",
+    ]
+
+
+def _row_from_context_and_agg(context: Dict[str, Any], agg: Dict[str, Any], group_dir: Path) -> Dict[str, Any]:
+    row: Dict[str, Any] = {
+        **{k: context.get(k) for k in ["course", "tee_scenario", "orders", "variant", "runners"]},
+        "runs": agg.get("runs"),
+        "on_time_mean": agg.get("on_time_mean"),
+        "on_time_wilson_lo": agg.get("on_time_wilson_lo"),
+        "on_time_wilson_hi": agg.get("on_time_wilson_hi"),
+        "failed_mean": agg.get("failed_mean"),
+        "p90_mean": agg.get("p90_mean"),
+        "avg_delivery_time_mean": agg.get("avg_delivery_time_mean"),
+        "oph_mean": agg.get("oph_mean"),
+        "avg_queue_wait_minutes": agg.get("avg_queue_wait_minutes"),
+        "runner_utilization_mean": (agg.get("runner_utilization_imbalance") or {}).get("mean"),
+        "runner_utilization_std_dev": (agg.get("runner_utilization_imbalance") or {}).get("std_dev"),
+        "delivery_time_histogram": json.dumps(agg.get("delivery_time_histogram")),
+        "peak_hours_avg_delivery_time": (agg.get("peak_hours_metrics") or {}).get("avg_delivery_time"),
+        "avg_drive_time_per_hole": json.dumps(agg.get("avg_drive_time_per_hole")),
+        "total_drive_time_per_hole": json.dumps(agg.get("total_drive_time_per_hole")),
+        "orders_per_hole": json.dumps(agg.get("orders_per_hole")),
+        "total_successful_orders": agg.get("total_successful_orders"),
+        "total_orders": agg.get("total_orders"),
+        "group_dir": str(group_dir),
+    }
+    return row
+
+
+def _row_from_saved_aggregate(agg_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a CSV row directly from a saved @aggregate.json payload.
+
+    Ensures parity with _row_from_context_and_agg so CSV and aggregates stay in sync.
+    """
+    try:
+        # Context fields are written alongside metrics in the payload
+        row: Dict[str, Any] = {
+            "course": agg_payload.get("course"),
+            "tee_scenario": agg_payload.get("tee_scenario"),
+            "orders": int(agg_payload.get("orders")) if agg_payload.get("orders") is not None else None,
+            "variant": agg_payload.get("variant"),
+            "runners": int(agg_payload.get("runners")) if agg_payload.get("runners") is not None else None,
+            "runs": agg_payload.get("runs"),
+            "on_time_mean": agg_payload.get("on_time_mean"),
+            "on_time_wilson_lo": agg_payload.get("on_time_wilson_lo"),
+            "on_time_wilson_hi": agg_payload.get("on_time_wilson_hi"),
+            "failed_mean": agg_payload.get("failed_mean"),
+            "p90_mean": agg_payload.get("p90_mean"),
+            "avg_delivery_time_mean": agg_payload.get("avg_delivery_time_mean"),
+            "oph_mean": agg_payload.get("oph_mean"),
+            "avg_queue_wait_minutes": agg_payload.get("avg_queue_wait_minutes"),
+            "runner_utilization_mean": (agg_payload.get("runner_utilization_imbalance") or {}).get("mean"),
+            "runner_utilization_std_dev": (agg_payload.get("runner_utilization_imbalance") or {}).get("std_dev"),
+            "delivery_time_histogram": json.dumps(agg_payload.get("delivery_time_histogram")),
+            "peak_hours_avg_delivery_time": (agg_payload.get("peak_hours_metrics") or {}).get("avg_delivery_time"),
+            "avg_drive_time_per_hole": json.dumps(agg_payload.get("avg_drive_time_per_hole")),
+            "total_drive_time_per_hole": json.dumps(agg_payload.get("total_drive_time_per_hole")),
+            "orders_per_hole": json.dumps(agg_payload.get("orders_per_hole")),
+            "total_successful_orders": agg_payload.get("total_successful_orders"),
+            "total_orders": agg_payload.get("total_orders"),
+            "group_dir": str(agg_payload.get("group_dir") or ""),
+        }
+        return row
+    except Exception:
+        # Best-effort: skip malformed aggregates
+        return {}
+
+
+def _collect_rows_from_saved_aggregates(root: Path) -> List[Dict[str, Any]]:
+    """Scan first_pass and second_pass for @aggregate.json and build CSV rows.
+
+    Preference order: second_pass overrides first_pass for identical (course, tee_scenario, orders, variant, runners).
+    """
+    rows: List[Dict[str, Any]] = []
+    # Prefer second_pass values when duplicates exist
+    for pass_dir in [root / "second_pass", root / "first_pass"]:
+        if not pass_dir.exists():
+            continue
+        for agg_path in pass_dir.rglob("@aggregate.json"):
+            try:
+                payload = json.loads(agg_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            row = _row_from_saved_aggregate(payload)
+            if not row:
+                continue
+            _upsert_row(rows, row)
+    return rows
+
+
+def _write_final_csv(root: Path, rows: List[Dict[str, Any]]) -> Optional[Path]:
+    try:
+        csv_path = root / "all_metrics.csv"
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=_csv_headers())
+            writer.writeheader()
+            for r in rows:
+                writer.writerow(r)
+        return csv_path
+    except Exception:
+        return None
+
+
+def _upsert_row(rows: List[Dict[str, Any]], new_row: Dict[str, Any]) -> None:
+    """Insert or replace a row identified by (course, tee_scenario, orders, variant, runners)."""
+    key = (
+        new_row.get("course"),
+        new_row.get("tee_scenario"),
+        int(new_row.get("orders", 0)),
+        new_row.get("variant"),
+        int(new_row.get("runners", 0)),
+    )
+    for i, r in enumerate(rows):
+        rkey = (
+            r.get("course"),
+            r.get("tee_scenario"),
+            int(r.get("orders", 0)),
+            r.get("variant"),
+            int(r.get("runners", 0)),
+        )
+        if rkey == key:
+            rows[i] = new_row
+            return
+    rows.append(new_row)
+
+
+def _write_group_delivery_geojson(
+    group_dir: Path,
+    *,
+    course_dir: Path,
+    tee_scenario: str,
+    variant_key: str,
+    runners: int,
+) -> Optional[Path]:
+    """Create a `hole_delivery_times.geojson` for this group using its aggregate data."""
+    try:
+        agg_path = group_dir / "@aggregate.json"
+        if not agg_path.exists():
+            return None
+
+        with agg_path.open("r", encoding="utf-8") as f:
+            agg_data = json.load(f)
+
+        # Reformat aggregate data into the hole_stats structure
+        hole_stats: Dict[int, Dict[str, Union[float, int]]] = {}
+        avg_times = agg_data.get("avg_drive_time_per_hole", {})
+        orders_counts = agg_data.get("orders_per_hole", {})
+
+        for hole_str, avg_time_sec in avg_times.items():
+            try:
+                hole_num = int(hole_str)
+                count = int(orders_counts.get(hole_str, 0))
+                if count > 0:
+                    hole_stats[hole_num] = {
+                        "avg_time": float(avg_time_sec) / 60.0,  # Convert to minutes
+                        "count": count,
+                        "min_time": 0.0,
+                        "max_time": 0.0,
+                    }
+            except (ValueError, TypeError):
+                continue
+        
+        hole_polygons = load_geofenced_holes(course_dir)
+        feature_collection = build_feature_collection(hole_polygons, hole_stats)
+
+        save_path = group_dir / "hole_delivery_times.geojson"
+        with save_path.open("w", encoding="utf-8") as f:
+            json.dump(feature_collection, f)
+        
+        return save_path
+    except Exception:
+        return None
+
+
+def build_feature_collection(
+    hole_polygons: Dict[int, Any],
+    hole_stats: Dict[int, Dict[str, Union[float, int]]],
+) -> Dict[str, Any]:
+    """Build a GeoJSON FeatureCollection of hole polygons with delivery stats.
+
+    Each feature contains properties:
+      - hole: int
+      - has_data: bool
+      - avg_time, min_time, max_time, count (when available)
+    """
+    features: list[Dict[str, Any]] = []
+
+    for hole_num, geom in hole_polygons.items():
+        props: Dict[str, Any] = {"hole": int(hole_num)}
+        stats = hole_stats.get(hole_num)
+        if stats:
+            props.update(
+                {
+                    "has_data": True,
+                    "avg_time": float(stats.get("avg_time", 0.0)),
+                    "min_time": float(stats.get("min_time", 0.0)),
+                    "max_time": float(stats.get("max_time", 0.0)),
+                    "count": int(stats.get("count", 0)),
+                }
+            )
+        else:
+            props.update({"has_data": False})
+
+        # Convert shapely geometry to GeoJSON-like mapping
+        gdf = gpd.GeoDataFrame({"geometry": [geom]}, crs="EPSG:4326")
+        feature_geom = json.loads(gdf.to_json())["features"][0]["geometry"]
+
+        features.append(
+            {
+                "type": "Feature",
+                "properties": props,
+                "geometry": feature_geom,
+            }
+        )
+
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _call_gemini(prompt: str) -> Optional[str]:
+    """Call Google Gemini with the given prompt if configured; otherwise return None.
+
+    Requires environment variable GEMINI_API_KEY (or GOOGLE_API_KEY) and the
+    package `google-generativeai` to be installed.
+    """
+    try:
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            return None
+        # Lazy import so the script runs without this dependency present
+        try:
+            import google.generativeai as genai  # type: ignore
+        except (ImportError, KeyboardInterrupt, SystemExit) as e:
+            # Handle import failures gracefully, including KeyboardInterrupt during import
+            return None
+        genai.configure(api_key=api_key)
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+        model = genai.GenerativeModel(model_name)
+        resp = model.generate_content(prompt)
+        # Prefer resp.text if available
+        text = getattr(resp, "text", None)
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+        # Fallback to stringifying
+        return str(resp).strip() or None
+    except (KeyboardInterrupt, SystemExit):
+        # Re-raise these specific exceptions
+        raise
+    except Exception:
+        return None
+
+
+def _write_executive_summary_markdown(
+    *,
+    out_dir: Path,
+    course_dir: Path,
+    tee_scenario: str,
+    orders_levels: List[int],
+    summary: Dict[int, Dict[str, Any]],
+    targets: Dict[str, float],
+) -> Tuple[Optional[Path], bool]:
+    """Create an executive summary Markdown file under out_dir.
+
+    Attempts to use Gemini for a polished summary; otherwise writes a concise
+    local summary. Returns the path if written.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    md_path = out_dir / "executive_summary.md"
+
+    # Build compact data for LLM prompt and for fallback
+    variant_desc = {v.key: v.description for v in BLOCKING_VARIANTS}
+    compact: List[Dict[str, Any]] = []
+    for orders in sorted(summary.keys()):
+        chosen = summary[orders].get("chosen") or {}
+        chosen_variant = chosen.get("variant")
+        chosen_runners = chosen.get("runners")
+        metrics = chosen.get("metrics") or {}
+        baseline_info = summary[orders].get("baseline_none") or {}
+        baseline_runners = baseline_info.get("runners")
+        baseline_metrics = (baseline_info.get("metrics") or {})
+        # Collect all variant metrics for comparison
+        variant_comparisons = {}
+        for variant_key, per_runner in summary[orders].get("per_variant", {}).items():
+            if variant_key in per_runner:
+                # Find the minimal runner count that meets targets for this variant
+                for n in sorted(per_runner.keys()):
+                    agg = per_runner[n]
+                    if not agg or not agg.get("runs"):
+                        continue
+                    p90_mean = agg.get("p90_mean", float("nan"))
+                    p90_meets = math.isnan(p90_mean) or p90_mean <= targets.get("max_p90", 40.0)
+                    meets = (
+                        agg.get("on_time_wilson_lo", 0.0) >= targets.get("on_time", 0.90)
+                        and agg.get("failed_mean", 1.0) <= targets.get("max_failed", 0.05)
+                        and p90_meets
+                    )
+                    if meets:
+                        variant_comparisons[variant_key] = {
+                            "runners": n,
+                            "avg_delivery_time": agg.get("avg_delivery_time_mean"),
+                            "p90_mean": agg.get("p90_mean"),
+                            "on_time_wilson_lo": agg.get("on_time_wilson_lo"),
+                            "failed_mean": agg.get("failed_mean"),
+                            "oph_mean": agg.get("oph_mean"),
+                        }
+                        break
+
+        compact.append({
+            "orders": int(orders),
+            "recommended_variant": chosen_variant,
+            "recommended_variant_description": variant_desc.get(str(chosen_variant), variant_desc.get(chosen_variant, chosen_variant)),
+            "recommended_runners": chosen_runners,
+            "runs": metrics.get("runs"),
+            "on_time_wilson_lo": metrics.get("on_time_wilson_lo"),
+            "failed_mean": metrics.get("failed_mean"),
+            "p90_mean": metrics.get("p90_mean"),
+            "avg_delivery_time_mean": metrics.get("avg_delivery_time_mean"),
+            "orders_per_runner_hour": metrics.get("oph_mean"),
+            "baseline_none_runners": baseline_runners,
+            "baseline_on_time_wilson_lo": (baseline_metrics or {}).get("on_time_wilson_lo"),
+            "baseline_failed_mean": (baseline_metrics or {}).get("failed_mean"),
+            "baseline_p90_mean": (baseline_metrics or {}).get("p90_mean"),
+            "baseline_avg_delivery_time": (baseline_metrics or {}).get("avg_delivery_time_mean"),
+            "baseline_oph_mean": (baseline_metrics or {}).get("oph_mean"),
+            "variant_comparisons": variant_comparisons,
+        })
+
+    # Build list of available blocking variants for the prompt
+    variant_options = []
+    for v in BLOCKING_VARIANTS:
+        variant_options.append(f"- '{v.key}': {v.description}")
+    variant_list = "\n".join(variant_options)
+    
+    # Build deterministic data-driven sections (table, quick guide, confidence) -----------------
+    orders_levels_sorted: List[int] = sorted(int(o) for o in orders_levels)
+
+    # Derive per-orders rows and confidence
+    def _confidence_for_metrics(m: Dict[str, Any]) -> str:
+        try:
+            runs_cnt = int(m.get("runs") or 0)
+            ot_lo = float(m.get("on_time_wilson_lo", 0.0) or 0.0)
+            failed_mean = float(m.get("failed_mean", 0.0) or 0.0)
+            near_edges = (
+                abs(ot_lo - float(targets.get("on_time", 0.90))) <= 0.01
+                or abs(failed_mean - float(targets.get("max_failed", 0.05))) <= 0.005
+            )
+            return "High" if (runs_cnt >= 16 and not near_edges) else ("Medium" if runs_cnt >= 8 else "Low")
+        except Exception:
+            return "Medium"
+
+    # Build deterministic staffing table (Orders/hr | Baseline | Optimized | Policy)
+    table_lines: List[str] = []
+    table_lines.append("| Orders/hr | Baseline Runners (No Blocking) | Optimized Runners (With Blocking) | Policy |")
+    table_lines.append("|-----------|-------------------------------:|-----------------------------------:|--------|")
+    quick_guide_lines: List[str] = []
+    confidence_lines: List[str] = []
+
+    # Map orders -> row info from compact
+    orders_to_compact: Dict[int, Dict[str, Any]] = {int(r["orders"]): r for r in compact}
+
+    for orders in orders_levels_sorted:
+        row = orders_to_compact.get(int(orders), {})
+        base_runners = row.get("baseline_none_runners")
+        runners = row.get("recommended_runners")
+        variant_desc_val = row.get("recommended_variant_description") or "none"
+        policy_short = variant_desc_val.replace("block holes ", "").replace(" & ", "+") if variant_desc_val != "none" else "none"
+
+        # Table
+        table_lines.append(
+            f"| {int(orders)} | {base_runners if base_runners is not None else '?'} | {runners if runners is not None else '?'} | {policy_short} |"
+        )
+
+        # Quick guide bullets (data-driven, no invented ranges)
+        if runners is not None:
+            quick_guide_lines.append(
+                f"- {int(orders)} orders/hr: schedule {int(runners)} runner(s) and use '{policy_short}' blocking."
+            )
+
+        # Confidence per orders-level
+        m = (summary.get(int(orders), {}).get("chosen") or {}).get("metrics") or {}
+        confidence_lines.append(
+            f"**{int(orders)} orders/hr**: { _confidence_for_metrics(m) } confidence."
+        )
+
+    # Build variant insights (avg order time differences across passing variants) ---------------
+    insights_lines: List[str] = []
+    try:
+        # Helper: check if a given metrics dict meets targets
+        def _meets(agg: Dict[str, Any]) -> bool:
+            try:
+                if not agg or not agg.get("runs"):
+                    return False
+                ot_ok = float(agg.get("on_time_wilson_lo", 0.0) or 0.0) >= float(targets.get("on_time", 0.90))
+                fail_ok = float(agg.get("failed_mean", 1.0) or 1.0) <= float(targets.get("max_failed", 0.05))
+                p90_v = agg.get("p90_mean", float("nan"))
+                p90_ok = math.isnan(p90_v) or float(p90_v) <= float(targets.get("max_p90", 40.0))
+                return bool(ot_ok and fail_ok and p90_ok)
+            except Exception:
+                return False
+
+        # Find the best orders level and runner count to compare based on which combination
+        # has the most passing variants (must be > 1 to be useful).
+        best_comparison_candidate: Tuple[Optional[int], Optional[int], int] = (None, None, 0)  # (orders, runners, count)
+
+        for orders_level in orders_levels_sorted:
+            per_orders_summary = summary.get(int(orders_level), {})
+            per_variant = per_orders_summary.get("per_variant", {}) or {}
+
+            passing_variants_by_runner: Dict[int, int] = {}
+            for v_key, per_runner in per_variant.items():
+                for r_count_str, agg in per_runner.items():
+                    r_count = int(r_count_str)
+                    if _meets(agg):
+                        passing_variants_by_runner[r_count] = passing_variants_by_runner.get(r_count, 0) + 1
+
+            if not passing_variants_by_runner:
+                continue
+
+            max_passing_count = 0
+            best_runner_for_level: Optional[int] = None
+            for r_count, num_passing in passing_variants_by_runner.items():
+                if num_passing > max_passing_count:
+                    max_passing_count = num_passing
+                    best_runner_for_level = r_count
+
+            if max_passing_count > 1 and max_passing_count > best_comparison_candidate[2]:
+                best_comparison_candidate = (orders_level, best_runner_for_level, max_passing_count)
+
+        target_orders_level, runner_to_compare, _ = best_comparison_candidate
+
+        # Build insights rows for the chosen runner count and orders level
+        if runner_to_compare is not None and target_orders_level is not None:
+            per_orders_summary = summary.get(int(target_orders_level), {})
+            per_variant = per_orders_summary.get("per_variant", {}) or {}
+            variant_desc_map_local: Dict[str, str] = {v.key: v.description for v in BLOCKING_VARIANTS}
+            rows: List[Tuple[str, int, float, float, float]] = []  # (policy, runners, avg, p90, on_time)
+            for v_key, per_runner in per_variant.items():
+                agg = per_runner.get(int(runner_to_compare))
+                if not agg or not _meets(agg):
+                    continue
+                avg_v = agg.get("avg_delivery_time_mean")
+                p90_v = agg.get("p90_mean")
+                ot_lo_v = agg.get("on_time_wilson_lo")
+                try:
+                    avg_f = float(avg_v) if avg_v is not None else float("nan")
+                    p90_f = float(p90_v) if p90_v is not None else float("nan")
+                    ot_f = float(ot_lo_v) if ot_lo_v is not None else float("nan")
+                except Exception:
+                    continue
+                policy_desc = variant_desc_map_local.get(v_key, v_key)
+                policy_short = policy_desc.replace("block holes ", "").replace(" & ", "+") if policy_desc != "none" else "none"
+                rows.append((policy_short, int(runner_to_compare), avg_f, p90_f, ot_f))
+
+            # Only show if we have at least 2 passing variants to compare
+            rows = [r for r in rows if not math.isnan(r[2])]
+            if len(rows) >= 2:
+                rows.sort(key=lambda x: x[2])  # sort by avg delivery time asc
+                insights_lines.append("### Variant insights — average order time differences")
+                insights_lines.append("")
+                insights_lines.append(f"At {int(target_orders_level)} orders/hr with {int(runner_to_compare)} runner(s), multiple policies meet targets but differ in speed:")
+                insights_lines.append("")
+                insights_lines.append("| Policy | Runners | Avg time (min) | P90 (min) | On-time (conservative) |")
+                insights_lines.append("|--------|---------:|---------------:|----------:|------------------------:|")
+                for policy_short, r_cnt, avg_f, p90_f, ot_f in rows:
+                    avg_str = f"{avg_f:.1f}" if not math.isnan(avg_f) else "?"
+                    p90_str = f"{p90_f:.0f}" if not math.isnan(p90_f) else "?"
+                    ot_str = f"{ot_f*100:.0f}%" if not math.isnan(ot_f) else "?"
+                    insights_lines.append(f"| {policy_short} | {r_cnt} | {avg_str} | {p90_str} | {ot_str} |")
+                insights_lines.append("")
+                # Call out the fastest option
+                best = rows[0]
+                insights_lines.append(
+                    f"Fastest among passing policies: {best[0]} with ~{best[2]:.1f} min average."
+                )
+                insights_lines.append("")
+    except Exception:
+        # Insights are best-effort; ignore errors silently to keep report generation robust
+        insights_lines = []
+
+    # Gemini prompt ONLY for a short summary paragraph -----------------------------------------
+    orders_levels_str = ", ".join(str(o) for o in orders_levels_sorted)
+    prompt = (
+        "You are advising a golf course General Manager. Write a concise 2-3 sentence summary in Markdown. "
+        "Be direct and actionable. Do not include any tables or bullet lists.\n\n"
+        f"Course: {course_dir}\n"
+        f"Tee scenario: {tee_scenario}\n"
+        f"Targets: on_time ≥ {targets.get('on_time')}, failed_rate ≤ {targets.get('max_failed')}, p90 ≤ {targets.get('max_p90')} min\n"
+        f"Simulated orders levels (MUST use only these if mentioned): [{orders_levels_str}]\n\n"
+        f"Available blocking variants:\n{variant_list}\n\n"
+        "Data (summaries):\n" + json.dumps(compact, indent=2) + "\n\n"
+        "Constraints:\n"
+        "- Do NOT invent new order volumes (e.g., 20/hr or 30/hr if not listed).\n"
+        "- Avoid Low/Medium/High buckets unless they directly map to the listed orders.\n"
+        "- Do NOT include a date; the caller will add it.\n"
+        "- Focus on the staffing vs blocking tradeoff and when blocking helps.\n"
+    )
+
+    llm_summary = _call_gemini(prompt)
+    used_gemini = bool(llm_summary)
+
+    # Sanitize summary: remove any sentences referencing un-simulated orders/hr values
+    def _remove_unlisted_order_refs(text: str, allowed: List[int]) -> str:
+        try:
+            import re
+            allowed_set = set(int(x) for x in allowed)
+            # Split into sentences; conservative split on period/newline
+            parts = re.split(r"(?<=[.!?])\s+|\n+", text)
+            kept: List[str] = []
+            for p in parts:
+                # Find patterns like '10/hr' or '10 orders/hr'
+                bad = False
+                for m in re.finditer(r"\b(\d{1,3})\s*(?:orders\s*/\s*hr|/\s*hr)\b", p):
+                    val = int(m.group(1))
+                    if val not in allowed_set:
+                        bad = True
+                        break
+                if not bad and p.strip():
+                    kept.append(p.strip())
+            # Rejoin with space
+            return " ".join(kept).strip()
+        except Exception:
+            return text
+
+    if llm_summary:
+        llm_summary = _remove_unlisted_order_refs(llm_summary, orders_levels_sorted)
+        if not llm_summary:
+            used_gemini = False
+
+    if not llm_summary:
+        llm_summary = (
+            "Strategic blocking of selected holes reduces runner requirements while maintaining on-time targets. "
+            "Use minimal blocking at lower volumes and progressively expand only when service targets are at risk."
+        )
+
+    # Compose final Markdown ----------------------------------------------------------------------------------
+    from datetime import datetime
+    course_name = Path(str(course_dir)).name.replace("_", " ").title()
+    today_str = datetime.now().strftime("%B %d, %Y")
+
+    lines: List[str] = []
+    lines.append(f"### **Executive Summary: F&B Delivery for {course_name}**")
+    lines.append("")
+    lines.append("**To:** General Manager")
+    lines.append(f"**Date:** {today_str}")
+    lines.append("**Subject:** Runner Staffing & Delivery Optimization")
+    lines.append("")
+    lines.append("### 1. Summary")
+    lines.append("")
+    lines.append(llm_summary.strip())
+    lines.append("")
+    lines.append("### 2. Staffing Table")
+    lines.append("")
+    lines.append("This table is rendered from the actual simulation results.")
+    lines.append("")
+    lines.extend(table_lines)
+    lines.append("")
+    if insights_lines:
+        lines.extend(insights_lines)
+        lines.append("")
+    lines.append("### 3. Quick Guide: Action Plan")
+    lines.append("")
+    if len(quick_guide_lines) == 1:
+        lines.append("Use the following for the simulated volume:")
+    else:
+        lines.append("Adjust operations based on the simulated orders levels:")
+    lines.append("")
+    lines.extend(quick_guide_lines)
+    lines.append("")
+    lines.append("### 4. Confidence in Projections")
+    lines.append("")
+    lines.extend(confidence_lines)
+    lines.append("")
+    if used_gemini:
+        lines.append("_Source: Gemini_")
+
+    try:
+        md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return md_path, used_gemini
+    except Exception:
+        return None, used_gemini
+
+
+def _write_gm_staffing_policy_report(
+    *,
+    out_dir: Path,
+    course_dir: Path,
+    tee_scenario: str,
+    orders_levels: List[int],
+    summary: Dict[int, Dict[str, Any]],
+    targets: Dict[str, float],
+) -> Optional[Path]:
+    """Generate a GM-facing staffing policy report in Markdown following the
+    docs/gm_staffing_policy_report.md layout as closely as possible, using
+    aggregated results from this optimization run.
+
+    Returns the written path or None on error.
+    """
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    md_path = out_dir / "gm_staffing_policy_report.md"
+
+    # Helpers ---------------------------------------------------------------
+    def _fmt_pct(x: Optional[float], *, digits: int = 0) -> str:
+        try:
+            if x is None or math.isnan(float(x)):
+                return "?"
+            return f"{float(x) * 100:.{digits}f}%"
+        except Exception:
+            return "?"
+
+    def _fmt_min(x: Optional[float], *, digits: int = 1) -> str:
+        try:
+            if x is None or math.isnan(float(x)):
+                return "?"
+            return f"{float(x):.{digits}f}"
+        except Exception:
+            return "?"
+
+    def _fmt_int(x: Optional[float]) -> str:
+        try:
+            if x is None or math.isnan(float(x)):
+                return "?"
+            return f"{int(round(float(x)))}"
+        except Exception:
+            return "?"
+
+    variant_desc_map: Dict[str, str] = {v.key: v.description for v in BLOCKING_VARIANTS}
+    course_name = Path(str(course_dir)).name.replace("_", " ").title()
+    tee_name = str(tee_scenario).replace("_", " ").title()
+
+    # Build recommended staffing rows --------------------------------------
+    rec_rows: List[Dict[str, Any]] = []
+    baseline_savings_notes: List[str] = []
+    unmet_notes: List[str] = []
+    top_candidate_rows: List[Dict[str, Any]] = []
+    tested_variants: set = set()
+    tested_runner_counts: set = set()
+    for orders in sorted(orders_levels):
+        info = summary.get(orders, {})
+        chosen = info.get("chosen", {}) or {}
+        chosen_variant = chosen.get("variant")
+        chosen_runners = chosen.get("runners")
+        m = chosen.get("metrics") or {}
+        baseline_info = info.get("baseline_none", {}) or {}
+        base_runners = baseline_info.get("runners")
+        base_metrics = baseline_info.get("metrics") or {}
+
+        # Confidence heuristic: high if we have ~20 total runs or comfortably inside targets
+        runs_cnt = int(m.get("runs") or 0)
+        ot_lo = float(m.get("on_time_wilson_lo", 0.0) or 0.0)
+        failed_mean = float(m.get("failed_mean", 0.0) or 0.0)
+        p90_mean = m.get("p90_mean", float("nan"))
+        near_edges = (
+            abs(ot_lo - float(targets.get("on_time", 0.90))) <= 0.01
+            or abs(failed_mean - float(targets.get("max_failed", 0.05))) <= 0.005
+        )
+        confidence = "High" if (runs_cnt >= 16 and not near_edges) else ("Medium" if runs_cnt >= 8 else "Low")
+
+        # Track tested variants and runner counts for context and fallback summaries
+        per_variant: Dict[str, Dict[int, Dict[str, Any]]] = info.get("per_variant", {}) or {}
+        for v_key, per_runner in per_variant.items():
+            tested_variants.add(variant_desc_map.get(v_key, v_key))
+            for r_count in per_runner.keys():
+                try:
+                    tested_runner_counts.add(int(r_count))
+                except Exception:
+                    continue
+
+        rec_rows.append({
+            "orders": orders,
+            "policy": variant_desc_map.get(str(chosen_variant), variant_desc_map.get(chosen_variant, str(chosen_variant))),
+            "runners": chosen_runners,
+            "on_time": _fmt_pct(m.get("on_time_wilson_lo"), digits=0),
+            "failed": _fmt_pct(m.get("failed_mean"), digits=1),
+            "avg_min": _fmt_min(m.get("avg_delivery_time_mean"), digits=1),
+            "p90": _fmt_int(m.get("p90_mean")),
+            "oph": _fmt_min(m.get("oph_mean"), digits=1),
+            "confidence": confidence,
+        })
+
+        if base_runners is not None and chosen_runners is not None and int(base_runners) > int(chosen_runners):
+            baseline_savings_notes.append(
+                f"- Baseline (no blocking) would require {base_runners} runner(s) at {orders} orders/hr. Recommended policy saves {int(base_runners) - int(chosen_runners)} runner(s)."
+            )
+
+        # If no policy met targets, synthesize helpful notes and top candidates
+        if chosen_variant is None or chosen_runners is None or not m:
+            # Determine max runners tested for this orders level
+            max_runners_tested = max([int(r) for v in per_variant.values() for r in v.keys()] or [0])
+
+            unmet_notes.append(
+                f"- At {orders} orders/hr, no policy met targets up to {max_runners_tested} runner(s)."
+            )
+
+            # Build a scored list of near-miss candidates across variants and runner counts
+            scored: List[Tuple[int, str, int, Dict[str, Any]]] = []  # (score, variant_key, runners, metrics)
+            for v_key, per_runner in per_variant.items():
+                for r_count, agg in per_runner.items():
+                    if not agg or not agg.get("runs"):
+                        continue
+                    ot_lo_v = float(agg.get("on_time_wilson_lo", 0.0) or 0.0)
+                    failed_v = float(agg.get("failed_mean", 1.0) or 1.0)
+                    p90_v = float(agg.get("p90_mean", float("inf")) or float("inf"))
+                    # Violations: on_time below target, failed above target, p90 above target
+                    violations = 0
+                    if ot_lo_v < float(targets.get("on_time", 0.90)):
+                        violations += 1
+                    if failed_v > float(targets.get("max_failed", 0.05)):
+                        violations += 1
+                    if not math.isnan(p90_v) and p90_v > float(targets.get("max_p90", 40.0)):
+                        violations += 1
+                    # Score: prioritize fewer violations, then lower p90, then higher on_time, then lower failed, then fewer runners
+                    score_tuple = (
+                        violations,
+                        int(p90_v) if not math.isnan(p90_v) else 10**6,
+                        int(-round(ot_lo_v * 1000)),
+                        int(round(failed_v * 1000)),
+                        int(r_count),
+                    )
+                    scored.append((score_tuple[0], v_key, int(r_count), {**agg, "score_tuple": score_tuple}))
+
+            # Take top 3 candidates by score
+            scored.sort(key=lambda x: x[3]["score_tuple"])  # sort by the composite tuple
+            for item in scored[:3]:
+                _, v_key, r_count, agg = item
+                top_candidate_rows.append({
+                    "orders": orders,
+                    "policy": variant_desc_map.get(v_key, v_key),
+                    "runners": r_count,
+                    "on_time": _fmt_pct(agg.get("on_time_wilson_lo"), digits=0),
+                    "failed": _fmt_pct(agg.get("failed_mean"), digits=1),
+                    "avg_min": _fmt_min(agg.get("avg_delivery_time_mean"), digits=1),
+                    "p90": _fmt_int(agg.get("p90_mean")),
+                    "oph": _fmt_min(agg.get("oph_mean"), digits=1),
+                    "note": "Does not meet targets",
+                })
+
+    # Build Markdown --------------------------------------------------------
+    lines: List[str] = []
+    lines.append("### Staffing and Blocking Policy Recommendation")
+    lines.append(f"Course: {course_name}  ")
+    lines.append(f"Tee scenario: {tee_name}  ")
+    lines.append(
+        f"Targets: on-time ≥ {int(targets.get('on_time', 0.90) * 100)}%, failed deliveries ≤ {int(targets.get('max_failed', 0.05) * 100)}%, p90 ≤ {int(targets.get('max_p90', 40.0))} min  "
+    )
+    lines.append("Source: `scripts/optimization/optimize_staffing_policy_two_pass.py` (two-pass optimization with enhanced metrics)")
+    lines.append("")
+    lines.append("## Executive summary")
+    lines.append("- Strategic blocking of specific holes can reduce the number of runners needed while keeping service within target thresholds.")
+    lines.append("- Two-pass optimization: 10 minimal runs for all combinations, then 10 full runs for top candidates.")
+    lines.append("- Enhanced metrics include runner utilization imbalance, queue wait time breakdown, delivery time histograms, and peak-hour analysis.")
+    lines.append("")
+    lines.append("## Recommended staffing by volume")
+    lines.append("- \"Conservative on-time\" is the lower bound of the 95% Wilson interval.")
+    lines.append("- \"Policy\" is the minimal-blocking variant that met targets with the fewest runners; ties broken by a utility function (runners < blocking < p90 < on-time < failed).")
+    lines.append("")
+    # Staffing table
+    lines.append("| Orders/hr | Policy | Runners | On-time (conservative) | Failed | Avg time (min) | p90 (min) | Orders/Runner/Hr | Confidence |")
+    lines.append("|-----------|--------|---------|------------------------|--------|----------------|-----------|------------------|------------|")
+    for r in rec_rows:
+        policy_str = str(r['policy']).title() if r['policy'] not in (None, 'none') else 'None'
+        runners_str = str(r['runners']) if r['runners'] is not None else 'n/a'
+        lines.append(
+            f"| {r['orders']}        | {policy_str} | {runners_str} | {r['on_time']}                 | {r['failed']}   | {r['avg_min']}           | {r['p90']}        | {r['oph']}              | {r['confidence']}     |"
+        )
+    lines.append("")
+    if baseline_savings_notes:
+        lines.append("Notes:")
+        lines.extend(baseline_savings_notes)
+        lines.append("")
+
+    # Unmet targets notes and top candidates (if any)
+    if unmet_notes:
+        lines.append("Unmet targets:")
+        lines.extend(unmet_notes)
+        lines.append("")
+        if top_candidate_rows:
+            lines.append("Top candidates (did not meet targets):")
+            lines.append("| Orders/hr | Policy | Runners | On-time (conservative) | Failed | Avg time (min) | p90 (min) | Orders/Runner/Hr | Note |")
+            lines.append("|-----------|--------|---------|------------------------|--------|----------------|-----------|------------------|------|")
+            for r in top_candidate_rows:
+                lines.append(
+                    f"| {r['orders']}        | {str(r['policy']).title()} | {r['runners']} | {r['on_time']}                 | {r['failed']}   | {r['avg_min']}           | {r['p90']}        | {r['oph']}              | {r['note']} |"
+                )
+            lines.append("")
+
+    # Operational interpretation
+    lines.append("")
+    lines.append("## What this means operationally")
+    for r in rec_rows:
+        lines.append(
+            f"- At {r['orders']} orders/hr: Use {r['runners']} runner(s) with policy \"{r['policy']}\" to keep on-time around {r['on_time']} and p90 ≈ {r['p90']} min."
+        )
+
+    # Quick playbook (simple thresholds from provided orders levels)
+    lines.append("")
+    lines.append("## Quick playbook")
+    if rec_rows:
+        for i, r in enumerate(rec_rows):
+            lo = rec_rows[i - 1]["orders"] + 1 if i > 0 else r["orders"]
+            hi = rec_rows[i + 1]["orders"] - 1 if i + 1 < len(rec_rows) else r["orders"]
+            if lo == hi:
+                range_text = f"{lo} orders/hr"
+            else:
+                range_text = f"{lo}–{hi} orders/hr"
+            if r['runners'] is None:
+                lines.append(f"- {range_text}: No tested policy met targets up to {max(tested_runner_counts) if tested_runner_counts else '?'} runner(s).")
+            else:
+                lines.append(f"- {range_text}: {r['policy']}; {r['runners']} runner(s).")
+
+    # Data context and next steps -----------------------------------------------------------------
+    lines.append("")
+    lines.append("## Data context")
+    lines.append(f"- Orders levels analyzed: {', '.join(str(o) for o in sorted(orders_levels))}")
+    if tested_runner_counts:
+        lines.append(f"- Runner counts tested: {min(tested_runner_counts)}–{max(tested_runner_counts)}")
+    if tested_variants:
+        lines.append(f"- Variants tested: {', '.join(sorted(str(v) for v in tested_variants))}")
+
+    lines.append("")
+    lines.append("## Next steps")
+    if unmet_notes:
+        lines.append("- Increase runner range (e.g., --runner-range 1-4) and re-run optimization.")
+        lines.append("- Increase confirmation runs (e.g., --second-pass-runs 20) for tighter estimates.")
+        lines.append("- Review targets or policies; consider enabling broader blocking if operations allow.")
+    else:
+        lines.append("- Validate staffing vs. utilization during peak windows and adjust blocking as needed.")
+
+    # Operational guardrails and checks (static, aligned with docs)
+    lines.append("")
+    lines.append("## Operational guardrails")
+    lines.append("- Trigger to add a runner:")
+    lines.append("  - Conservative on-time < 90% for 15 minutes OR")
+    lines.append("  - p90 > 40 min for 10 minutes with utilization rising OR")
+    lines.append("  - Failed > 5% at any time")
+    lines.append("- Trigger to lift blocking:")
+    lines.append("  - Conservative on-time ≥ 92% for 30 minutes and p90 ≤ 35 min")
+    lines.append("- Route health checks:")
+    lines.append("  - Ensure blocked segments are clearly communicated to runners and tee sheet operations.")
+    lines.append("  - Validate that start/end coordinates for runners map to valid graph nodes (prevents routing stalls).")
+    lines.append("")
+    lines.append("- Data artifacts written per group:")
+    lines.append("  - `@aggregate.json` in each group directory (roll-up of metrics with enhanced data)")
+    lines.append("  - `all_metrics.csv` at the optimization root (all groups combined)")
+    lines.append("  - Optional `executive_summary.md` (human summary)")
+    lines.append("  - `gm_staffing_policy_report.md` (this report)")
+
+    try:
+        md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return md_path
+    except Exception:
+        return None
 
 
 def run_combo(
@@ -1085,6 +2452,14 @@ def main() -> None:
     args = p.parse_args()
 
     project_root = Path(__file__).resolve().parents[2]
+    
+    # Load environment variables from .env at project root if available
+    if _load_dotenv is not None:
+        try:
+            _load_dotenv(dotenv_path=project_root / ".env", override=False)
+            _load_dotenv(override=False)
+        except Exception:
+            pass
 
     if args.run_all_courses:
         courses_root = project_root / "courses"
@@ -1261,8 +2636,6 @@ def main() -> None:
                 _row = _row_from_context_and_agg(context, agg, group_dir)
                 _write = _row  # clarity
                 # Upsert into CSV rows
-                from scripts.optimization.optimize_staffing_policy import _upsert_row  # local import to avoid polluting top
-
                 _upsert_row(csv_rows, _write)
 
         # Select top 3 + baseline for each runner count for the second pass
@@ -1353,8 +2726,6 @@ def main() -> None:
                     variant_key=v_key,
                     runners=v_runners,
                 )
-                from scripts.optimization.optimize_staffing_policy import _upsert_row
-
                 _upsert_row(csv_rows, _row_from_context_and_agg(win_context, win_agg, group_dir))
 
         # Final choice after second pass
@@ -1439,6 +2810,47 @@ def main() -> None:
         csv_path = _write_final_csv(root, csv_rows)
         if csv_path is not None:
             print(f"Aggregated metrics CSV written to {csv_path}")
+    except Exception:
+        pass
+
+    # Final consistency: rebuild CSV purely from saved @aggregate.json files
+    # so that the CSV on disk exactly mirrors the persisted aggregates.
+    try:
+        rebuilt_rows = _collect_rows_from_saved_aggregates(root)
+        rebuilt_csv = _write_final_csv(root, rebuilt_rows)
+        if rebuilt_csv is not None:
+            print(f"all_metrics.csv rebuilt from @aggregate.json files: {rebuilt_csv}")
+    except Exception:
+        pass
+
+    # Generate executive summary Markdown (best-effort)
+    try:
+        md_path, used_gemini = _write_executive_summary_markdown(
+            out_dir=root,
+            course_dir=course_dir,
+            tee_scenario=args.tee_scenario,
+            orders_levels=list(orders_iter),
+            summary=summary,
+            targets={"on_time": args.target_on_time, "max_failed": args.max_failed_rate, "max_p90": args.max_p90},
+        )
+        if md_path is not None:
+            print(f"Executive summary written to {md_path} (source: {'gemini' if used_gemini else 'local'})")
+    except Exception as _e:
+        # Non-fatal: keep CLI behavior unchanged if summary generation fails
+        pass
+
+    # Write GM staffing policy report (best-effort)
+    try:
+        gm_md = _write_gm_staffing_policy_report(
+            out_dir=root,
+            course_dir=course_dir,
+            tee_scenario=args.tee_scenario,
+            orders_levels=list(orders_iter),
+            summary=summary,
+            targets={"on_time": args.target_on_time, "max_failed": args.max_failed_rate, "max_p90": args.max_p90},
+        )
+        if gm_md is not None:
+            print(f"GM staffing policy report written to {gm_md}")
     except Exception:
         pass
 

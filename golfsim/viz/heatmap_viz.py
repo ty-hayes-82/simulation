@@ -205,12 +205,15 @@ def load_geofenced_holes(course_dir: str | Path) -> Dict[int, Any]:
         logger.debug("Using cached hole data for %s", course_path.name)
         return _HOLE_DATA_CACHE[cache_key]
     
-    # Use the actual geofenced holes file, not the original holes linestrings
-    holes_file = course_path / "geojson" / "generated" / "holes_geofenced.geojson"
+    # Prefer updated geofenced holes file; fallback to legacy if missing
+    updated_file = course_path / "geojson" / "generated" / "holes_geofenced_updated.geojson"
+    legacy_file = course_path / "geojson" / "generated" / "holes_geofenced.geojson"
+    holes_file = updated_file if updated_file.exists() else legacy_file
 
     hole_polygons: Dict[int, Any] = {}
 
     if holes_file.exists():
+        logger.debug("Loading geofenced holes from %s", holes_file)
         try:
             gdf = gpd.read_file(holes_file)
             # Normalize CRS to 4326 just in case
@@ -226,7 +229,7 @@ def load_geofenced_holes(course_dir: str | Path) -> Dict[int, Any]:
             elif "ref" in gdf.columns:
                 hole_col = "ref"
             else:
-                logger.warning("holes_geofenced.geojson missing 'hole' or 'ref' property")
+                logger.warning("%s missing 'hole' or 'ref' property", holes_file.name)
                 return hole_polygons
 
             for _, row in gdf.iterrows():
@@ -243,8 +246,12 @@ def load_geofenced_holes(course_dir: str | Path) -> Dict[int, Any]:
         except Exception as e:
             logger.error("Failed to load geofenced holes: %s", e)
     else:
-        # Fallback to original holes.geojson if geofenced version doesn't exist
-        logger.warning("Geofenced holes file not found: %s, falling back to original holes.geojson", holes_file)
+        # Fallback to original holes.geojson if geofenced versions don't exist
+        logger.warning(
+            "Geofenced holes file not found. Tried: %s and %s. Falling back to original holes.geojson",
+            updated_file,
+            legacy_file,
+        )
         fallback_file = course_path / "geojson" / "holes.geojson"
         if fallback_file.exists():
             try:

@@ -13,11 +13,9 @@ type LoadedMetrics = {
 const HEADER_MAP: Record<string, string> = {
   'none': 'None',
   'front': '1-3',
-  'mid': '4-6',
   'back': '10-12',
   'front_mid': '1-6',
   'front_back': '1-3 & 10-12',
-  'mid_back': '4-6 & 10-12',
   'front_mid_back': '1-6 & 10-12',
 };
 

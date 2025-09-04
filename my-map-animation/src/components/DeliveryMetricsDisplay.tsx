@@ -73,8 +73,9 @@ export const getMetricsData = (deliveryMetrics: DeliveryMetrics | null) => {
   if (!deliveryMetrics) return [];
 
   const metrics = calculateMetrics(deliveryMetrics);
+  const runCount = deliveryMetrics.runCount;
 
-  return [
+  const metricsList = [
     { label: 'Order Count', value: metrics.totalOrders.toString() },
     { label: 'Avg Order Time', value: `${Math.round(metrics.avgOrderTimeMin)}m` },
     { label: 'P90 Order Time', value: `${Math.round(metrics.p90OrderTimeMin)}m` },
@@ -87,6 +88,12 @@ export const getMetricsData = (deliveryMetrics: DeliveryMetrics | null) => {
     { label: 'Runner Drive Minutes', value: `${Math.round(metrics.totalRunnerDriveMin)}m` },
     { label: 'Runner Shift Minutes', value: `${Math.round(metrics.totalRunnerShiftMin)}m` },
   ];
+
+  if (runCount && runCount > 1) {
+    metricsList.unshift({ label: 'Simulations', value: runCount.toString() });
+  }
+
+  return metricsList;
 };
 
 export default function DeliveryMetricsDisplay({ 

@@ -62,9 +62,11 @@ def ensure_env_loaded(env_var_name: str = "GOOGLE_API_KEY") -> Optional[str]:
 
 def try_google_genai(api_key: str, model: str, prompt: str) -> Tuple[bool, Optional[str], Optional[str]]:
     """Attempt using the modern google.genai client. Returns (ok, text, error)."""
+    logger = get_logger(__name__)
     try:
         from google import genai  # type: ignore
 
+        logger.info(f"Using google.genai with model '{model}'...")
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(model=model, contents=prompt)
         text = getattr(response, "text", None)
@@ -83,9 +85,11 @@ def try_google_genai(api_key: str, model: str, prompt: str) -> Tuple[bool, Optio
 
 def try_google_generativeai(api_key: str, model: str, prompt: str) -> Tuple[bool, Optional[str], Optional[str]]:
     """Attempt using the legacy google.generativeai client. Returns (ok, text, error)."""
+    logger = get_logger(__name__)
     try:
         import google.generativeai as genai  # type: ignore
 
+        logger.info(f"Using google.generativeai with model '{model}'...")
         genai.configure(api_key=api_key)
         gmodel = genai.GenerativeModel(model)
         response = gmodel.generate_content(prompt)
@@ -130,22 +134,31 @@ def attempt_models(api_key: str, requested_model: str, prompt: str) -> Tuple[boo
 def collect_non_png_files(simulation_dir: Path) -> Dict[str, str]:
     """Collect all non-PNG files from the simulation directory and return as filename -> content dict."""
     files_content: Dict[str, str] = {}
+    logger = get_logger(__name__)
     
     if not simulation_dir.exists():
         return files_content
     
-    # Walk through all files in the simulation directory
+    logger.info(f"Scanning for files in {simulation_dir}...")
+    # Walk through all files in the simulation directory, skipping 'node_modules'
     for file_path in simulation_dir.rglob("*"):
+        if 'node_modules' in file_path.parts:
+            continue
+            
+        logger.debug(f"Found file: {file_path}")
         if file_path.is_file() and file_path.suffix.lower() != ".png":
             try:
                 relative_path = file_path.relative_to(simulation_dir)
+                logger.debug(f"Reading content of {relative_path}...")
                 # Try to read as text
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
                 files_content[str(relative_path)] = content
+                logger.debug(f"Finished reading {relative_path}.")
             except Exception as e:
                 # If we can't read the file, note it in the content
                 files_content[str(relative_path)] = f"[Could not read file: {e}]"
     
+    logger.info("Finished scanning files.")
     return files_content
 
 
@@ -278,10 +291,12 @@ def main() -> int:
         logger.warning("No readable files found in simulation directory")
         return 1
     
-    logger.info(f"Collected {len(files_content)} files for analysis")
+    total_content_size = sum(len(content) for content in files_content.values())
+    logger.info(f"Collected {len(files_content)} files for analysis (total content size: {total_content_size} characters)")
     
     # Build prompt
     prompt = build_executive_summary_prompt(args.simulation_dir, files_content)
+    logger.info(f"Built prompt of {len(prompt)} characters.")
     
     # Send to Gemini
     logger.info("Sending simulation data to Google Gemini for analysis...")

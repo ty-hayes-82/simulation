@@ -111,6 +111,7 @@ def run_multi_golfer_simulation(
     output_dir: Optional[str] = None,
     create_visualization: bool = True,
     rng_seed: Optional[int] = None,
+    use_golfer_graph: bool = True,  # Default to True for this simulation type
 ) -> Dict[str, Any]:
     simulation_env = env or simpy.Environment()
     config = load_simulation_config(course_dir)
@@ -204,7 +205,8 @@ def run_multi_golfer_simulation(
             course_data = load_course_geospatial_data(course_dir)
             
             cart_graph = None
-            cart_graph_path = Path(course_dir) / "pkl" / "cart_graph.pkl"
+            graph_filename = "cart_graph_golfers.pkl" if use_golfer_graph else "cart_graph.pkl"
+            cart_graph_path = Path(course_dir) / "pkl" / graph_filename
             if cart_graph_path.exists():
                 with open(cart_graph_path, "rb") as f:
                     cart_graph = pickle.load(f)
@@ -244,7 +246,7 @@ def run_multi_golfer_simulation(
     return results
 
 
-def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[str, Any]:
+def run_delivery_runner_simulation(config: SimulationConfig, use_golfer_graph: bool = False, **kwargs) -> Dict[str, Any]:
     """Run delivery runner simulation."""
     args = kwargs.get("args")
 
@@ -590,7 +592,8 @@ def run_delivery_runner_simulation(config: SimulationConfig, **kwargs) -> Dict[s
                     # Load cart graph
                     try:
                         import pickle
-                        cart_graph_path = Path(config.course_dir) / "pkl" / "cart_graph.pkl"
+                        graph_filename = "cart_graph_golfers.pkl" if use_golfer_graph else "cart_graph.pkl"
+                        cart_graph_path = Path(config.course_dir) / "pkl" / graph_filename
                         logger.info(f"Attempting to load cart graph from: {cart_graph_path}")
                         if cart_graph_path.exists():
                             with cart_graph_path.open("rb") as f:

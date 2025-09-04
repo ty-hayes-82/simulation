@@ -105,11 +105,9 @@ def _compact_data_for_sections(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any
     variant_desc = {
         "none": "no blocked holes",
         "front": "block holes 1–3",
-        "mid": "block holes 4–6",
         "back": "block holes 10–12",
         "front_mid": "block holes 1–6",
         "front_back": "block holes 1–3 & 10–12",
-        "mid_back": "block holes 4–6 & 10–12",
         "front_mid_back": "block holes 1–6 & 10–12",
     }
 

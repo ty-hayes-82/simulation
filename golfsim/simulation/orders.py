@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 from typing import Any, Dict, List, Optional, Tuple
 import math
+from datetime import datetime, timedelta
 
 from .services import DeliveryOrder
 from ..config.loaders import parse_hhmm_to_seconds_since_7am
@@ -15,6 +16,22 @@ def calculate_delivery_order_probability_per_9_holes(total_orders: int, num_grou
     if num_groups == 0 or total_orders == 0:
         return 0.0
     return float(total_orders) / (float(num_groups) * 2.0)
+
+def _subtract_hour_from_hhmm(hhmm_str: str) -> str:
+    """Subtracts one hour from a 'HH:MM' time string."""
+    try:
+        dt = datetime.strptime(hhmm_str, "%H:%M")
+        dt -= timedelta(hours=1)
+        return dt.strftime("%H:%M")
+    except ValueError:
+        # Fallback for simple integer hour format
+        try:
+            hour = int(hhmm_str)
+            hour = max(0, hour - 1)
+            return f"{hour:02d}:00"
+        except (ValueError, TypeError):
+            return "18:00" # Default fallback
+
 
 def generate_dynamic_hourly_distribution(start_hour: int, end_hour: int) -> Dict[str, float]:
     """
@@ -159,13 +176,23 @@ def generate_delivery_orders_by_hour_distribution(
     service_open_s: Optional[int] = None,
     blocked_holes: Optional[set[int]] = None,
 ) -> List[DeliveryOrder]:
-    if rng_seed is not None:
-        random.seed(int(rng_seed))
+    """
+    Generates a list of delivery orders based on an hourly distribution of demand,
+    ensuring that no orders are placed within the last hour of the service day.
+    """
+    if rng_seed:
+        random.seed(rng_seed)
+        
+    _blocked_holes = blocked_holes or set()
 
-    open_s = service_open_s if isinstance(service_open_s, int) else parse_hhmm_to_seconds_since_7am(service_open_hhmm)
-    close_s = parse_hhmm_to_seconds_since_7am(service_close_hhmm)
-    if close_s <= open_s:
-        close_s = open_s + 10 * 3600
+    # --- MODIFICATION: Prevent orders in the last hour ---
+    effective_close_hhmm = _subtract_hour_from_hhmm(service_close_hhmm)
+
+    open_s = parse_hhmm_to_seconds_since_7am(service_open_hhmm)
+    close_s = parse_hhmm_to_seconds_since_7am(effective_close_hhmm)
+    
+    if service_open_s is not None:
+        open_s = max(open_s, service_open_s)
 
     def hhmm_to_s(hhmm: str) -> int:
         try:

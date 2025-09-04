@@ -847,6 +847,15 @@ export default function AnimationView() {
       const features: any[] = [];
       
       trackersData.forEach((tracker) => {
+        // Hide golfer markers after they finish (past their last timestamp)
+        const elapsedSecondsForTracker = elapsedMinutes * 60;
+        if (tracker.type === 'golfer') {
+          const lastTimestamp = tracker.coordinates[tracker.coordinates.length - 1]?.timestamp;
+          if (typeof lastTimestamp === 'number' && elapsedSecondsForTracker > lastTimestamp) {
+            return; // skip rendering finished golfer groups
+          }
+        }
+
         let position: Coordinate | null;
         const trackerStopInfo = stopInfo[tracker.name];
         if (currentEasing === 'catmull-rom') {

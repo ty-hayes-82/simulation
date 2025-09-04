@@ -9,7 +9,6 @@ import { SimulationProvider } from './context/SimulationContext';
 import TopBarControls from './components/TopBarControls';
 import SimulationTable from './components/SimulationTable';
 import ViewSwitcher from './components/ViewSwitcher';
-import SimulationMatrix from './components/SimulationMatrix';
 import { useSimulation } from './context/SimulationContext';
 import BlockedHolesMatrix from './components/BlockedHolesMatrix';
 
@@ -46,8 +45,6 @@ export default function App() {
           <ViewSwitcher />
           {!isHeatmap && <SimulationTimePanel />}
           <TopBarControls />
-          {/* Hide summary tables (bottom-left and bottom-right) per request */}
-          <SimulationMatrix />
           <BlockedHolesMatrix />
           <Routes>
             <Route path="/" element={<AnimationView />} />

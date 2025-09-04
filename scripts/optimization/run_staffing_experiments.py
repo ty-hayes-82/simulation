@@ -51,11 +51,9 @@ class BlockingVariant:
 BLOCKING_VARIANTS: List[BlockingVariant] = [
     BlockingVariant(key="none", cli_flags=[]),
     BlockingVariant(key="front", cli_flags=["--block-holes", "1", "2", "3"]),
-    BlockingVariant(key="mid", cli_flags=["--block-holes", "4", "5", "6"]),
     BlockingVariant(key="back", cli_flags=["--block-holes", "10", "11", "12"]),
     BlockingVariant(key="front_mid", cli_flags=["--block-holes", "1", "2", "3", "4", "5", "6"]),
     BlockingVariant(key="front_back", cli_flags=["--block-holes", "1", "2", "3", "10", "11", "12"]),
-    BlockingVariant(key="mid_back", cli_flags=["--block-holes", "4", "5", "6", "10", "11", "12"]),
     BlockingVariant(key="front_mid_back", cli_flags=["--block-holes", "1", "2", "3", "4", "5", "6", "10", "11", "12"]),
 ]
 

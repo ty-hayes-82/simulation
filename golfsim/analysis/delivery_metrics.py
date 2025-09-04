@@ -3,9 +3,36 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import pandas as pd
 
 from scripts.optimization.optimize_staffing_policy import RunMetrics
 
+
+def get_long_pending_orders(order_timing_log: Path, time_threshold_minutes: int = 60) -> int:
+    """
+    Analyzes the order timing log to count orders that have been pending for longer
+    than a given time threshold.
+    """
+    if not order_timing_log.exists():
+        return 0
+    
+    try:
+        df = pd.read_csv(order_timing_log)
+        
+        # Ensure required columns exist
+        if 'status' not in df.columns or 'elapsed_time_minutes' not in df.columns:
+            return 0
+            
+        # Filter for pending orders that have exceeded the time threshold
+        long_pending = df[
+            (df['status'] == 'pending') & 
+            (df['elapsed_time_minutes'] > time_threshold_minutes)
+        ]
+        return len(long_pending)
+        
+    except Exception:
+        # Return 0 if there's any issue reading or processing the file
+        return 0
 
 def format_minutes(value: Optional[float]) -> str:
     """Formats a float value into a string with 'm' suffix."""
@@ -48,8 +75,13 @@ def calculate_delivery_metrics(
     total_successful = agg_results.get("total_successful_orders", 0)
     late_orders = total_orders - total_successful
 
-    # Sum of failed orders from all runs
-    failed_orders = sum(m.failed_orders for m in run_metrics if m.failed_orders is not None)
+    # Failed orders are now defined as orders pending for more than 60 minutes.
+    # We need to read this from each individual run's order_timing_logs.csv
+    failed_orders = 0
+    for m in run_metrics:
+        run_dir = Path(m.run_dir)
+        order_timing_log = run_dir / "order_timing_logs.csv"
+        failed_orders += get_long_pending_orders(order_timing_log, 60)
 
     # Average runner utilization
     runner_utilization = (

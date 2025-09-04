@@ -52,19 +52,27 @@ def _load_holes_connected_data(course_dir: Path) -> Tuple[List[Tuple[int, float,
         - nodes: List of (node_id, lon, lat)
         - connections: List of (node_a, node_b) pairs extracted from LineString features
     """
-    # Try updated file first, then fall back to original
+    # Try final, then updated file, then fall back to original
+    final_path = course_dir / "geojson" / "generated" / "holes_connected_final.geojson"
     updated_path = course_dir / "geojson" / "generated" / "holes_connected_updated.geojson"
     original_path = course_dir / "geojson" / "generated" / "holes_connected.geojson"
     
-    if updated_path.exists():
+    path = None
+    if final_path.exists():
+        path = final_path
+        print(f"Using final file: {path}")
+    elif updated_path.exists():
         path = updated_path
         print(f"Using updated file: {path}")
     elif original_path.exists():
         path = original_path
         print(f"Using original file: {path}")
     else:
-        raise FileNotFoundError(f"Neither {updated_path} nor {original_path} exists")
-    
+        raise FileNotFoundError(
+            "Could not find holes_connected_final.geojson, "
+            f"holes_connected_updated.geojson, or holes_connected.geojson in {course_dir / 'geojson' / 'generated'}"
+        )
+
     # Load as JSON first to handle the format better
     try:
         with open(path, 'r', encoding='utf-8') as f:
@@ -142,7 +150,7 @@ def _load_holes_connected_data(course_dir: Path) -> Tuple[List[Tuple[int, float,
     return nodes, connections
 
 
-def build_graph_from_holes_connected(course_dir: Path) -> nx.Graph:
+def build_graph_from_holes_connected(course_dir: Path) -> Tuple[nx.Graph, nx.Graph]:
     """Build a cart network graph from holes_connected GeoJSON files."""
     pkl_dir = _ensure_output_dirs(course_dir)
     
@@ -160,6 +168,18 @@ def build_graph_from_holes_connected(course_dir: Path) -> nx.Graph:
     for node_id, lon, lat in nodes:
         G.add_node(node_id, x=float(lon), y=float(lat))
     
+    # Determine clubhouse node. Assume node 0 if present, otherwise smallest node ID.
+    clubhouse_node_id = None
+    if 0 in G:
+        clubhouse_node_id = 0
+        print("Found node 0, setting as clubhouse.")
+    elif G.number_of_nodes() > 0:
+        clubhouse_node_id = min(G.nodes())
+        print(f"Node 0 not found. Using smallest node ID as clubhouse: {clubhouse_node_id}")
+    
+    if clubhouse_node_id is not None:
+        G.graph['clubhouse_node'] = clubhouse_node_id
+    
     # Add edges based on connections
     for node_a, node_b in connections:
         if node_a in G and node_b in G:
@@ -173,6 +193,27 @@ def build_graph_from_holes_connected(course_dir: Path) -> nx.Graph:
         else:
             print(f"Warning: Skipping connection {node_a}-{node_b}, nodes not found in graph")
     
+    # --- Create separate graphs for golfers and runners ---
+    # Runner graph (G_runners) includes all nodes (it's the graph 'G' we've built)
+    G_runners = G.copy()
+    
+    # Golfer graph (G_golfers) excludes shortcut nodes (ID >= 300)
+    shortcut_nodes = [n for n in G.nodes() if n >= 300]
+    G_golfers = G.copy()
+    G_golfers.remove_nodes_from(shortcut_nodes)
+    print(f"Created golfer graph by removing {len(shortcut_nodes)} shortcut nodes.")
+
+    # Fix missing connection: ensure node 1 connects to node 2 for proper course flow
+    if 1 in G_golfers and 2 in G_golfers and not G_golfers.has_edge(1, 2):
+        print("Adding missing connection between node 1 and node 2 for proper course flow in golfer graph")
+        lon_1 = G_golfers.nodes[1]["x"]
+        lat_1 = G_golfers.nodes[1]["y"]
+        lon_2 = G_golfers.nodes[2]["x"]
+        lat_2 = G_golfers.nodes[2]["y"]
+        distance_1_2 = _haversine_m(lon_1, lat_1, lon_2, lat_2)
+        G_golfers.add_edge(1, 2, length=float(distance_1_2))
+        print(f"Connected nodes 1-2 with distance {distance_1_2:.2f}m")
+
     # Fix missing connection: ensure node 1 connects to node 2 for proper course flow
     if 1 in G and 2 in G and not G.has_edge(1, 2):
         print("Adding missing connection between node 1 and node 2 for proper course flow")
@@ -184,20 +225,37 @@ def build_graph_from_holes_connected(course_dir: Path) -> nx.Graph:
         G.add_edge(1, 2, length=float(distance_1_2))
         print(f"Connected nodes 1-2 with distance {distance_1_2:.2f}m")
     
-    # Save as pickle file
-    pkl_path = pkl_dir / "cart_graph.pkl"
-    with open(pkl_path, "wb") as f:
-        pickle.dump(G, f)
+    # --- Save graphs as pickle files ---
+    # Save the full runner graph (maintains original filename for compatibility)
+    pkl_path_runners = pkl_dir / "cart_graph.pkl"
+    with open(pkl_path_runners, "wb") as f:
+        pickle.dump(G_runners, f)
     
-    # Report
-    total_nodes = G.number_of_nodes()
-    total_edges = G.number_of_edges()
-    clubhouse_node = 0 if 0 in G else None
-    print(f"Built cart network graph: {total_nodes} nodes, {total_edges} edges")
-    print(f"Clubhouse node: {clubhouse_node}")
-    print(f"Saved to: {pkl_path}")
+    # Save the golfer-only graph
+    pkl_path_golfers = pkl_dir / "cart_graph_golfers.pkl"
+    with open(pkl_path_golfers, "wb") as f:
+        pickle.dump(G_golfers, f)
+
+    # --- Report ---
+    # Runner graph report
+    total_nodes_r = G_runners.number_of_nodes()
+    total_edges_r = G_runners.number_of_edges()
+    clubhouse_node_r = G_runners.graph.get("clubhouse_node")
+    print("\n--- Runner Graph (Full Network) ---")
+    print(f"Built cart network graph: {total_nodes_r} nodes, {total_edges_r} edges")
+    print(f"Clubhouse node: {clubhouse_node_r}")
+    print(f"Saved to: {pkl_path_runners}")
+
+    # Golfer graph report
+    total_nodes_g = G_golfers.number_of_nodes()
+    total_edges_g = G_golfers.number_of_edges()
+    clubhouse_node_g = G_golfers.graph.get("clubhouse_node")
+    print("\n--- Golfer Graph (No Shortcuts) ---")
+    print(f"Built cart network graph: {total_nodes_g} nodes, {total_edges_g} edges")
+    print(f"Clubhouse node: {clubhouse_node_g}")
+    print(f"Saved to: {pkl_path_golfers}")
     
-    return G
+    return G_runners, G_golfers
 
 
 # ----------------------------- CLI -----------------------------------------
@@ -220,7 +278,7 @@ def main() -> int:
     course_path = Path(args.course_dir)
     
     try:
-        G = build_graph_from_holes_connected(course_path)
+        G_runners, G_golfers = build_graph_from_holes_connected(course_path)
         return 0
     except Exception as e:
         print(f"Error: {e}")

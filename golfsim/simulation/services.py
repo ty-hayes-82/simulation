@@ -30,6 +30,7 @@ def run_multi_golfer_simulation(
     output_dir: Optional[str] = None,
     create_visualization: bool = True,
     rng_seed: Optional[int] = None,
+    use_golfer_graph: bool = True,  # Default to True for this simulation type
 ) -> Dict[str, Any]:
     """
     Run a simple multi-golfer simulation using a single runner queue.
@@ -157,7 +158,8 @@ def run_multi_golfer_simulation(
             
             # Try to load cart graph
             cart_graph = None
-            cart_graph_path = Path(course_dir) / "pkl" / "cart_graph.pkl"
+            graph_filename = "cart_graph_golfers.pkl" if use_golfer_graph else "cart_graph.pkl"
+            cart_graph_path = Path(course_dir) / "pkl" / graph_filename
             if cart_graph_path.exists():
                 import pickle
                 with open(cart_graph_path, "rb") as f:

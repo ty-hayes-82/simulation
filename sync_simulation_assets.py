@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Constants
 OUTPUT_DIR = Path('output')
 DEST_DIR = Path('my-map-animation/public/coordinates')
-ALLOWED_VARIANTS = {'none', 'front', 'mid', 'back', 'front_mid', 'front_back', 'mid_back', 'front_mid_back'}
+ALLOWED_VARIANTS = {'none', 'front', 'back', 'front_mid', 'front_back', 'front_mid_back'}
 
 # Course mapping - can be extended as needed
 COURSE_NAMES = {
@@ -143,8 +143,97 @@ def aggregate_metrics(metrics_list: List[Dict]) -> Dict:
     
     return aggregated
 
+def transform_aggregate_json(agg_data: Dict) -> Dict:
+    """
+    Transforms the structure of an @aggregate.json file to match what the frontend expects.
+    - Wraps metrics in a 'deliveryMetrics' object.
+    - Converts snake_case keys to camelCase.
+    - Calculates derived fields like revenue, late orders, and failed order counts.
+    """
+    # --- Calculations ---
+    runs = agg_data.get('runs', 1)
+    if runs == 0: runs = 1 # Avoid division by zero
+
+    total_orders_sum = agg_data.get('total_orders', 0)
+    successful_deliveries_sum = agg_data.get('total_successful_orders', 0)
+    
+    # Calculate averages per run
+    avg_orders_per_run = total_orders_sum / runs
+    avg_successful_per_run = successful_deliveries_sum / runs
+    
+    on_time_mean = agg_data.get('on_time_mean', 0) # This is on_time_deliveries / successful_deliveries
+    failed_mean = agg_data.get('failed_mean', 0)
+
+    # Correct on-time percentage to be out of total orders, not just successful ones.
+    # (on_time / successful) * (successful / total) = on_time / total
+    if avg_orders_per_run > 0:
+        corrected_on_time_pct = on_time_mean * (avg_successful_per_run / avg_orders_per_run)
+    else:
+        corrected_on_time_pct = 0
+    
+    # Calculate derived metrics based on averages
+    # Assume $30 per successful order if revenue is not present
+    revenue = agg_data.get('revenue', avg_successful_per_run * 30)
+    late_orders = round(avg_successful_per_run * (1 - on_time_mean))
+    failed_deliveries_count = round(avg_orders_per_run * failed_mean)
+
+    # Calculate drive and shift minutes
+    total_drive_time_seconds = sum(agg_data.get('total_drive_time_per_hole', {}).values())
+    avg_drive_time_seconds_per_run = (total_drive_time_seconds / runs) if runs > 0 else 0
+    avg_drive_minutes_per_run = avg_drive_time_seconds_per_run / 60
+    shift_minutes = agg_data.get('totalRunnerShiftMinutes', 420)
+
+    # --- Key Mappings ---
+    dm = {
+        'totalOrders': round(avg_orders_per_run),
+        'successfulDeliveries': round(avg_successful_per_run),
+        'onTimePercentage': corrected_on_time_pct * 100,
+        'failedDeliveries': failed_deliveries_count,
+        'lateOrders': late_orders,
+        'deliveryCycleTimeP90': agg_data.get('p90_mean', 0),
+        'avgOrderTime': agg_data.get('avg_delivery_time_mean', 0),
+        'ordersPerRunnerHour': agg_data.get('oph_mean', 0),
+        'queueWaitAvg': agg_data.get('avg_queue_wait_minutes', 0),
+        'revenue': revenue,
+        'totalRunnerDriveMinutes': avg_drive_minutes_per_run,
+        'totalRunnerShiftMinutes': shift_minutes
+    }
+
+    # Nested mappings for runner utilization
+    if 'runner_utilization_imbalance' in agg_data and 'mean' in agg_data['runner_utilization_imbalance']:
+        dm['runnerUtilizationPct'] = agg_data['runner_utilization_imbalance']['mean']
+
+    # Include run count for display
+    if 'runs' in agg_data:
+        dm['runCount'] = agg_data['runs']
+
+    # --- Final Formatting ---
+    # Ensure values that should be integers are rounded
+    for key in ['totalOrders', 'successfulDeliveries', 'lateOrders', 'failedDeliveries']:
+        if key in dm:
+            dm[key] = round(dm[key])
+            
+    return {
+        'deliveryMetrics': dm,
+        'hasRunners': True,
+        'hasBevCart': False
+    }
+
+
 def scan_course(course_id: str, course_name: str) -> List[Dict]:
     """Scan a course directory and return simulation entries."""
+    # Clear previous assets for this course
+    logger.info(f"Clearing previous assets for course: {course_id}")
+    deleted_count = 0
+    for old_file in DEST_DIR.glob(f"{course_id}__*"):
+        try:
+            old_file.unlink()
+            deleted_count += 1
+        except OSError as e:
+            logger.error(f"Error deleting file {old_file}: {e}")
+    if deleted_count > 0:
+        logger.info(f"Cleared {deleted_count} old asset files for {course_id}.")
+
     course_dir = OUTPUT_DIR / course_id
     if not course_dir.exists():
         logger.warning(f"Course directory not found: {course_dir}")
@@ -200,47 +289,73 @@ def scan_course(course_id: str, course_name: str) -> List[Dict]:
                     if variant not in ALLOWED_VARIANTS:
                         continue
                     
-                    # Process ALL runs in this variant directory
-                    run_dirs = [d for d in variant_dir.iterdir() if d.is_dir() and d.name.startswith('run_')]
-                    if not run_dirs:
-                        logger.warning(f"No run directories found in: {variant_dir}")
-                        continue
-                    
-                    # Collect metrics from all runs for aggregation
-                    all_metrics = []
+                    # --- MODIFICATION START ---
+                    # Prioritize loading from @aggregate.json if it exists
+                    agg_metrics_src = variant_dir / '@aggregate.json'
+                    aggregated_metrics = None
+                    run_count = 0
                     representative_run = None
-                    
-                    for run_dir in sorted(run_dirs):
-                        # Check for required files
-                        csv_src = run_dir / 'coordinates.csv'
-                        metrics_src = run_dir / 'simulation_metrics.json'
-                        geojson_src = run_dir / 'hole_delivery_times.geojson'
-                        
-                        if not csv_src.exists() or not metrics_src.exists():
-                            logger.warning(f"Missing required files in: {run_dir}")
-                            continue
-                        
-                        # Load metrics for aggregation
+
+                    if agg_metrics_src.exists():
+                        logger.info(f"Found @aggregate.json, using it as the source of truth for: {variant_dir}")
                         try:
-                            with open(metrics_src, 'r') as f:
-                                metrics = json.load(f)
-                                all_metrics.append(metrics)
-                                
-                            # Use first valid run as representative for file copying
-                            if representative_run is None:
-                                # Prefer run_01 for deterministic animation coordinates
-                                run_01_dir = variant_dir / 'run_01'
-                                if run_01_dir.exists() and (run_01_dir / 'coordinates.csv').exists():
-                                    representative_run = run_01_dir
-                                else:
-                                    representative_run = run_dir
-                                
+                            with open(agg_metrics_src, 'r') as f:
+                                raw_agg_metrics = json.load(f)
+                            
+                            # Transform the metrics to the frontend-compatible structure
+                            aggregated_metrics = transform_aggregate_json(raw_agg_metrics)
+
+                            # Determine run count from the file or by counting folders
+                            run_dirs = [d for d in variant_dir.iterdir() if d.is_dir() and d.name.startswith('run_')]
+                            run_count = raw_agg_metrics.get('runs', len(run_dirs))
+
+                            # Still need a representative run for coordinates
+                            run_01_dir = variant_dir / 'run_01'
+                            if run_01_dir.exists() and (run_01_dir / 'coordinates.csv').exists():
+                                representative_run = run_01_dir
+                            elif run_dirs:
+                                representative_run = sorted(run_dirs)[0]
+
                         except Exception as e:
-                            logger.warning(f"Error loading metrics from {metrics_src}: {e}")
+                            logger.warning(f"Could not process {agg_metrics_src}: {e}. Falling back to run-by-run aggregation.")
+                            aggregated_metrics = None # Reset to trigger fallback
+
+                    if aggregated_metrics is None:
+                        # Fallback to original method: aggregate from individual runs
+                        logger.info(f"Aggregating metrics run-by-run for: {variant_dir}")
+                        run_dirs = [d for d in variant_dir.iterdir() if d.is_dir() and d.name.startswith('run_')]
+                        if not run_dirs:
+                            logger.warning(f"No run directories found in: {variant_dir}")
                             continue
-                    
-                    if not all_metrics or representative_run is None:
-                        logger.warning(f"No valid runs found for: {variant_dir}")
+                        
+                        all_metrics = []
+                        for run_dir in sorted(run_dirs):
+                            metrics_src = run_dir / 'simulation_metrics.json'
+                            if not metrics_src.exists():
+                                logger.warning(f"Missing simulation_metrics.json in: {run_dir}")
+                                continue
+                            try:
+                                with open(metrics_src, 'r') as f:
+                                    all_metrics.append(json.load(f))
+                                if representative_run is None: # Set representative run from first valid run dir
+                                    # Prefer run_01 for deterministic animation coordinates
+                                    run_01_dir = variant_dir / 'run_01'
+                                    if run_01_dir.exists() and (run_01_dir / 'coordinates.csv').exists():
+                                        representative_run = run_01_dir
+                                    else:
+                                        representative_run = run_dir
+                            except Exception as e:
+                                logger.warning(f"Error loading metrics from {metrics_src}: {e}")
+
+                        if not all_metrics:
+                            logger.warning(f"No valid metrics files found for: {variant_dir}")
+                            continue
+
+                        aggregated_metrics = aggregate_metrics(all_metrics)
+                        run_count = len(all_metrics)
+
+                    if not aggregated_metrics or not representative_run:
+                        logger.warning(f"Could not produce aggregated metrics for: {variant_dir}")
                         continue
                     
                     # Build base filename
@@ -252,13 +367,12 @@ def scan_course(course_id: str, course_name: str) -> List[Dict]:
                     geojson_dst = DEST_DIR / f"{base}.hole_delivery.geojson"
                     
                     # Copy files from representative run
-                    logger.info(f"Processing {len(all_metrics)} runs for: {base}")
+                    logger.info(f"Processing {run_count} runs for: {base}")
                     try:
                         # Copy coordinate file from representative run
                         shutil.copy2(representative_run / 'coordinates.csv', csv_dst)
                         
-                        # Create aggregated metrics
-                        aggregated_metrics = aggregate_metrics(all_metrics)
+                        # Write the aggregated metrics (either from @aggregate.json or calculated)
                         with open(metrics_dst, 'w') as f:
                             json.dump(aggregated_metrics, f, indent=2)
                         
@@ -272,7 +386,7 @@ def scan_course(course_id: str, course_name: str) -> List[Dict]:
                         # Create simulation entry
                         sim_entry = {
                             'id': base,
-                            'name': f"{course_name} — {pass_name} — {orders} orders — {runners} runners — {variant} (avg of {len(all_metrics)} runs)",
+                            'name': f"{course_name} — {pass_name} — {orders} orders — {runners} runners — {variant} (avg of {run_count} runs)",
                             'filename': csv_dst.name,
                             'metricsFilename': metrics_dst.name,
                             'variantKey': variant,
@@ -280,7 +394,7 @@ def scan_course(course_id: str, course_name: str) -> List[Dict]:
                                 'runners': runners, 
                                 'orders': orders,
                                 'pass': pass_name,
-                                'runCount': len(all_metrics)
+                                'runCount': run_count
                             },
                             'courseId': course_id,
                             'courseName': course_name,
@@ -290,7 +404,7 @@ def scan_course(course_id: str, course_name: str) -> List[Dict]:
                             sim_entry['holeDeliveryGeojson'] = geojson_dst.name
                         
                         simulations.append(sim_entry)
-                        logger.info(f"Successfully processed: {base} (aggregated {len(all_metrics)} runs)")
+                        logger.info(f"Successfully processed: {base} (aggregated {run_count} runs)")
                         
                     except Exception as e:
                         logger.error(f"Error processing {base}: {e}")
